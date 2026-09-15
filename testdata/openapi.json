@@ -303,10 +303,177 @@
         }
       }
     },
+    "/files/report": {
+      "get": {
+        "summary": "Download the activity report",
+        "operationId": "getFilesReport",
+        "security": [],
+        "tags": [
+          "files"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/pdf": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/legacy": {
+      "get": {
+        "summary": "Replaced by GET /onboarding/{id}",
+        "operationId": "getLegacy",
+        "deprecated": true,
+        "security": [],
+        "tags": [
+          "onboarding"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Onboarding"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/onboarding": {
       "get": {
         "summary": "List onboarding records",
         "operationId": "getOnboarding",
+        "security": [],
         "tags": [
           "onboarding"
         ],
@@ -466,170 +633,6 @@
               "Location": {
                 "schema": {
                   "type": "string"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad Request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not Found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/files/report": {
-      "get": {
-        "summary": "Download the activity report",
-        "operationId": "getFilesReport",
-        "tags": [
-          "files"
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/pdf": {
-                "schema": {
-                  "type": "string",
-                  "format": "binary"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad Request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not Found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/legacy": {
-      "get": {
-        "summary": "Replaced by GET /onboarding/{id}",
-        "operationId": "getLegacy",
-        "deprecated": true,
-        "tags": [
-          "onboarding"
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Onboarding"
                 }
               }
             }
@@ -971,12 +974,27 @@
   },
   "security": [
     {
-      "auth": []
+      "bearerAuth": []
+    },
+    {
+      "apiKey": []
+    },
+    {
+      "session": []
     }
   ],
   "components": {
     "securitySchemes": {
-      "auth": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      },
+      "apiKey": {
+        "type": "apiKey",
+        "name": "X-API-Key",
+        "in": "header"
+      },
+      "session": {
         "type": "apiKey",
         "name": "session",
         "in": "cookie"
@@ -1118,28 +1136,6 @@
           "items"
         ]
       },
-      "UpsertRequest": {
-        "properties": {
-          "owner": {
-            "type": "string",
-            "format": "email"
-          },
-          "stage": {
-            "type": "string",
-            "enum": [
-              "draft",
-              "active",
-              "archived"
-            ],
-            "default": "draft"
-          }
-        },
-        "type": "object",
-        "required": [
-          "owner",
-          "stage"
-        ]
-      },
       "ImportRequest": {
         "properties": {
           "File": {
@@ -1160,6 +1156,28 @@
         "required": [
           "File",
           "Mode"
+        ]
+      },
+      "UpsertRequest": {
+        "properties": {
+          "owner": {
+            "type": "string",
+            "format": "email"
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "active",
+              "archived"
+            ],
+            "default": "draft"
+          }
+        },
+        "type": "object",
+        "required": [
+          "owner",
+          "stage"
         ]
       },
       "SyncRequest": {

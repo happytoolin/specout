@@ -31,6 +31,7 @@ func TestVerifyPassesOnFullCoverage(t *testing.T) {
 	hit := func(method, target, body string) {
 		req := httptest.NewRequest(method, target, strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer demo-token")
 		rec.ServeHTTP(httptest.NewRecorder(), req)
 	}
 

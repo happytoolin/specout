@@ -38,6 +38,7 @@ func HandleList(d Deps) specout.Handler[onboarding.ListRequest, onboarding.Page]
 			api.JSON(w, http.StatusOK, onboarding.Page{Items: items})
 		},
 		Summary: "List onboarding records",
+		Public:  true, // reads are open
 		Tags:    []string{"onboarding"},
 	}
 }
@@ -88,7 +89,7 @@ func HandleGet(d Deps) specout.Handler[struct{}, onboarding.Onboarding] {
 		},
 		Summary: "Fetch one onboarding record",
 		Tags:    []string{"onboarding"},
-		Public:  true, // reading one record needs no session cookie
+		Public:  true, // reads are open
 	}
 }
 
@@ -154,6 +155,7 @@ func HandleLegacyGet(d Deps) specout.Handler[struct{}, onboarding.Onboarding] {
 			api.JSON(w, http.StatusOK, ob)
 		},
 		Summary:    "Replaced by GET /onboarding/{id}",
+		Public:     true,
 		Tags:       []string{"onboarding"},
 		Deprecated: true,
 	}

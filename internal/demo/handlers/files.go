@@ -32,6 +32,7 @@ func HandleReport(d Deps) specout.Handler[struct{}, struct{}] {
 			w.Write([]byte("%PDF-1.4 demo report"))
 		},
 		Summary: "Download the activity report",
+		Public:  true, // the report link is shareable
 		Tags:    []string{"files"},
 		// overrides the struct{} 204 default: this route returns a PDF at 200
 		Responses: []specout.Response{

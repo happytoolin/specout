@@ -1301,11 +1301,11 @@ specout.RequireDocumented(t, r, specout.Skip("/debug/*"))</code></pre>
   <h2><span class="num">17</span>API index</h2>
   <h3>doc</h3>
   <span class="sig"><b>func</b> New(cfg Config) *Generator
-<b>type</b> Config <b>struct</b> { Title, Version, Description <b>string</b>; Servers []Server; Auth AuthScheme; Tags []Tag; ErrorType <b>any</b>; DefaultErrors []<b>int</b>; ClosedSchemas <b>bool</b>; JSONDialect Dialect }
+<b>type</b> Config <b>struct</b> { Title, Version, Description <b>string</b>; Servers []Server; Auth []AuthScheme; Tags []Tag; ErrorType <b>any</b>; DefaultErrors []<b>int</b>; ClosedSchemas <b>bool</b>; ExternalDocs *ExternalDocs; JSONDialect Dialect }
 <b>type</b> ExternalDocs <b>struct</b> { URL, Description <b>string</b> }
-<b>type</b> AuthScheme <b>struct</b> { Type, Name, In, URL <b>string</b> }
+<b>type</b> AuthScheme <b>struct</b> { Name, Type, Key, In, URL <b>string</b> }
 <b>var</b> Bearer = AuthScheme{Type: "httpBearer"}
-<b>func</b> APIKey(name, in <b>string</b>) AuthScheme
+<b>func</b> APIKey(scheme, key, in <b>string</b>) AuthScheme
 <b>const</b> InHeader, InQuery, InCookie = "header", "query", "cookie"
 
 <b>func</b> (d *Generator) Get[Req, Res <b>any</b>](r chi.Router, pattern <b>string</b>, h Handler[Req, Res])

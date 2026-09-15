@@ -51,7 +51,7 @@ func (d *Generator) build() (*obj, error) {
 		if rec.deprecated {
 			op.set("deprecated", true)
 		}
-		if rec.public && d.cfg.Auth != (AuthScheme{}) {
+		if rec.public && len(d.cfg.Auth) > 0 {
 			op.set("security", []any{})
 		}
 		if len(rec.tags) > 0 {
@@ -85,9 +85,15 @@ func (d *Generator) build() (*obj, error) {
 	// security: one named scheme, top-level requirement; per-op override
 	// on public routes (security: []).
 	components := newObj()
-	if d.cfg.Auth != (AuthScheme{}) {
-		components.set("securitySchemes", newObj().set("auth", securitySchemeObj(d.cfg.Auth)))
-		spec.set("security", []any{newObj().set("auth", []any{})})
+	if len(d.cfg.Auth) > 0 {
+		schemes := newObj()
+		alts := make([]any, 0, len(d.cfg.Auth))
+		for _, a := range d.cfg.Auth {
+			schemes.set(a.Name, securitySchemeObj(a))
+			alts = append(alts, newObj().set(a.Name, []any{}))
+		}
+		components.set("securitySchemes", schemes)
+		spec.set("security", alts)
 	}
 	if len(sr.order) > 0 {
 		schemas := newObj()
@@ -131,7 +137,7 @@ func securitySchemeObj(a AuthScheme) *obj {
 	case "httpBearer":
 		o.set("type", "http").set("scheme", "bearer")
 	case "apiKey":
-		o.set("type", "apiKey").set("name", a.Name).set("in", a.In)
+		o.set("type", "apiKey").set("name", a.Key).set("in", a.In)
 	case "openIdConnect":
 		o.set("type", "openIdConnect").set("openIdConnectUrl", a.URL)
 	default:

@@ -110,11 +110,15 @@ Responses: []specout.Response{
 **Auth** — declare once, every operation inherits it:
 
 ```go
-Auth: specout.Bearer                              // http bearer
-Auth: specout.APIKey("session", specout.InCookie) // api key: header/query/cookie
+Auth: []specout.AuthScheme{
+    specout.Bearer,                                          // Authorization: Bearer <token>
+    specout.APIKey("apiKey", "X-API-Key", specout.InHeader),  // X-API-Key header
+    specout.APIKey("session", "session", specout.InCookie),   // session cookie
+}
 ```
 
-Public routes opt out with `Public: true` on the Handler.
+Any one scheme satisfies auth (OR semantics). Public routes opt out with
+`Public: true` on the Handler.
 
 **Operations** — `Summary`, `Description`, `Tags`, `Deprecated` on each Handler;
 `operationId` derives deterministically from method+path (`getOnboardingId`).
@@ -143,6 +147,7 @@ A realistic multi-package service — every route shape in one app:
 |---|---|
 | `GET /onboarding` | cookie + header + query params on one request type |
 | `GET /onboarding/{id}` | path params, `Public: true` (no auth needed) |
+| auth (all routes) | three OR'd schemes: Bearer, X-API-Key header, session cookie; enforced by demo middleware in `internal/demo/auth` |
 | `PUT /onboarding/{id}` | multi-status upsert (200/201), Location header, 422 override |
 | `POST /onboarding/{id}/sync` | optimistic concurrency, rich 409 body, 401 omitted, Description |
 | `POST /files/import` | `specout.File` field → multipart/form-data |

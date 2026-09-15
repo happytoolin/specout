@@ -7,7 +7,7 @@ type Config struct {
 	Version       string
 	Description   string
 	Servers       []Server
-	Auth          AuthScheme
+	Auth          []AuthScheme
 	ExternalDocs  *ExternalDocs
 	Tags          []Tag
 	ErrorType     any
@@ -34,23 +34,22 @@ type ExternalDocs struct {
 	Description string
 }
 
-// AuthScheme is a security scheme declaration. Phase 1 ships Bearer as the
-// only named value; more schemes arrive with later phases.
 // AuthScheme is a security scheme declaration, doc-only: it emits the
-// securitySchemes component and a top-level security requirement named
-// "auth". Handlers opt out per route with Public.
+// securitySchemes component and one top-level security alternative per
+// scheme (any one satisfies). Handlers opt out per route with Public.
 type AuthScheme struct {
-	Type string // http/bearer, apiKey, openIdConnect (raw OpenAPI type strings)
-	Name string // apiKey parameter name
+	Name string // scheme name in securitySchemes (e.g. "bearerAuth")
+	Type string // httpBearer, apiKey, openIdConnect
+	Key  string // apiKey parameter name
 	In   string // apiKey parameter location: header, query, cookie
 	URL  string // openIdConnect well-known URL
 }
 
-var Bearer = AuthScheme{Type: "httpBearer"}
+var Bearer = AuthScheme{Name: "bearerAuth", Type: "httpBearer"}
 
 // APIKey declares an API-key auth in a header, query param, or cookie.
-func APIKey(name, in string) AuthScheme {
-	return AuthScheme{Type: "apiKey", Name: name, In: in}
+func APIKey(scheme, key, in string) AuthScheme {
+	return AuthScheme{Name: scheme, Type: "apiKey", Key: key, In: in}
 }
 
 const (

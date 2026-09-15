@@ -24,9 +24,12 @@ type docRes struct {
 // scheme, Public opt-out, ExternalDocs.
 func TestDocFields(t *testing.T) {
 	d := specout.New(specout.Config{
-		Title:        "t",
-		Version:      "1",
-		Auth:         specout.APIKey("session", specout.InCookie),
+		Title:   "t",
+		Version: "1",
+		Auth: []specout.AuthScheme{
+			specout.Bearer,
+			specout.APIKey("apiKey", "X-API-Key", specout.InHeader),
+		},
 		ExternalDocs: &specout.ExternalDocs{URL: "https://x.example"},
 	})
 	r := chi.NewRouter()
@@ -67,13 +70,19 @@ func TestDocFields(t *testing.T) {
 		t.Error("non-public route should inherit top-level security")
 	}
 
-	// scheme + top-level security
-	schemes := doc["components"].(map[string]any)["securitySchemes"].(map[string]any)["auth"].(map[string]any)
-	if schemes["type"] != "apiKey" || schemes["in"] != "cookie" {
-		t.Errorf("scheme = %v", schemes)
+	// schemes + top-level security alternatives (OR semantics)
+	schemes := doc["components"].(map[string]any)["securitySchemes"].(map[string]any)
+	bearer := schemes["bearerAuth"].(map[string]any)
+	if bearer["type"] != "http" || bearer["scheme"] != "bearer" {
+		t.Errorf("bearer = %v", bearer)
 	}
-	if doc["security"] == nil {
-		t.Error("top-level security missing")
+	apikey := schemes["apiKey"].(map[string]any)
+	if apikey["type"] != "apiKey" || apikey["name"] != "X-API-Key" || apikey["in"] != "header" {
+		t.Errorf("apiKey = %v", apikey)
+	}
+	sec := doc["security"].([]any)
+	if len(sec) != 2 {
+		t.Errorf("security alternatives = %d, want 2", len(sec))
 	}
 
 	// public route: security: []
