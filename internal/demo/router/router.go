@@ -24,6 +24,8 @@ func New() (*specout.Generator, http.Handler) {
 		Description:   "specout demo service — every route shape in one app.",
 		ErrorType:     api.Problem{},
 		DefaultErrors: []int{400, 401, 403, 404, 409, 500},
+		Auth:          specout.APIKey("session", specout.InCookie),
+		ExternalDocs:  &specout.ExternalDocs{URL: "https://docs.example.com/onboarding", Description: "Full guides"},
 		Servers:       []specout.Server{{URL: "http://localhost:8080", Description: "development"}},
 		Tags: []specout.Tag{
 			{Name: "onboarding", Description: "Onboarding lifecycle"},
@@ -51,7 +53,7 @@ func New() (*specout.Generator, http.Handler) {
 		d.Post(r, "/", handlers.HandleCreate(deps))
 
 		r.Route("/{id}", func(r chi.Router) {
-			d.Get(r, "/", handlers.HandleGet(deps))
+			d.Get(r, "/", handlers.HandleGet(deps)) // public: no session cookie needed to read one
 			d.Put(r, "/", handlers.HandleUpsert(deps))
 			d.Delete(r, "/", handlers.HandleDelete(deps))
 			d.Post(r, "/sync", handlers.HandleSync(deps))

@@ -44,8 +44,15 @@ func (d *Generator) build() (*obj, error) {
 		if rec.summary != "" {
 			op.set("summary", rec.summary)
 		}
+		if rec.description != "" {
+			op.set("description", rec.description)
+		}
+		op.set("operationId", operationID(rec.method, rec.full))
 		if rec.deprecated {
 			op.set("deprecated", true)
+		}
+		if rec.public && d.cfg.Auth != (AuthScheme{}) {
+			op.set("security", []any{})
 		}
 		if len(rec.tags) > 0 {
 			op.set("tags", toAny(rec.tags))
@@ -53,7 +60,7 @@ func (d *Generator) build() (*obj, error) {
 		// path params from the resolved pattern, query params from Req tags
 		var parameters []any
 		parameters = append(parameters, pathParamObjs(rec.full)...)
-		qp, hasBody := queryParams(rec.req, sr)
+		qp, hasBody := taggedParams(rec.req, sr)
 		parameters = append(parameters, qp...)
 		if len(parameters) > 0 {
 			op.set("parameters", parameters)
@@ -73,15 +80,63 @@ func (d *Generator) build() (*obj, error) {
 		pathItem.(*obj).set(strings.ToLower(rec.method), op)
 	}
 	spec.set("paths", paths)
+
+	// security: one named scheme, top-level requirement; per-op override
+	// on public routes (security: []).
+	components := newObj()
+	if d.cfg.Auth != (AuthScheme{}) {
+		components.set("securitySchemes", newObj().set("auth", securitySchemeObj(d.cfg.Auth)))
+		spec.set("security", []any{newObj().set("auth", []any{})})
+	}
 	if len(sr.order) > 0 {
 		schemas := newObj()
 		for _, t := range sr.order {
 			e := sr.byType[t]
 			schemas.set(e.name, e.s)
 		}
-		spec.set("components", newObj().set("schemas", schemas))
+		components.set("schemas", schemas)
+	}
+	if len(components.keys) > 0 {
+		spec.set("components", components)
+	}
+	if d.cfg.ExternalDocs != nil {
+		spec.set("externalDocs", newObj().
+			set("url", d.cfg.ExternalDocs.URL).
+			set("description", d.cfg.ExternalDocs.Description))
 	}
 	return spec, nil
+}
+
+// operationID derives a deterministic id from method+path:
+// GET /onboarding/{id}/sync -> getOnboardingByIdSync
+func operationID(method, path string) string {
+	var b strings.Builder
+	b.WriteString(strings.ToLower(method))
+	for _, seg := range strings.Split(strings.Trim(path, "/"), "/") {
+		if seg == "" {
+			continue
+		}
+		seg = strings.Trim(seg, "{}")
+		b.WriteString(strings.ToUpper(seg[:1]) + seg[1:])
+	}
+	return b.String()
+}
+
+// securitySchemeObj builds the named scheme entry from the doc-only
+// AuthScheme declaration.
+func securitySchemeObj(a AuthScheme) *obj {
+	o := newObj()
+	switch a.Type {
+	case "httpBearer":
+		o.set("type", "http").set("scheme", "bearer")
+	case "apiKey":
+		o.set("type", "apiKey").set("name", a.Name).set("in", a.In)
+	case "openIdConnect":
+		o.set("type", "openIdConnect").set("openIdConnectUrl", a.URL)
+	default:
+		o.set("type", a.Type)
+	}
+	return o
 }
 
 func (d *Generator) flatRecords() []*routeRecord {

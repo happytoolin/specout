@@ -840,6 +840,8 @@ type UpsertOnboardingRequest struct {
       <tr><td><code>readOnly</code> / <code>writeOnly</code></td><td>tag</td><td>see shared types, §08</td></tr>
       <tr><td><code>additionalProperties: false</code></td><td>config <code>ClosedSchemas: true</code></td><td>clients love closed schemas</td></tr>
       <tr><td>query vs body location</td><td><code>query</code> tag</td><td>fields become operation parameters</td></tr>
+      <tr><td>cookie parameter</td><td><code>cookie</code> tag</td><td><code>in: cookie</code> operation parameter</td></tr>
+      <tr><td>header parameter</td><td><code>header</code> tag</td><td><code>in: header</code> operation parameter (e.g. X-Trace-Id)</td></tr>
     </tbody>
   </table>
 
@@ -1300,6 +1302,11 @@ specout.RequireDocumented(t, r, specout.Skip("/debug/*"))</code></pre>
   <h3>doc</h3>
   <span class="sig"><b>func</b> New(cfg Config) *Generator
 <b>type</b> Config <b>struct</b> { Title, Version, Description <b>string</b>; Servers []Server; Auth AuthScheme; Tags []Tag; ErrorType <b>any</b>; DefaultErrors []<b>int</b>; ClosedSchemas <b>bool</b>; JSONDialect Dialect }
+<b>type</b> ExternalDocs <b>struct</b> { URL, Description <b>string</b> }
+<b>type</b> AuthScheme <b>struct</b> { Type, Name, In, URL <b>string</b> }
+<b>var</b> Bearer = AuthScheme{Type: "httpBearer"}
+<b>func</b> APIKey(name, in <b>string</b>) AuthScheme
+<b>const</b> InHeader, InQuery, InCookie = "header", "query", "cookie"
 
 <b>func</b> (d *Generator) Get[Req, Res <b>any</b>](r chi.Router, pattern <b>string</b>, h Handler[Req, Res])
 <span style="color:var(--text-dim)">// Head/Post/Put/Patch/Delete/Options/Trace identical — the chi verb set</span>
@@ -1309,7 +1316,7 @@ specout.RequireDocumented(t, r, specout.Skip("/debug/*"))</code></pre>
 <b>func</b> (d *Generator) WriteJSON(w io.Writer) error</span>
 
   <h3>specout — handlers &amp; responses</h3>
-  <span class="sig"><b>type</b> Handler[Req, Res <b>any</b>] <b>struct</b> { http.HandlerFunc; Responses []Response; Tags []string; Summary string; Deprecated <b>bool</b> }
+  <span class="sig"><b>type</b> Handler[Req, Res <b>any</b>] <b>struct</b> { http.HandlerFunc; Responses []Response; Tags []string; Summary string; Description string; Deprecated <b>bool</b>; Public <b>bool</b> }
 <b>func</b> (h Handler[Req, Res]) Types() (req, res reflect.Type)
 
 <b>type</b> Documented <b>interface</b> { Types() (req, res reflect.Type) }

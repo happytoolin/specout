@@ -8,6 +8,7 @@ type Config struct {
 	Description   string
 	Servers       []Server
 	Auth          AuthScheme
+	ExternalDocs  *ExternalDocs
 	Tags          []Tag
 	ErrorType     any
 	DefaultErrors []int
@@ -27,11 +28,36 @@ type Tag struct {
 	Description string
 }
 
+// ExternalDocs links to external documentation.
+type ExternalDocs struct {
+	URL         string
+	Description string
+}
+
 // AuthScheme is a security scheme declaration. Phase 1 ships Bearer as the
 // only named value; more schemes arrive with later phases.
-type AuthScheme string
+// AuthScheme is a security scheme declaration, doc-only: it emits the
+// securitySchemes component and a top-level security requirement named
+// "auth". Handlers opt out per route with Public.
+type AuthScheme struct {
+	Type string // http/bearer, apiKey, openIdConnect (raw OpenAPI type strings)
+	Name string // apiKey parameter name
+	In   string // apiKey parameter location: header, query, cookie
+	URL  string // openIdConnect well-known URL
+}
 
-const Bearer AuthScheme = "bearer"
+var Bearer = AuthScheme{Type: "httpBearer"}
+
+// APIKey declares an API-key auth in a header, query param, or cookie.
+func APIKey(name, in string) AuthScheme {
+	return AuthScheme{Type: "apiKey", Name: name, In: in}
+}
+
+const (
+	InHeader = "header"
+	InQuery  = "query"
+	InCookie = "cookie"
+)
 
 // Dialect selects how struct tags are interpreted for schema generation.
 type Dialect int

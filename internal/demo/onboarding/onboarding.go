@@ -26,9 +26,11 @@ type UpsertRequest struct {
 }
 
 type ListRequest struct {
-	Limit  int    `query:"limit"  jsonschema:"default=20,minimum=1,maximum=100"`
-	Cursor string `query:"cursor" jsonschema:"description=Opaque cursor from a previous page"`
-	Sort   string `query:"sort"   jsonschema:"enum=created|updated,default=created"`
+	Session string `cookie:"session"    jsonschema:"description=Session cookie from login"`
+	Limit   int    `query:"limit"      jsonschema:"default=20,minimum=1,maximum=100"`
+	Cursor  string `query:"cursor"     jsonschema:"description=Opaque cursor from a previous page"`
+	Sort    string `query:"sort"       jsonschema:"enum=created|updated,default=created"`
+	Trace   string `header:"X-Trace-Id" jsonschema:"description=Client trace id for debugging"`
 }
 
 type Page struct {

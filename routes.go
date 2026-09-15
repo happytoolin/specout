@@ -14,23 +14,27 @@ type chiRouter = chi.Router
 // routeRecord holds metadata captured at registration time. Full paths
 // resolve at build time from a walk of the live router.
 type routeRecord struct {
-	method     string
-	pattern    string // as passed at registration; chi patterns are relative
-	req, res   reflect.Type
-	responses  []Response
-	tags       []string
-	summary    string
-	deprecated bool
-	fn         http.HandlerFunc // identity key
-	full       string           // resolved full path, set at build
+	method      string
+	pattern     string // as passed at registration; chi patterns are relative
+	req, res    reflect.Type
+	responses   []Response
+	tags        []string
+	summary     string
+	description string
+	deprecated  bool
+	public      bool
+	fn          http.HandlerFunc // identity key
+	full        string           // resolved full path, set at build
 }
 
 // HandlerMeta is the operation-level metadata carried on a Handler.
 type HandlerMeta struct {
-	Responses  []Response
-	Tags       []string
-	Summary    string
-	Deprecated bool
+	Responses   []Response
+	Tags        []string
+	Summary     string
+	Description string
+	Deprecated  bool
+	Public      bool
 }
 
 // metaer lets register pull HandlerMeta off any Handler instantiation

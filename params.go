@@ -19,9 +19,9 @@ func pathParams(pattern string) []string {
 	return out
 }
 
-// queryParams reflects Req fields carrying a 'query' tag into OpenAPI
-// parameters. Returns (params, hasBodyFields).
-func queryParams(req reflect.Type, sr *schemaRegistry) ([]any, bool) {
+// taggedParams reflects Req fields carrying a query/header/cookie tag into
+// OpenAPI parameters. Returns (params, hasBodyFields).
+func taggedParams(req reflect.Type, sr *schemaRegistry) ([]any, bool) {
 	if req == nil {
 		return nil, false
 	}
@@ -38,8 +38,15 @@ func queryParams(req reflect.Type, sr *schemaRegistry) ([]any, bool) {
 		if f.PkgPath != "" {
 			continue
 		}
-		qt := f.Tag.Get("query")
-		if qt == "" || qt == "-" {
+		loc := ""
+		var qt string
+		for _, l := range []string{"query", "header", "cookie"} {
+			if t := f.Tag.Get(l); t != "" {
+				loc, qt = l, t
+				break
+			}
+		}
+		if loc == "" || parts0(qt) == "-" {
 			hasBody = true
 			continue
 		}
@@ -54,7 +61,7 @@ func queryParams(req reflect.Type, sr *schemaRegistry) ([]any, bool) {
 		}
 		p := newObj().
 			set("name", name).
-			set("in", "query").
+			set("in", loc).
 			set("required", !strings.Contains(qt, ",omitempty") && !strings.Contains(f.Tag.Get("json"), "omitempty")).
 			set("schema", fs)
 		if desc := tagValue(f.Tag.Get("jsonschema"), "description"); desc != "" {

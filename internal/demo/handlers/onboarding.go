@@ -88,6 +88,7 @@ func HandleGet(d Deps) specout.Handler[struct{}, onboarding.Onboarding] {
 		},
 		Summary: "Fetch one onboarding record",
 		Tags:    []string{"onboarding"},
+		Public:  true, // reading one record needs no session cookie
 	}
 }
 

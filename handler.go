@@ -11,10 +11,12 @@ import (
 // nothing else.
 type Handler[Req, Res any] struct {
 	http.HandlerFunc
-	Responses  []Response
-	Tags       []string
-	Summary    string
-	Deprecated bool
+	Responses   []Response
+	Tags        []string
+	Summary     string
+	Description string
+	Deprecated  bool
+	Public      bool // exclude this operation from the global auth requirement
 }
 
 // Types reifies the type parameters, making them visible to reflection at

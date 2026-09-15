@@ -15,6 +15,7 @@
     "/onboarding/{id}/": {
       "delete": {
         "summary": "Delete an onboarding record",
+        "operationId": "deleteOnboardingId",
         "tags": [
           "onboarding"
         ],
@@ -96,6 +97,8 @@
       },
       "get": {
         "summary": "Fetch one onboarding record",
+        "operationId": "getOnboardingId",
+        "security": [],
         "tags": [
           "onboarding"
         ],
@@ -184,6 +187,7 @@
       },
       "put": {
         "summary": "Create or replace an onboarding record",
+        "operationId": "putOnboardingId",
         "tags": [
           "onboarding"
         ],
@@ -302,10 +306,20 @@
     "/onboarding/": {
       "get": {
         "summary": "List onboarding records",
+        "operationId": "getOnboarding",
         "tags": [
           "onboarding"
         ],
         "parameters": [
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Session cookie from login"
+          },
           {
             "name": "limit",
             "in": "query",
@@ -330,6 +344,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "X-Trace-Id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Client trace id for debugging"
           }
         ],
         "responses": {
@@ -407,6 +430,7 @@
       },
       "post": {
         "summary": "Create an onboarding record",
+        "operationId": "postOnboarding",
         "tags": [
           "onboarding"
         ],
@@ -512,6 +536,7 @@
     "/files/report": {
       "get": {
         "summary": "Download the activity report",
+        "operationId": "getFilesReport",
         "tags": [
           "files"
         ],
@@ -593,6 +618,7 @@
     "/legacy": {
       "get": {
         "summary": "Replaced by GET /onboarding/{id}",
+        "operationId": "getLegacy",
         "deprecated": true,
         "tags": [
           "onboarding"
@@ -674,6 +700,7 @@
     "/files/import": {
       "post": {
         "summary": "Bulk import from CSV",
+        "operationId": "postFilesImport",
         "tags": [
           "files"
         ],
@@ -755,6 +782,8 @@
     "/onboarding/{id}/sync": {
       "post": {
         "summary": "Sync a record against an expected version",
+        "description": "Optimistic concurrency: the client sends the version it last saw; a mismatch returns 409 with the current version and a resolve URL.",
+        "operationId": "postOnboardingIdSync",
         "tags": [
           "sync"
         ],
@@ -853,6 +882,7 @@
     "/webhooks": {
       "post": {
         "summary": "Register a webhook (email or slack)",
+        "operationId": "postWebhooks",
         "tags": [
           "webhooks"
         ],
@@ -939,7 +969,19 @@
       }
     }
   },
+  "security": [
+    {
+      "auth": []
+    }
+  ],
   "components": {
+    "securitySchemes": {
+      "auth": {
+        "type": "apiKey",
+        "name": "session",
+        "in": "cookie"
+      }
+    },
     "schemas": {
       "Problem": {
         "properties": {
@@ -1268,5 +1310,9 @@
         ]
       }
     }
+  },
+  "externalDocs": {
+    "url": "https://docs.example.com/onboarding",
+    "description": "Full guides"
   }
 }
