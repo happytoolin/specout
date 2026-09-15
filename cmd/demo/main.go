@@ -1,0 +1,51 @@
+package main
+
+import (
+	"fmt"
+	"html/template"
+	"net/http"
+	"os"
+
+	"github.com/happytoolin/specout/internal/demoapp"
+)
+
+// GO_SPEC_ONLY=1 ./demo > openapi.json makes CI golden-diff possible from
+// the same binary that serves.
+const uiPage = `<!DOCTYPE html>
+<html>
+<head>
+  <title>specout demo</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+</head>
+<body>
+<div id="swagger-ui"></div>
+<script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+<script>
+  window.ui = SwaggerUIBundle({ url: '/openapi.json', dom_id: '#swagger-ui' })
+</script>
+</body>
+</html>`
+
+func main() {
+	d, r, _ := demoapp.New()
+
+	if os.Getenv("GO_SPEC_ONLY") != "" {
+		if err := d.WriteJSON(os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path == "/" {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			template.Must(template.New("ui").Parse(uiPage)).Execute(w, nil)
+			return
+		}
+		r.ServeHTTP(w, req)
+	})
+	fmt.Println("swagger ui: http://localhost:8080/  spec: http://localhost:8080/openapi.json")
+	http.ListenAndServe(":8080", mux)
+}

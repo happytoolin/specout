@@ -11,6 +11,16 @@
         "tags": [
           "onboarding"
         ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "204": {
             "description": "No content"
@@ -50,6 +60,16 @@
       "get": {
         "tags": [
           "onboarding"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "responses": {
           "200": {
@@ -98,6 +118,26 @@
         "tags": [
           "onboarding"
         ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpsertRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "OK",
@@ -157,6 +197,16 @@
         "tags": [
           "onboarding"
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpsertRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "OK",
@@ -278,7 +328,6 @@
             "type": "string"
           }
         },
-        "additionalProperties": false,
         "type": "object",
         "required": [
           "type",
@@ -299,11 +348,12 @@
             "stage": {
               "type": "string",
               "enum": [
-                "draft|active|archived"
+                "draft",
+                "active",
+                "archived"
               ]
             }
           },
-          "additionalProperties": false,
           "type": "object",
           "required": [
             "id",
@@ -325,14 +375,30 @@
           "stage": {
             "type": "string",
             "enum": [
-              "draft|active|archived"
+              "draft",
+              "active",
+              "archived"
             ]
           }
         },
-        "additionalProperties": false,
         "type": "object",
         "required": [
           "id",
+          "owner",
+          "stage"
+        ]
+      },
+      "UpsertRequest": {
+        "properties": {
+          "owner": {
+            "type": "string"
+          },
+          "stage": {
+            "type": "string"
+          }
+        },
+        "type": "object",
+        "required": [
           "owner",
           "stage"
         ]

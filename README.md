@@ -18,8 +18,37 @@ Handlers stay raw `http.HandlerFunc` factories; the generic return type carries 
 registration is compile-checked (Go 1.27+); the spec builds from the live router so it can't
 drift; a recorder in your test suite fails CI when reality and declaration disagree.
 
+## Demo
+
+```sh
+go run ./cmd/demo
+# swagger ui: http://localhost:8080/
+# spec:        http://localhost:8080/openapi.json
+```
+
+The demo mounts every route shape the library supports: CRUD with groups and
+subrouters, query params, multi-status upsert, per-route error overrides and
+omissions, file upload/download, unions with discriminator, readOnly/writeOnly
+shared types, custom scalar schemas via JSONSchema(), and a deprecated route.
+
+CI export from the same binary:
+
+```sh
+GO_SPEC_ONLY=1 go run ./cmd/demo > openapi.json
+```
+
+## Status
+
+- [x] Phase 0 — scaffold, CI
+- [x] Phase 1 — core loop: registration, walk stitching, deterministic serve, golden fixture
+- [x] Phase 2 — schema layer: tags, dialects, nullable, ClosedSchemas, unions, JSONSchema()
+- [x] Phase 3 — responses: merge rules, Headers, File/Binary, InjectExamples
+- [x] Phase 4 — specoutapi: Responder, Decode, SendFile, Problem, DetailedError
+- [x] Phase 5 — verification: recorder.Verify, RequireDocumented
+- [ ] Phase 6 — README polish, golden-diff CI job (blocked on git; see note)
+
 - [PLAN.md](PLAN.md) — implementation plan, decision ledger, acceptance criteria
 - [docs/api-reference.html](docs/api-reference.html) — full public API reference
 - [docs/design-discussion.md](docs/design-discussion.md) — design conversation & rationale
 
-Routers: std `http.ServeMux` + chi. Status: design complete, implementation starting.
+Routers: std `http.ServeMux` + chi.
