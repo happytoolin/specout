@@ -66,16 +66,16 @@ func (d *Generator) lookup(ptr uintptr) ([]*routeRecord, bool) {
 // Route/Mount prefixes invisibly, so as-passed patterns are not trustworthy;
 // where several routers see the same handler (subrouter before and after
 // Mount), the longest walk path wins — it carries the mount prefix.
-func (d *Generator) walkAll() (map[rkey]string, error) {
-	hits := make(map[rkey]string)
+// walkAll collects every full path each handler+method appears at. One
+// handler may be registered on several routes; all walked paths are kept
+// so each registration can claim one.
+func (d *Generator) walkAll() (map[rkey][]string, error) {
+	hits := make(map[rkey][]string)
 	for _, root := range d.chiRoots {
 		err := chi.Walk(root, func(method, route string, handler http.Handler, _ ...func(http.Handler) http.Handler) error {
 			ptr := reflect.ValueOf(handler).Pointer()
 			k := rkey{ptr, method}
-			if cur, ok := hits[k]; ok && len(cur) >= len(route) {
-				return nil
-			}
-			hits[k] = route
+			hits[k] = append(hits[k], route)
 			return nil
 		})
 		if err != nil {

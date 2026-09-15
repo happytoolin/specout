@@ -1027,30 +1027,25 @@
         "properties": {
           "id": {
             "type": "string",
-            "readOnly": true,
             "examples": [
               "onb_4f9x"
             ]
           },
           "createdAt": {
             "type": "string",
-            "format": "date-time",
-            "readOnly": true
+            "format": "date-time"
           },
           "owner": {
             "type": "string",
             "format": "email"
           },
           "apiKey": {
-            "type": "string",
-            "writeOnly": true
+            "type": "string"
           },
           "stage": {
             "type": "string",
             "enum": [
-              "draft",
-              "active",
-              "archived"
+              "draft|active|archived"
             ],
             "default": "draft"
           },
@@ -1059,12 +1054,9 @@
             "maxLength": 500
           },
           "expiry": {
+            "type": "string",
             "format": "date-time",
-            "description": "Optional expiry",
-            "type": [
-              "string",
-              "null"
-            ]
+            "description": "Optional expiry"
           }
         },
         "type": "object",
@@ -1079,50 +1071,7 @@
         "properties": {
           "items": {
             "items": {
-              "properties": {
-                "id": {
-                  "type": "string",
-                  "examples": [
-                    "onb_4f9x"
-                  ]
-                },
-                "createdAt": {
-                  "type": "string",
-                  "format": "date-time"
-                },
-                "owner": {
-                  "type": "string",
-                  "format": "email"
-                },
-                "apiKey": {
-                  "type": "string"
-                },
-                "stage": {
-                  "type": "string",
-                  "enum": [
-                    "draft",
-                    "active",
-                    "archived"
-                  ],
-                  "default": "draft"
-                },
-                "note": {
-                  "type": "string",
-                  "maxLength": 500
-                },
-                "expiry": {
-                  "type": "string",
-                  "format": "date-time",
-                  "description": "Optional expiry"
-                }
-              },
-              "type": "object",
-              "required": [
-                "id",
-                "createdAt",
-                "owner",
-                "stage"
-              ]
+              "$ref": "#/components/schemas/Onboarding"
             },
             "type": "array"
           },
@@ -1236,25 +1185,7 @@
         "properties": {
           "problems": {
             "items": {
-              "properties": {
-                "field": {
-                  "type": "string",
-                  "examples": [
-                    "owner"
-                  ]
-                },
-                "message": {
-                  "type": "string",
-                  "examples": [
-                    "must be a valid email"
-                  ]
-                }
-              },
-              "type": "object",
-              "required": [
-                "field",
-                "message"
-              ]
+              "$ref": "#/components/schemas/FieldProblem"
             },
             "type": "array"
           }
@@ -1325,6 +1256,31 @@
         "required": [
           "kind",
           "data"
+        ]
+      },
+      "File": {
+        "properties": {},
+        "type": "object"
+      },
+      "FieldProblem": {
+        "properties": {
+          "field": {
+            "type": "string",
+            "examples": [
+              "owner"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "examples": [
+              "must be a valid email"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "field",
+          "message"
         ]
       }
     }

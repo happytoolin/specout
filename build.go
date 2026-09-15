@@ -101,6 +101,9 @@ func (d *Generator) build() (*obj, error) {
 			e := sr.byType[t]
 			schemas.set(e.name, e.s)
 		}
+		for _, n := range sr.nameOrder {
+			schemas.set(n, sr.byName[n])
+		}
 		components.set("schemas", schemas)
 	}
 	if len(components.keys) > 0 {
@@ -180,6 +183,9 @@ func NormalizePath(p string) string {
 }
 
 // resolvePathsLocked stitches full paths via chi walks. Caller holds d.mu.
+// A handler registered on several routes gets one walked path per
+// registration; dedupe is per handler+method key, longest path first so
+// full paths (through the serving root) beat relative inner-group paths.
 func (d *Generator) resolvePathsLocked() {
 	if d.resolved {
 		return
@@ -188,10 +194,22 @@ func (d *Generator) resolvePathsLocked() {
 	if err != nil {
 		return
 	}
+	claimed := map[rkey]map[string]bool{}
 	for _, recs := range d.routes {
 		for _, rec := range recs {
-			if hit, ok := hits[rkey{reflect.ValueOf(rec.fn).Pointer(), rec.method}]; ok {
-				rec.full = hit
+			k := rkey{reflect.ValueOf(rec.fn).Pointer(), rec.method}
+			paths := hits[k]
+			sort.Slice(paths, func(i, j int) bool { return len(paths[i]) > len(paths[j]) })
+			for _, p := range paths {
+				if claimed[k][p] {
+					continue
+				}
+				rec.full = p
+				if claimed[k] == nil {
+					claimed[k] = map[string]bool{}
+				}
+				claimed[k][p] = true
+				break
 			}
 		}
 	}

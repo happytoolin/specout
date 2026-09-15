@@ -12,6 +12,8 @@ import (
 type schemaRegistry struct {
 	byType    map[reflect.Type]*schemaEntry
 	order     []reflect.Type
+	byName    map[string]*jsonschema.Schema // hoisted $defs with no Go type
+	nameOrder []string
 	overrides map[reflect.Type]string // SchemaName[T] component-name overrides
 	variants  map[string]reflect.Type // Register[T] union variants, by name
 	closed    bool
@@ -26,6 +28,7 @@ type schemaEntry struct {
 func newSchemaRegistry(cfg Config) *schemaRegistry {
 	return &schemaRegistry{
 		byType:    make(map[reflect.Type]*schemaEntry),
+		byName:    make(map[string]*jsonschema.Schema),
 		overrides: make(map[reflect.Type]string),
 		variants:  make(map[string]reflect.Type),
 		closed:    cfg.ClosedSchemas,
@@ -54,11 +57,12 @@ func (sr *schemaRegistry) refFor(t reflect.Type) string {
 
 	r := &jsonschema.Reflector{
 		Anonymous:                 true,
-		DoNotReference:            true,
+		DoNotReference:            false,
 		AllowAdditionalProperties: !sr.closed,
 	}
 	s := r.Reflect(reflect.New(t).Interface())
 	s.Version = ""
+	s = sr.unwrapDefs(t, s)
 
 	// invopop's oneof_type splits on ";", our docs use "|" — normalize.
 	normalizeOneOf(s, sr)
@@ -98,6 +102,84 @@ func sanitizeName(t reflect.Type) string {
 	return lastSeg(n)
 }
 
+// unwrapDefs pulls a reflected schema out of its $ref/$defs wrapper.
+// The def named after t becomes the component body; sibling defs register
+// as components too. All #/$defs/ refs become #/components/schemas/ so
+// the emitted tree is self-contained.
+func (sr *schemaRegistry) unwrapDefs(t reflect.Type, s *jsonschema.Schema) *jsonschema.Schema {
+	if s == nil || len(s.Definitions) == 0 {
+		return s
+	}
+	name := sanitizeName(t)
+	body := s
+	if s.Ref != "" && strings.HasSuffix(s.Ref, "/"+name) {
+		body = s.Definitions[name]
+	}
+	for defName, def := range s.Definitions {
+		if defName == name {
+			continue
+		}
+		if sr.defByName(defName) == nil {
+			sr.addDef(defName, def)
+		}
+	}
+	remapDefs(body)
+	return body
+}
+
+// defByName finds a registered component emitted from a hoisted $def.
+func (sr *schemaRegistry) defByName(name string) *jsonschema.Schema {
+	return sr.byName[name]
+}
+
+// addDef registers a hoisted $def as a component directly by name; no
+// Go type backs it, so it rides the same order/byType machinery keyed by
+// a synthetic type.
+func (sr *schemaRegistry) addDef(name string, def *jsonschema.Schema) {
+	def.Version = ""
+	remapDefs(def)
+	if _, ok := sr.byName[name]; !ok {
+		sr.byName[name] = def
+		sr.nameOrder = append(sr.nameOrder, name)
+	}
+}
+
+// remapDefs rewrites #/$defs/ prefixes to #/components/schemas/ on every
+// schema node.
+func remapDefs(s *jsonschema.Schema) {
+	if s == nil {
+		return
+	}
+	if s.Ref != "" {
+		s.Ref = strings.Replace(s.Ref, "#/$defs/", "#/components/schemas/", 1)
+	}
+	for _, d := range s.Definitions {
+		remapDefs(d)
+	}
+	remapDefs(s.Items)
+	for _, x := range s.AllOf {
+		remapDefs(x)
+	}
+	for _, x := range s.AnyOf {
+		remapDefs(x)
+	}
+	for _, x := range s.OneOf {
+		remapDefs(x)
+	}
+	for _, x := range s.PrefixItems {
+		remapDefs(x)
+	}
+	if s.Properties != nil {
+		for k := range s.Properties.KeysFromOldest() {
+			v, _ := s.Properties.Get(k)
+			remapDefs(v)
+		}
+	}
+	remapDefs(s.AdditionalProperties)
+	for _, x := range s.PatternProperties {
+		remapDefs(x)
+	}
+}
 func lastSeg(s string) string {
 	if i := strings.LastIndex(s, "."); i >= 0 {
 		return s[i+1:]
@@ -253,14 +335,25 @@ func applyNullable(t reflect.Type, s *jsonschema.Schema) {
 			}
 		}
 		if p, ok := s.Properties.Get(name); ok && p != nil {
-			base := p.Type
-			p.Type = ""
-			if p.Extras == nil {
-				p.Extras = map[string]any{}
-			}
-			p.Extras["type"] = []string{base, "null"}
+			nullable(p)
 		}
 	}
+}
+
+// nullable makes a property schema accept null: plain types widen to
+// [T, "null"]; refs become anyOf: [{$ref}, {type: null}].
+func nullable(p *jsonschema.Schema) {
+	if p.Ref != "" {
+		p.OneOf = []*jsonschema.Schema{{Ref: p.Ref}, {Type: "null"}}
+		p.Ref = ""
+		return
+	}
+	base := p.Type
+	p.Type = ""
+	if p.Extras == nil {
+		p.Extras = map[string]any{}
+	}
+	p.Extras["type"] = []string{base, "null"}
 }
 
 // applyFieldTags handles keywords invopop misses: bare readonly/writeonly
