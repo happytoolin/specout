@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -8,32 +9,31 @@ import (
 	"github.com/happytoolin/specout"
 	"github.com/happytoolin/specout/internal/demo/api"
 	"github.com/happytoolin/specout/internal/demo/onboarding"
-	"github.com/happytoolin/specout/specoutapi"
 )
 
-// HandleSync shows the DetailedError flow: the store returns *ConflictError,
+// HandleSync shows the typed-error flow: the store returns *ConflictError,
 // the handler keeps ONE error exit, and the 409 body is SyncConflict — not
 // the global Problem. Declared in Responses, produced by Payload().
 func HandleSync(d Deps) specout.Handler[onboarding.SyncRequest, onboarding.SyncResult] {
 	return specout.Handler[onboarding.SyncRequest, onboarding.SyncResult]{
 		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
-			req, err := specoutapi.Decode[onboarding.SyncRequest](r)
-			if err != nil {
-				d.API.Err(w, r, err)
+			var req onboarding.SyncRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeErr(w, d, err)
 				return
 			}
 			if req.Expected < 0 {
-				d.API.Status(w, http.StatusUnprocessableEntity, api.ValidationError{
+				api.JSON(w, http.StatusUnprocessableEntity, api.ValidationError{
 					Problems: []api.FieldProblem{{Field: "expected", Message: "must be zero or positive"}},
 				})
 				return
 			}
 			result, err := d.Store.Sync(chi.URLParam(r, "id"), req.Expected)
 			if err != nil {
-				d.API.Err(w, r, err) // ConflictError carries its own 409 + shape
+				writeErr(w, d, err) // ConflictError carries its own 409 + shape
 				return
 			}
-			d.API.OK(w, result)
+			api.JSON(w, http.StatusOK, result)
 		},
 		Summary: "Sync a record against an expected version",
 		Tags:    []string{"sync"},

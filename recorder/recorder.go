@@ -1,7 +1,6 @@
 package recorder
 
 import (
-	"encoding/json"
 	"net/http"
 	"sync"
 
@@ -14,17 +13,15 @@ import (
 type Recorder struct {
 	next http.Handler
 
-	mu     sync.Mutex
-	codes  map[specout.RouteKey]map[int]bool
-	bodies map[specout.RouteKey]map[int][]byte
+	mu    sync.Mutex
+	codes map[specout.RouteKey]map[int]bool
 }
 
 // New wraps next (the app router) for observation.
 func New(next http.Handler) *Recorder {
 	return &Recorder{
-		next:   next,
-		codes:  make(map[specout.RouteKey]map[int]bool),
-		bodies: make(map[specout.RouteKey]map[int][]byte),
+		next:  next,
+		codes: make(map[specout.RouteKey]map[int]bool),
 	}
 }
 
@@ -47,12 +44,6 @@ func (rec *Recorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rec.codes[key] = make(map[int]bool)
 	}
 	rec.codes[key][rw.code] = true
-	if rw.body != nil {
-		if rec.bodies[key] == nil {
-			rec.bodies[key] = make(map[int][]byte)
-		}
-		rec.bodies[key][rw.code] = rw.body
-	}
 	rec.mu.Unlock()
 }
 
@@ -69,14 +60,11 @@ func matchedPattern(r *http.Request) string {
 
 type observingWriter struct {
 	http.ResponseWriter
-	code    int
-	body    []byte
-	capture bool
+	code int
 }
 
 func (w *observingWriter) WriteHeader(code int) {
 	w.code = code
-	w.capture = code >= 200 && code < 300 && code != http.StatusNoContent
 	w.ResponseWriter.WriteHeader(code)
 }
 
@@ -84,26 +72,5 @@ func (w *observingWriter) Write(b []byte) (int, error) {
 	if w.code == 0 {
 		w.WriteHeader(http.StatusOK)
 	}
-	if w.capture {
-		w.body = append(w.body, b...)
-	}
 	return w.ResponseWriter.Write(b)
-}
-
-// Examples returns captured JSON bodies per route and status.
-func (rec *Recorder) Examples() map[specout.RouteKey]map[int]any {
-	rec.mu.Lock()
-	defer rec.mu.Unlock()
-	out := make(map[specout.RouteKey]map[int]any)
-	for key, byCode := range rec.bodies {
-		vals := make(map[int]any)
-		for code, raw := range byCode {
-			var v any
-			if json.Unmarshal(raw, &v) == nil {
-				vals[code] = v
-			}
-		}
-		out[key] = vals
-	}
-	return out
 }

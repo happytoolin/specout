@@ -47,12 +47,8 @@ func (d *Generator) build() (*obj, error) {
 		if rec.deprecated {
 			op.set("deprecated", true)
 		}
-		tags := rec.tags
-		if d.cfg.DeriveTags && len(tags) == 0 {
-			tags = []string{deriveTag(rec.full)}
-		}
-		if len(tags) > 0 {
-			op.set("tags", toAny(tags))
+		if len(rec.tags) > 0 {
+			op.set("tags", toAny(rec.tags))
 		}
 		// path params from the resolved pattern, query params from Req tags
 		var parameters []any
@@ -62,13 +58,11 @@ func (d *Generator) build() (*obj, error) {
 		if len(parameters) > 0 {
 			op.set("parameters", parameters)
 		}
-		if hasBody && rec.req != nil && rec.req != reflect.TypeFor[NoContent]() {
-			if ref := sr.refFor(rec.req); ref != "" {
-				op.set("requestBody", newObj().
-					set("required", true).
-					set("content", newObj().set("application/json",
-						newObj().set("schema", newObj().set("$ref", ref)))))
-			}
+		if hasBody && rec.req != nil && !isEmptyStruct(rec.req) {
+			ct, media := requestBodyFor(rec.req, sr)
+			op.set("requestBody", newObj().
+				set("required", true).
+				set("content", newObj().set(ct, media)))
 		}
 		op.set("responses", d.responsesFor(rec, sr))
 		pathItem, _ := paths.get(rec.full)
@@ -109,9 +103,10 @@ func (d *Generator) flatRecords() []*routeRecord {
 	return out
 }
 
-func deriveTag(path string) string {
-	seg := strings.SplitN(strings.TrimPrefix(path, "/"), "/", 2)[0]
-	return strings.SplitN(seg, "{", 2)[0]
+// isEmptyStruct: Res = struct{} means 204, no body — Go's own idiom for
+// "nothing". Replaces the old NoContent marker type.
+func isEmptyStruct(t reflect.Type) bool {
+	return t != nil && t.Kind() == reflect.Struct && t.NumField() == 0
 }
 
 // NormalizePath canonicalizes route patterns for comparison: chi walks emit
@@ -161,8 +156,18 @@ func (d *Generator) DeclaredStatuses() map[RouteKey]map[int]bool {
 			codes = make(map[int]bool)
 			out[key] = codes
 		}
-		if rec.res == reflect.TypeFor[NoContent]() {
-			codes[204] = true
+		if isEmptyStruct(rec.res) {
+			// struct{} Res declares nothing on its own; explicit entries
+			// replace it entirely (e.g. a 200 binary download).
+			hasExplicit := false
+			for _, resp := range rec.responses {
+				if !resp.Omit {
+					hasExplicit = true
+				}
+			}
+			if !hasExplicit {
+				codes[204] = true
+			}
 		} else {
 			codes[200] = true
 		}
@@ -194,13 +199,18 @@ func (d *Generator) responsesFor(rec *routeRecord, sr *schemaRegistry) *obj {
 	}
 
 	// default from Res
-	if rec.res == reflect.TypeFor[NoContent]() {
-		add(204, newObj().set("description", "No content"))
-	} else if rec.res == reflect.TypeFor[Binary]() {
-		add(200, newObj().
-			set("description", "OK").
-			set("content", newObj().set("application/octet-stream",
-				newObj().set("schema", newObj().set("type", "string").set("format", "binary")))))
+	if isEmptyStruct(rec.res) {
+		// struct{} Res declares nothing on its own; any explicit Response
+		// replaces it (e.g. {Status:200, ContentType:"application/pdf"}).
+		hasExplicit := false
+		for _, resp := range rec.responses {
+			if !resp.Omit {
+				hasExplicit = true
+			}
+		}
+		if !hasExplicit {
+			add(204, newObj().set("description", "No content"))
+		}
 	} else {
 		ref := sr.refFor(rec.res)
 		add(200, refResponse("OK", ref))
@@ -222,18 +232,13 @@ func (d *Generator) responsesFor(rec *routeRecord, sr *schemaRegistry) *obj {
 			t = reflect.TypeOf(resp.Type)
 		}
 		body := contentResponse(resp.Status, t, sr)
-		if len(resp.Headers) > 0 {
-			headers := newObj()
-			for _, h := range resp.Headers {
-				hs := newObj().set("type", "string")
-				if h.Type != nil {
-					if ref := sr.refFor(reflect.TypeOf(h.Type)); ref != "" {
-						hs = newObj().set("$ref", ref)
-					}
-				}
-				headers.set(h.Name, newObj().set("schema", hs))
+		if resp.ContentType != "" {
+			ct := resp.ContentType
+			if ct == "binary" {
+				ct = "application/octet-stream"
 			}
-			body.set("headers", headers)
+			body.set("content", newObj().set(ct,
+				newObj().set("schema", newObj().set("type", "string").set("format", "binary"))))
 		}
 		if len(resp.Raw) > 0 {
 			body = mergeRaw(body, resp.Raw)
@@ -275,7 +280,7 @@ func mergeRaw(base *obj, raw map[string]any) *obj {
 }
 
 func contentResponse(code int, t reflect.Type, sr *schemaRegistry) *obj {
-	if t == nil || t == reflect.TypeFor[NoContent]() {
+	if t == nil || isEmptyStruct(t) {
 		return newObj().set("description", http.StatusText(code))
 	}
 	ref := sr.refFor(t)

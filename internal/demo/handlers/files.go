@@ -4,34 +4,38 @@ import (
 	"net/http"
 
 	"github.com/happytoolin/specout"
-	"github.com/happytoolin/specout/internal/demo/onboarding"
-	"github.com/happytoolin/specout/specoutapi"
 )
 
-// ImportRequest shows the File convention: multipart/form-data + binary.
+// ImportRequest: the format=binary tag makes this multipart/form-data.
 type ImportRequest struct {
-	File specout.File `form:"file" jsonschema:"description=CSV of onboarding records"`
-	Mode string       `form:"mode"  jsonschema:"enum=merge|replace,default=merge"`
+	File []byte `form:"file" jsonschema:"format=binary,description=CSV of onboarding records"`
+	Mode string `form:"mode"  jsonschema:"enum=merge|replace,default=merge"`
 }
 
-func HandleImport(d Deps) specout.Handler[ImportRequest, specout.NoContent] {
-	return specout.Handler[ImportRequest, specout.NoContent]{
+// struct{} as Res means "no default body"; the explicit 200 entry below
+// carries the real declaration (PDF bytes).
+func HandleImport(d Deps) specout.Handler[ImportRequest, struct{}] {
+	return specout.Handler[ImportRequest, struct{}]{
 		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
-			d.API.NoContent(w)
+			w.WriteHeader(http.StatusNoContent)
 		},
 		Summary: "Bulk import from CSV",
 		Tags:    []string{"files"},
 	}
 }
 
-// Report shows Binary as Res: application/octet-stream, format binary.
-func HandleReport(d Deps) specout.Handler[onboarding.Empty, specout.Binary] {
-	return specout.Handler[onboarding.Empty, specout.Binary]{
+func HandleReport(d Deps) specout.Handler[struct{}, struct{}] {
+	return specout.Handler[struct{}, struct{}]{
 		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
-			pdf := []byte("%PDF-1.4 demo report")
-			specoutapi.SendFile(w, "application/pdf", "report.pdf", pdf)
+			w.Header().Set("Content-Type", "application/pdf")
+			w.Header().Set("Content-Disposition", "attachment; filename=report.pdf")
+			w.Write([]byte("%PDF-1.4 demo report"))
 		},
 		Summary: "Download the activity report",
 		Tags:    []string{"files"},
+		// overrides the struct{} 204 default: this route returns a PDF at 200
+		Responses: []specout.Response{
+			{Status: http.StatusOK, ContentType: "application/pdf"},
+		},
 	}
 }

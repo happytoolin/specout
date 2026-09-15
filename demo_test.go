@@ -70,7 +70,7 @@ func TestDemoServesValidShape(t *testing.T) {
 	report := paths["/files/report"].(map[string]any)["get"].(map[string]any)
 	rresps := report["responses"].(map[string]any)["200"].(map[string]any)
 	content := rresps["content"].(map[string]any)
-	if _, ok := content["application/octet-stream"]; !ok {
-		t.Error("report not octet-stream")
+	if _, ok := content["application/pdf"]; !ok {
+		t.Error("report not pdf")
 	}
 }

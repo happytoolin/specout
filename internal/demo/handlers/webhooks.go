@@ -1,11 +1,12 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/happytoolin/specout"
+	"github.com/happytoolin/specout/internal/demo/api"
 	"github.com/happytoolin/specout/internal/demo/webhooks"
-	"github.com/happytoolin/specout/specoutapi"
 )
 
 // HandleRegisterWebhook shows unions: oneOf + discriminator, variants
@@ -13,12 +14,12 @@ import (
 func HandleRegisterWebhook(d Deps) specout.Handler[webhooks.Config, webhooks.Config] {
 	return specout.Handler[webhooks.Config, webhooks.Config]{
 		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
-			cfg, err := specoutapi.Decode[webhooks.Config](r)
-			if err != nil {
-				d.API.Err(w, r, err)
+			var cfg webhooks.Config
+			if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+				writeErr(w, d, err)
 				return
 			}
-			d.API.OK(w, cfg)
+			api.JSON(w, http.StatusOK, cfg)
 		},
 		Summary: "Register a webhook (email or slack)",
 		Tags:    []string{"webhooks"},

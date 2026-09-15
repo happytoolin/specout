@@ -1,6 +1,5 @@
-// Package api is the application's own api layer: error shapes and the
-// error mapper, wired once in dependencies. The specoutapi.Responder lives
-// on Dependencies so tests can build multiple apps with different mappers.
+// Package api is the app's own helper layer — plain std, no specout
+// dependency. The spec never reads this; handlers may use it or not.
 package api
 
 import (
@@ -9,12 +8,15 @@ import (
 	"net/http"
 
 	"github.com/happytoolin/specout/internal/demo/onboarding"
-	"github.com/happytoolin/specout/specoutapi"
 )
 
-// Problem is the project-wide error envelope. It IS specoutapi.Problem:
-// the mapper's signature requires that exact type (the responder writes it).
-type Problem = specoutapi.Problem
+// Problem is the project-wide error envelope (RFC 9457 style).
+type Problem struct {
+	Type   string `json:"type"`
+	Title  string `json:"title"`
+	Status int    `json:"status"`
+	Detail string `json:"detail,omitempty"`
+}
 
 // ValidationError is the 422 body: field-level problems.
 type ValidationError struct {
@@ -26,25 +28,42 @@ type FieldProblem struct {
 	Message string `json:"message" jsonschema:"example=must be a valid email"`
 }
 
-// New builds the responder with the default error mapper. Routes that need
-// their own shape use DetailedError and bypass this mapper entirely.
-func New() *specoutapi.Responder {
-	return specoutapi.New(specoutapi.Config{
-		ErrorMapper: func(err error) (int, Problem) {
-			switch {
-			case errors.Is(err, onboarding.ErrNotFound):
-				return http.StatusNotFound, Problem{Type: "not-found", Title: "Not found"}
-			case isDecodeError(err):
-				return http.StatusBadRequest, Problem{Type: "validation", Title: "Invalid request"}
-			default:
-				return http.StatusInternalServerError, Problem{Type: "internal", Title: "Internal error"}
-			}
-		},
-	})
+// JSON writes code + v as JSON. Handlers call this directly.
+func JSON[T any](w http.ResponseWriter, code int, v T) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(v)
 }
 
-func isDecodeError(err error) bool {
-	var se *json.SyntaxError
-	var te *json.UnmarshalTypeError
-	return errors.As(err, &se) || errors.As(err, &te)
+// Error writes the mapped Problem. mapper decides code + shape; the domain's
+// *ConflictError (a wireError) bypasses it with its own status and payload.
+type wireError interface {
+	error
+	HTTPStatus() int
+	Payload() any
+}
+
+type Mapper func(error) (int, Problem)
+
+// DefaultMapper maps store errors to Problems; apps wire their own.
+var DefaultMapper Mapper = func(err error) (int, Problem) {
+	switch {
+	case errors.Is(err, onboarding.ErrNotFound):
+		return http.StatusNotFound, Problem{Type: "not-found", Title: "Not found"}
+	default:
+		return http.StatusInternalServerError, Problem{Type: "internal", Title: "Internal error"}
+	}
+}
+
+func Error(w http.ResponseWriter, mapper Mapper, err error) {
+	if we, ok := err.(wireError); ok {
+		JSON(w, we.HTTPStatus(), we.Payload())
+		return
+	}
+	code, p := mapper(err)
+	p.Status = code
+	if p.Title == "" {
+		p.Title = http.StatusText(code)
+	}
+	JSON(w, code, p)
 }

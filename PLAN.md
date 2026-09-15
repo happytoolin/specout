@@ -18,7 +18,7 @@ These came out of the design conversation and must survive implementation shortc
 2. **Reification, not parsing.** Schemas come from real types via reflection (`Types()` on the generic wrapper). No AST analysis, ever.
 3. **Compile-checked discovery.** Registration verb methods are generic; passing a plain `http.HandlerFunc` fails to compile.
 4. **Spec from the live router.** Full paths resolve by walking the actual chi tree at build time; std patterns are full by construction. The served spec cannot drift from the router.
-5. **No package globals.** The error mapper lives on a `*specoutapi.Responder` wired through the app's deps.
+5. **No package globals.** specout only reads what reflection can see; decode/respond/error mapping is app code (was: error mapper on a Responder, see decision 7).
 6. **Structs for data, methods for behavior, generics only where the compiler must know.** Config struct, response literals, generic knobs as methods.
 7. **Panic on programmer misuse** (registration after freeze), `error` only for genuinely fallible ops (build, IO).
 8. **Deterministic output.** Same binary + same registrations → byte-identical `openapi.json`, so CI can golden-diff it like code.
@@ -31,7 +31,7 @@ specout/
 ├── specout.go                    # Generator type, New(Config), lifecycle (lazy build, freeze, panics)
 ├── config.go                     # Config, Server, Tag, AuthScheme, Dialect constants
 ├── handler.go                    # Handler[Req, Res], Documented, Types() reification
-├── response.go                   # Response{Status,Type,Headers,Raw,Omit}, Header, NoContent, File, Binary, Variant, SkipRule/Skip
+├── response.go                   # Response{Status,Type,ContentType,Raw,Omit}, SkipRule/Skip
 ├── register_chi.go               # Get/Head/Post/Put/Patch/Delete/Options/Trace + Adopt (chi)
 ├── register_std.go               # Handle(*http.ServeMux, pattern, h)
 ├── routes.go                     # internal route record, handler-pointer keying, merge at build
@@ -41,18 +41,13 @@ specout/
 ├── params.go                     # path param extraction ({id}, {x...}), query params from Req `query:` tags
 ├── serve.go                      # ServeHTTP (GET only), WriteJSON, deterministic marshaling
 ├── verify.go                     # RequireDocumented
-├── specoutapi/                   # runtime helpers (imported by apps as their `api` layer)
-│   ├── responder.go              # New(Config{ErrorMapper}), OK/Status/NoContent/Err, DetailedError
-│   ├── decode.go                 # Decode[Req](r): json/v2 body + query-tag fields
-│   ├── problem.go                # Problem (RFC 9457)
-│   └── file.go                   # SendFile
 ├── recorder/                     # test machinery (mirrors net/http/httptest)
-│   ├── recorder.go               # New(next), pattern capture (chi RouteContext / std r.Pattern), code+body observation
-│   └── verify.go                 # Verify(t, d, rec), Examples()
-└── internal/testapp/             # shared sample app used by tests and golden fixtures
+│   ├── recorder.go               # New(next), pattern capture, code observation
+│   └── verify.go                 # Verify(t, d, rec)
+└── internal/demo/               # realistic sample app (domain, handlers, router, app-owned api layer) — used by tests and the golden fixture
 ```
 
-Dependency rule: **no chi imports outside `register_chi.go` / `routes.go` (walk) / `recorder`** — keeps a future `specout/chi` or adapter extraction mechanical. The `api` package name at call sites (`deps.API.OK(...)`) is the app's field name; the module ships it as `specoutapi` so apps alias or wrap as they like.
+Dependency rule: **no chi imports outside `register_chi.go` / `routes.go` (walk) / `recorder`** — keeps a future `specout/chi` or adapter extraction mechanical. The `api` package in the demo is app-owned, plain std, no specout dependency.
 
 ## 3. Phases
 
@@ -85,17 +80,13 @@ The minimal path from factory to served spec:
 
 ### Phase 3 — responses & errors (2 days)
 - [ ] `Response` merge rules: unmentioned error codes ← global `ErrorType`; entries ≥ 400 override per route; `Omit: true` removes a code
-- [ ] Response `Headers`; `File` (multipart/binary request) and `Binary` (binary response) conventions
-- [ ] `InjectExamples`
+- [ ] `ContentType` binary responses; `jsonschema:"format=binary"` request fields convert to multipart/form-data
 - **Tests:** upsert (4 response types) and sync (override + Omit) fixtures from api-reference §04/§05, byte-for-byte
 - **Done when:** both fixtures match.
 
-### Phase 4 — runtime helpers `specoutapi` (1–2 days)
-- [ ] `Responder` with `Config{ErrorMapper}`; `OK/Status/NoContent/Err`
-- [ ] `Err` flow: `DetailedError` (HTTPStatus/Payload) first, mapper second
-- [ ] `Decode[Req]` (json/v2 body + query tags), `SendFile`, `Problem`
-- **Tests:** mapper wiring without globals — two responders in one process; `Decode` dialect tests
-- **Done when:** api-reference §06 behavior matches.
+### Phase 4 — runtime helpers: none (design change)
+- [x] Library ships no decode/respond helpers. Handlers are raw `http.HandlerFunc`; apps write their own `api` layer (see `internal/demo/api`).
+- **Done when:** public surface has no runtime helpers.
 
 ### Phase 5 — verification layer (2–3 days)
 - [ ] `recorder.New(next)`: wrap, capture matched pattern (chi `RouteContext().RoutePattern()`; std `r.Pattern`) + status codes + response bodies
@@ -112,7 +103,7 @@ The minimal path from factory to served spec:
 ### Later (explicitly out of v0)
 - gin/echo adapters (~150 lines each: Handler wrapper, verbs, `Routes()` enumeration, `:id`→`{id}`) — on demand
 - fiber v2/v3 — only with eyes open (fasthttp means parallel decode/respond/recorder)
-- Swagger UI serving, OpenAPI 3.0 emission, `DeriveTags` if the heuristic earns it
+- Swagger UI serving (demo serves it from CDN in `cmd/demo`), OpenAPI 3.0 emission
 
 ## 4. Decision ledger
 
@@ -124,7 +115,7 @@ The minimal path from factory to served spec:
 | 4 | One `Responses` slice (status encodes side) | Separate `Responses`+`Errors` | Fewer concepts; merge rules already keyed by status code |
 | 5 | Struct literals, no `parts ...any` constructors | `doc.Res(code, typ, opts...)` sugar | No runtime type-switching; everything greppable in one godoc'd struct |
 | 6 | Config struct + generic knobs as methods | Functional options | Options can't express `Register[T]`; data knobs want a struct |
-| 7 | Responder on deps | `init()` + `SetErrorMapper` global | Explicit wiring, testable with multiple apps |
+| 7 | No runtime helpers; app-owned api layer | Responder/Decode shipped in-module | Library does only what reflection cannot see; users write their own runtime code |
 | 8 | Verb methods `d.Get(r, ...)` | `d.Wrap(r)` decorator + pointer registry | The assignability wall (defined func types) makes true-native impossible; the registry is hidden global state |
 | 9 | Build-time walk for chi paths | Trust as-passed patterns | `r.Route`/`r.Mount` compose prefixes invisibly at registration time |
 | 10 | `*Generator` implements `http.Handler` | `Mount()` method | Composes with both routers for free |

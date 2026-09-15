@@ -22,7 +22,6 @@ type Generator struct {
 	// union variant registrations and component-name overrides
 	variants      map[string]reflect.Type
 	nameOverrides map[reflect.Type]string
-	examples      map[RouteKey]map[int]any
 	resolved      bool
 
 	specJSON []byte

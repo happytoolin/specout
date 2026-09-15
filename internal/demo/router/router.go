@@ -37,7 +37,10 @@ func New() (*specout.Generator, http.Handler) {
 	d.Register[webhooks.EmailConfig]("email")
 	d.Register[webhooks.SlackConfig]("slack")
 
-	deps := handlers.Deps{Store: onboarding.NewStore(), API: api.New()}
+	deps := handlers.Deps{
+		Store:  onboarding.NewStore(),
+		Mapper: api.DefaultMapper,
+	}
 
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)

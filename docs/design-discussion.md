@@ -37,7 +37,7 @@ and plain handlers silently skip documentation (mitigated later by a completenes
 
 **Decision:** three layers that agree by convention:
 global error envelope (RFC 9457 Problem, stamped on default codes), explicit success-side
-declarations (`Res` → 200, `NoContent` → 204, extra codes in a slice), and a **recorder**
+declarations (`Res` → 200, `struct{}` → 204, extra codes in a slice), and a **recorder**
 wrapping `http.ResponseWriter` during integration tests that diffs declared vs observed
 status codes — turning the test suite into spec verification, which no offline generator can do.
 
@@ -103,7 +103,7 @@ not assignable to it, and interface methods can't take type parameters. So: verb
 mirroring chi 1:1 (`d.Get(r, "/", h)` … `d.Trace`). Path subtlety found and fixed:
 registration records only handler metadata; **full paths resolve at build time via a single
 `chi.Walk`** (Route/Mount prefixes are invisible at registration time). Spec-side grouping =
-tags; optional `DeriveTags` heuristic noted.
+tags.
 
 ### 11. "What about gin/echo/fiber/fiberv3?"
 

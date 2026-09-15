@@ -47,7 +47,7 @@ func TestQuickStartFlow(t *testing.T) {
 	})
 
 	r := chi.NewRouter()
-	d.Delete(r, "/onboarding/{id}", specout.Handler[EmptyReq, specout.NoContent]{HandlerFunc: noContent})
+	d.Delete(r, "/onboarding/{id}", specout.Handler[EmptyReq, struct{}]{HandlerFunc: noContent})
 	d.Put(r, "/onboarding/{id}", specout.Handler[UpsertRequest, Onboarding]{
 		HandlerFunc: okJSON,
 		Responses:   []specout.Response{{Status: http.StatusCreated}},
@@ -198,7 +198,7 @@ func TestServeOnlyGet(t *testing.T) {
 func TestStdMuxHandle(t *testing.T) {
 	d := specout.New(specout.Config{Title: "T", Version: "1"})
 	mux := http.NewServeMux()
-	d.Handle(mux, "DELETE /onboarding/{id}", specout.Handler[EmptyReq, specout.NoContent]{HandlerFunc: noContent})
+	d.Handle(mux, "DELETE /onboarding/{id}", specout.Handler[EmptyReq, struct{}]{HandlerFunc: noContent})
 	d.Handle(mux, "GET /onboarding", specout.Handler[EmptyReq, []Onboarding]{HandlerFunc: okJSON})
 
 	var buf bytes.Buffer

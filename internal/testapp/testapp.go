@@ -62,7 +62,7 @@ func New() (*specout.Generator, http.Handler) {
 				Tags:        []string{"onboarding"},
 				Responses:   []specout.Response{{Status: http.StatusCreated}},
 			})
-			d.Delete(r, "/", specout.Handler[Empty, specout.NoContent]{HandlerFunc: noContent, Tags: []string{"onboarding"}})
+			d.Delete(r, "/", specout.Handler[Empty, struct{}]{HandlerFunc: noContent, Tags: []string{"onboarding"}})
 		})
 	})
 

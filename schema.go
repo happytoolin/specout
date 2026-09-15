@@ -48,9 +48,6 @@ func (sr *schemaRegistry) refFor(t reflect.Type) string {
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
-	if t == reflect.TypeFor[NoContent]() || t == reflect.TypeFor[Binary]() || t == reflect.TypeFor[File]() {
-		return ""
-	}
 	if e, ok := sr.byType[t]; ok {
 		return "#/components/schemas/" + e.name
 	}
@@ -139,7 +136,7 @@ func normalizeOneOf(s *jsonschema.Schema, sr *schemaRegistry) {
 	if s.Items != nil {
 		normalizeOneOf(s.Items, sr)
 	}
-	// discriminator: when a specout.Variant field sits next to a oneOf field,
+	// discriminator: when an enum-tagged field sits next to a oneOf field,
 	// attach propertyName + mapping per the api-reference §10.
 	if s.Properties != nil && s.Extras == nil {
 		for key := range s.Properties.KeysFromOldest() {
@@ -170,7 +167,7 @@ func normalizeOneOf(s *jsonschema.Schema, sr *schemaRegistry) {
 	}
 }
 
-// findVariantProperty returns the property name of the specout.Variant field.
+// findVariantProperty returns the property name of the discriminator field.
 func findVariantProperty(s *jsonschema.Schema) string {
 	if s.Properties == nil {
 		return ""

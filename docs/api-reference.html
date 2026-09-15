@@ -276,7 +276,7 @@
     <a href="#handler">Handler[Req, Res]</a>
     <a href="#status">Status codes</a>
     <a href="#errors">Error responses</a>
-    <a href="#helpers">The api helpers</a>
+    <a href="#helpers">Write your own helpers</a>
     <h4>Schema layer</h4>
     <a href="#tags">Tag reference</a>
     <a href="#dials">The three dials</a>
@@ -371,21 +371,21 @@
   </figure>
 
   <figure class="code" data-lang="go">
-    <figcaption><span>handlers/onboarding.go — the factory pattern</span><button class="copy">copy</button></figcaption>
-    <pre><code>// DeleteOnboardingRequest is empty — DELETE takes no body.
+	<figcaption><span>handlers/onboarding.go — the factory pattern</span><button class="copy">copy</button></figcaption>
+	<pre><code>// DeleteOnboardingRequest is empty — DELETE takes no body.
 type DeleteOnboardingRequest struct{}
 
-func HandleDeleteOnboarding(deps *dependencies.Dependencies) specout.Handler[DeleteOnboardingRequest, specout.NoContent] {
+func HandleDeleteOnboarding(deps *dependencies.Dependencies) specout.Handler[DeleteOnboardingRequest, struct{}] {
 	queries := deps.Database.Queries
 	cache := deps.Cache
 
-	return specout.Handler[DeleteOnboardingRequest, specout.NoContent]{
+	return specout.Handler[DeleteOnboardingRequest, struct{}]{
 		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
 			if err := queries.DeleteOnboarding(r.Context(), chi.URLParam(r, "id")); err != nil {
-				deps.API.Err(w, r, err) // 404 + Problem, decided by the error mapper
+				api.Error(w, deps.Mapper, err) // 404 + Problem, decided by the mapper
 				return
 			}
-			deps.API.NoContent(w) // 204
+			w.WriteHeader(http.StatusNoContent) // 204
 		},
 	}
 }</code></pre>
@@ -393,7 +393,7 @@ func HandleDeleteOnboarding(deps *dependencies.Dependencies) specout.Handler[Del
 
   <div class="callout rule">
     <span class="label">Convention</span>
-    <p><code>Res</code> defaults to <strong>200 + schema(Res)</strong>. <code>specout.NoContent</code> as <code>Res</code> means <strong>204, no body</strong>. Path params like <code>{id}</code> are picked up from the route pattern automatically. Everything else is opt-in.</p>
+    <p><code>Res</code> defaults to <strong>200 + schema(Res)</strong>. <code>struct{}</code> as <code>Res</code> means <strong>204, no body</strong>. Path params like <code>{id}</code> are picked up from the route pattern automatically. Everything else is opt-in.</p>
   </div>
 </section>
 
@@ -443,7 +443,7 @@ d.Delete(r, "/onboarding/{id}", handlers.HandleDeleteOnboarding(deps))
 r.Mount("/api", onboarding.Router(d, deps)) // relative patterns inside come out right</code></pre>
   </figure>
 
-  <p>Registration records only metadata — handler → method, types, responses. Full paths resolve when the spec builds, from a single walk of the live router: chi composes <code>Route</code>/<code>Mount</code> prefixes at match time, invisible at registration time, so trusting the pattern as-passed would put wrong paths in the spec. If you wrap a handler in your own middleware before passing it in, the pointer link falls back to the as-passed pattern, and <code>RequireDocumented</code> flags anything unresolved rather than guessing. Spec-side grouping is OpenAPI tags — the explicit <code>Tags</code> field, or <code>DeriveTags: true</code> in the config to take the first path segment (<code>/onboarding/{id}/steps</code> → <code>onboarding</code>).</p>
+  <p>Registration records only metadata — handler → method, types, responses. Full paths resolve when the spec builds, from a single walk of the live router: chi composes <code>Route</code>/<code>Mount</code> prefixes at match time, invisible at registration time, so trusting the pattern as-passed would put wrong paths in the spec. If you wrap a handler in your own middleware before passing it in, the pointer link falls back to the as-passed pattern, and <code>RequireDocumented</code> flags anything unresolved rather than guessing. Spec-side grouping is OpenAPI tags — the explicit <code>Tags</code> field on the handler.</p>
 
   <h3>std http.ServeMux</h3>
   <figure class="code" data-lang="go">
@@ -493,13 +493,13 @@ d.Handle(mux, "GET /onboarding", handlers.HandleListOnboarding(deps))</code></pr
     <thead><tr><th>Case</th><th>What you write</th><th>What the spec says</th></tr></thead>
     <tbody>
       <tr><td>Plain success</td><td><code>Res = T</code>, nothing else</td><td><code>200 → $ref T</code></td></tr>
-      <tr><td>Empty response</td><td><code>Res = specout.NoContent</code>, call <code>deps.API.NoContent(w)</code></td><td><code>204</code>, no body</td></tr>
-      <tr><td>Created, same shape</td><td><code>{Status: 201}</code>, call <code>deps.API.Status(w, 201, v)</code></td><td><code>200 → $ref T</code> and <code>201 → $ref T</code> (same schema, two codes)</td></tr>
+      <tr><td>Empty response</td><td><code>Res = struct{}</code>, call <code>w.WriteHeader(204)</code></td><td><code>204</code>, no body</td></tr>
+      <tr><td>Created, same shape</td><td><code>{Status: 201}</code>, write 201 yourself</td><td><code>200 → $ref T</code> and <code>201 → $ref T</code> (same schema, two codes)</td></tr>
       <tr><td>Created, different shape</td><td><code>{Status: 201, Type: Created{}}</code></td><td><code>201 → $ref Created</code></td></tr>
       <tr><td>Validation body</td><td><code>{Status: 422, Type: ValidationError{}}</code></td><td><code>422 → $ref ValidationError</code></td></tr>
       <tr><td>Error, different shape</td><td><code>{Status: 409, Type: SyncConflict{}}</code></td><td><code>409 → $ref SyncConflict</code> — replaces the global <code>Problem</code> for this route</td></tr>
       <tr><td>Standard errors</td><td>nothing — global</td><td>400/401/403/404/409/500 <code>→ $ref Problem</code></td></tr>
-      <tr><td>Response header</td><td><code>{Status: 201, Headers: []specout.Header{{Name: "Location"}}}</code></td><td>header declared on that response</td></tr>
+      <tr><td>Response header</td><td><code>{Status: 201, Raw: map[string]any{"headers": …}}</code></td><td>header declared on that response</td></tr>
     </tbody>
   </table>
 
@@ -513,28 +513,29 @@ d.Handle(mux, "GET /onboarding", handlers.HandleListOnboarding(deps))</code></pr
 
 	return specout.Handler[onboarding.UpsertRequest, onboarding.Onboarding]{
 		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
-			req, err := api.Decode[onboarding.UpsertRequest](r)
+			var req onboarding.UpsertRequest
+			err := json.NewDecoder(r.Body).Decode(&req)
 			if err != nil {
-				deps.API.Err(w, r, err) // 400 + Problem
+				api.Error(w, deps.Mapper, err) // 400 + Problem
 				return
 			}
 
 			onb, created, err := queries.UpsertOnboarding(r.Context(), chi.URLParam(r, "id"), req)
 			if err != nil {
-				deps.API.Err(w, r, err) // 404 + Problem if ErrNotFound, else 500
+				api.Error(w, deps.Mapper, err) // 404 + Problem if ErrNotFound, else 500
 				return
 			}
 
 			if problems := onboarding.Validate(onb); len(problems) > 0 {
-				deps.API.Status(w, http.StatusUnprocessableEntity, api.ValidationError{Problems: problems})
+				api.JSON(w, http.StatusUnprocessableEntity, api.ValidationError{Problems: problems})
 				return
 			}
 
 			if created {
-				deps.API.Status(w, http.StatusCreated, onb)
+				api.JSON(w, http.StatusCreated, onb)
 				return
 			}
-			deps.API.OK(w, onb)
+			api.JSON(w, http.StatusOK, onb)
 		},
 
 		Tags: []string{"onboarding"},
@@ -605,10 +606,10 @@ func HandleSyncOnboarding(deps *dependencies.Dependencies) specout.Handler[SyncR
 		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
 			result, err := queries.Sync(r.Context(), chi.URLParam(r, "id"))
 			if err != nil {
-				deps.API.Err(w, r, err) // typed errors first, mapper second — see below
+				api.Error(w, deps.Mapper, err) // typed errors first, mapper second — see below
 				return
 			}
-			deps.API.OK(w, result)
+			api.JSON(w, http.StatusOK, result)
 		},
 
 		Responses: []specout.Response{
@@ -639,12 +640,12 @@ func HandleSyncOnboarding(deps *dependencies.Dependencies) specout.Handler[SyncR
   </div>
 
   <h3>Typed errors — custom shapes through the one error exit</h3>
-  <p>You shouldn't have to special-case <code>api.Status</code> at every call site just to get a custom shape. Let the domain error carry its own wire format — errors implementing this interface bypass the generic mapper entirely:</p>
+  <p>You shouldn't have to special-case <code>api.JSON</code> at every call site just to get a custom shape. Let the domain error carry its own wire format — errors implementing this interface bypass the generic mapper entirely:</p>
 
   <figure class="code" data-lang="go">
-    <figcaption><span>api/err.go — the escape valve</span><button class="copy">copy</button></figcaption>
-    <pre><code>// api: errors that know their own status and payload
-type DetailedError interface {
+    <figcaption><span>your api package — the escape valve</span><button class="copy">copy</button></figcaption>
+    <pre><code>// errors that know their own status and payload
+type wireError interface {
 	error
 	HTTPStatus() int
 	Payload() any // the exact shape declared in Errors
@@ -670,7 +671,7 @@ func (c *Conflict) Payload() any {
 
 // handler keeps exactly one error exit:
 if err != nil {
-	deps.API.Err(w, r, err) // DetailedError first, generic mapper second
+	api.Error(w, deps.Mapper, err) // typed error first, generic mapper second
 	return
 }</code></pre>
   </figure>
@@ -702,24 +703,34 @@ if err != nil {
 
   <div class="callout rule">
     <span class="label">Rule</span>
-    <p>Declaration says <em>what can appear</em> (global defaults + per-route <code>Responses</code>). <code>DetailedError</code> and the mapper say <em>what actually happens</em>. The recorder test (§13) is what keeps them identical.</p>
+    <p>Declaration says <em>what can appear</em> (global defaults + per-route <code>Responses</code>). Typed errors and the mapper say <em>what actually happens</em>. The recorder test (§13) is what keeps them identical.</p>
   </div>
 </section>
 
 <!-- ============================================================ -->
 <section id="helpers">
-  <h2><span class="num">06</span>The api helpers</h2>
-  <p>One pure decoder plus a small responder value wired through your dependencies — the mapper lives on the responder, not in a package global, so tests can build two apps with different mappers. Using them is optional but strongly encouraged: it's what keeps bodies following the spec.</p>
+  <h2><span class="num">06</span>Write your own helpers</h2>
+  <p>specout ships no decode/respond helpers. Your handlers are raw <code>http.HandlerFunc</code> — read the request the way you want, write the response the way you want. The library only reads what reflection can see: types, tags, route patterns. Most projects write a tiny <code>api</code> package of their own (~40 lines) — that's the pattern the demo uses.</p>
 
-  <span class="sig"><b>func</b> Decode[Req <b>any</b>](r *http.Request) (Req, error)
-<span style="color:var(--text-dim)">  // pure function — fills body fields from JSON and query fields from the URL, per tags</span></span>
-  <span class="sig"><b>func</b> (a *Responder) OK[T <b>any</b>](w http.ResponseWriter, v T)           <span style="color:var(--text-dim)">// 200 + JSON</span></span>
-  <span class="sig"><b>func</b> (a *Responder) Status[T <b>any</b>](w http.ResponseWriter, code <b>int</b>, v T) <span style="color:var(--text-dim)">// code + JSON</span></span>
-  <span class="sig"><b>func</b> (a *Responder) NoContent(w http.ResponseWriter)               <span style="color:var(--text-dim)">// 204</span></span>
-  <span class="sig"><b>func</b> (a *Responder) Err(w http.ResponseWriter, r *http.Request, err error) <span style="color:var(--text-dim)">// DetailedError first, mapper + Problem second</span></span>
+  <figure class="code" data-lang="go">
+    <figcaption><span>your api package — plain std, no specout dependency</span><button class="copy">copy</button></figcaption>
+    <pre><code>// JSON writes code + v as JSON.
+func JSON[T any](w http.ResponseWriter, code int, v T) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(v)
+}
+
+type Mapper func(error) (int, Problem)
+
+func Error(w http.ResponseWriter, mapper Mapper, err error) {
+	// typed errors (your wireError interface) first, mapper second
+	...
+}</code></pre>
+  </figure>
 
   <h3>Query parameters</h3>
-  <p>Query params are part of <code>Req</code>, marked with a <code>query</code> tag. <code>api.Decode</code> reads both sources; the spec generator emits them as operation parameters instead of a body.</p>
+  <p>Query params are part of <code>Req</code>, marked with a <code>query</code> tag. Read them with <code>r.URL.Query()</code> in the handler; the spec generator emits them as operation parameters instead of a body.</p>
 
   <figure class="code" data-lang="go">
     <figcaption><span>list handler with pagination</span><button class="copy">copy</button></figcaption>
@@ -739,17 +750,17 @@ func HandleListOnboarding(deps *dependencies.Dependencies) specout.Handler[ListO
 
 	return specout.Handler[ListOnboardingRequest, Page[onboarding.Onboarding]]{
 		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
-			req, err := api.Decode[ListOnboardingRequest](r)
+			q := r.URL.Query()
+			limit := 20
+			if s := q.Get("limit"); s != "" {
+				limit, _ = strconv.Atoi(s)
+			}
+			items, next, err := queries.ListOnboarding(r.Context(), limit, q.Get("cursor"))
 			if err != nil {
-				deps.API.Err(w, r, err)
+				api.Error(w, deps.Mapper, err)
 				return
 			}
-			items, next, err := queries.ListOnboarding(r.Context(), req.Limit, req.Cursor)
-			if err != nil {
-				deps.API.Err(w, r, err)
-				return
-			}
-			deps.API.OK(w, Page[onboarding.Onboarding]{Items: items, Next: next})
+			api.JSON(w, http.StatusOK, Page[onboarding.Onboarding]{Items: items, Next: next})
 		},
 		Tags: []string{"onboarding"},
 	}
@@ -827,7 +838,7 @@ type UpsertOnboardingRequest struct {
       <tr><td><code>title</code>, <code>description</code>, <code>example</code></td><td>tag</td><td>field-level docs</td></tr>
       <tr><td><code>deprecated</code></td><td>tag on field; <code>Deprecated: true</code> on Handler</td><td>field- and operation-level</td></tr>
       <tr><td><code>readOnly</code> / <code>writeOnly</code></td><td>tag</td><td>see shared types, §08</td></tr>
-      <tr><td><code>additionalProperties: false</code></td><td>global toggle <code>specout.ClosedSchemas(true)</code></td><td>clients love closed schemas; opt out per struct</td></tr>
+      <tr><td><code>additionalProperties: false</code></td><td>config <code>ClosedSchemas: true</code></td><td>clients love closed schemas</td></tr>
       <tr><td>query vs body location</td><td><code>query</code> tag</td><td>fields become operation parameters</td></tr>
     </tbody>
   </table>
@@ -890,8 +901,8 @@ d.Register[onboarding.EmailConfig]("email")
 d.Register[onboarding.SlackConfig]("slack")
 
 type WebhookConfig struct {
-	Kind specout.Variant `json:"kind" jsonschema:"enum=email|slack,description=Discriminator"`
-	Data any         `json:"data" jsonschema:"oneof_type=email|slack"`
+	Kind string `json:"kind" jsonschema:"enum=email|slack,description=Discriminator"`
+	Data any    `json:"data" jsonschema:"oneof_type=email|slack"`
 }</code></pre>
   </figure>
 
@@ -943,7 +954,6 @@ type WebhookConfig struct {
 	ErrorType:     api.Problem{},
 	DefaultErrors: []int{400, 401, 403, 404, 409, 500},
 	ClosedSchemas: true,    // additionalProperties: false everywhere
-	DeriveTags:    true,    // tag = first path segment (/onboarding/{id} → onboarding)
 	// JSONDialect is absent — the zero value already means json/v2.
 	// Set JSONDialect: specout.JSONv1 only for legacy tag sets.
 })
@@ -1020,13 +1030,7 @@ $ git diff --exit-code openapi.json   # spec changes must be reviewed, like code
 
   <span class="sig"><b>func</b> New(next http.Handler) *Recorder            <span style="color:var(--text-dim)">// package specout/recorder — mirrors net/http/httptest</span></span>
   <span class="sig"><b>func</b> (rec *Recorder) ServeHTTP(w http.ResponseWriter, r *http.Request)</span>
-  <span class="sig"><b>func</b> (rec *Recorder) Examples() map[specout.RouteKey]map[int]any <span style="color:var(--text-dim)">// real bodies per code</span></span>
   <span class="sig"><b>func</b> Verify(t TestingT, d *specout.Generator, rec *Recorder)</span>
-
-  <div class="callout note">
-    <span class="label">Bonus</span>
-    <p><code>rec.Examples()</code> captured real response bodies — <code>d.InjectExamples(rec.Examples())</code> stamps them into the spec as per-code examples. Documentation examples that are guaranteed to be real payloads, harvested from tests no static generator could ever run.</p>
-  </div>
 </section>
 
 <!-- ============================================================ -->
@@ -1083,14 +1087,17 @@ func (Money) JSONSchema() *jsonschema.Schema {
 	HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
 		onb, err := queries.Create(r.Context(), ...)
 		if err != nil {
-			deps.API.Err(w, r, err)
+			api.Error(w, deps.Mapper, err)
 			return
 		}
 		w.Header().Set("Location", "/onboarding/"+onb.ID)
-		deps.API.Status(w, http.StatusCreated, onb)
+		api.JSON(w, http.StatusCreated, onb)
 	},
 	Responses: []specout.Response{
-		{Status: http.StatusCreated, Headers: []specout.Header{{Name: "Location"}}},
+		{Status: http.StatusCreated,
+			Raw: map[string]any{"headers": map[string]any{
+				"Location": map[string]any{"schema": map[string]any{"type": "string"}},
+			}}},
 	},
 }</code></pre>
       </figure>
@@ -1100,13 +1107,13 @@ func (Money) JSONSchema() *jsonschema.Schema {
       <h4>Empty delete (204)</h4>
       <figure class="code" data-lang="go">
         <figcaption><span>handler</span><button class="copy">copy</button></figcaption>
-        <pre><code>specout.Handler[DeleteRequest, specout.NoContent]{
+        <pre><code>specout.Handler[DeleteRequest, struct{}]{
 	HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
 		if err := queries.Delete(r.Context(), id(r)); err != nil {
-			deps.API.Err(w, r, err)
+			api.Error(w, deps.Mapper, err)
 			return
 		}
-		deps.API.NoContent(w)
+		w.WriteHeader(http.StatusNoContent)
 	},
 }</code></pre>
       </figure>
@@ -1125,7 +1132,7 @@ type FieldProblem struct {
 }
 
 // in the handler:
-deps.API.Status(w, http.StatusUnprocessableEntity, api.ValidationError{Problems: problems})
+api.JSON(w, http.StatusUnprocessableEntity, ValidationError{Problems: problems})
 
 // in the declaration:
 {Status: http.StatusUnprocessableEntity, Type: api.ValidationError{}}</code></pre>
@@ -1135,9 +1142,9 @@ deps.API.Status(w, http.StatusUnprocessableEntity, api.ValidationError{Problems:
     <div class="recipe">
       <h4>File upload (multipart)</h4>
       <figure class="code" data-lang="go">
-        <figcaption><span>specout.File switches the content type</span><button class="copy">copy</button></figcaption>
+        <figcaption><span>format=binary switches the content type</span><button class="copy">copy</button></figcaption>
         <pre><code>type ImportRequest struct {
-	File specout.File `form:"file" jsonschema:"description=CSV of onboardings"`
+	File []byte `form:"file" jsonschema:"format=binary,description=CSV of onboardings"`
 	Mode string  `form:"mode" jsonschema:"enum=merge|replace,default=merge"`
 }
 
@@ -1149,15 +1156,20 @@ deps.API.Status(w, http.StatusUnprocessableEntity, api.ValidationError{Problems:
     <div class="recipe">
       <h4>File download (binary)</h4>
       <figure class="code" data-lang="go">
-        <figcaption><span>specout.Binary as Res</span><button class="copy">copy</button></figcaption>
-        <pre><code>specout.Handler[ReportRequest, specout.Binary]{
+        <figcaption><span>struct{} Res + ContentType entry</span><button class="copy">copy</button></figcaption>
+        <pre><code>specout.Handler[ReportRequest, struct{}]{
 	HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
 		pdf, err := renderReport(r.Context())
 		if err != nil {
-			deps.API.Err(w, r, err)
+			api.Error(w, deps.Mapper, err)
 			return
 		}
-		api.SendFile(w, "application/pdf", "report.pdf", pdf)
+		w.Header().Set("Content-Type", "application/pdf")
+		w.Write(pdf)
+	},
+	// struct{} alone would mean 204 — the explicit entry declares the body:
+	Responses: []specout.Response{
+		{Status: http.StatusOK, ContentType: "application/pdf"},
 	},
 }
 // spec: 200 content application/pdf, schema format binary</code></pre>
@@ -1232,14 +1244,6 @@ specout.RequireDocumented(t, r, specout.Skip("/debug/*"))</code></pre>
       <p>Components are keyed by Go type name; this is the override when two packages collide.</p>
     </div>
 
-    <div class="recipe">
-      <h4>Real examples from test traffic</h4>
-      <figure class="code" data-lang="go">
-        <figcaption><span>after the recorder run</span><button class="copy">copy</button></figcaption>
-        <pre><code>d.InjectExamples(rec.Examples())</code></pre>
-      </figure>
-      <p>Each response code's <code>example</code> becomes a payload your tests actually produced.</p>
-    </div>
   </div>
 </section>
 
@@ -1296,19 +1300,16 @@ specout.RequireDocumented(t, r, specout.Skip("/debug/*"))</code></pre>
 <!-- ============================================================ -->
 <section id="apiindex">
   <h2><span class="num">17</span>API index</h2>
-  <p>The complete public surface, godoc-style.</p>
-
   <h3>doc</h3>
   <span class="sig"><b>func</b> New(cfg Config) *Generator
-<b>type</b> Config <b>struct</b> { Title, Version, Description <b>string</b>; Servers []Server; Auth AuthScheme; Tags []Tag; ErrorType <b>any</b>; DefaultErrors []<b>int</b>; ClosedSchemas <b>bool</b>; DeriveTags <b>bool</b>; JSONDialect Dialect }
+<b>type</b> Config <b>struct</b> { Title, Version, Description <b>string</b>; Servers []Server; Auth AuthScheme; Tags []Tag; ErrorType <b>any</b>; DefaultErrors []<b>int</b>; ClosedSchemas <b>bool</b>; JSONDialect Dialect }
 
 <b>func</b> (d *Generator) Get[Req, Res <b>any</b>](r chi.Router, pattern <b>string</b>, h Handler[Req, Res])
 <span style="color:var(--text-dim)">// Head/Post/Put/Patch/Delete/Options/Trace identical — the chi verb set</span>
 <b>func</b> (d *Generator) Handle[Req, Res <b>any</b>](mux *http.ServeMux, pattern <b>string</b>, h Handler[Req, Res])
 <b>func</b> (d *Generator) Adopt(r chi.Router) error
 <b>func</b> (d *Generator) ServeHTTP(w http.ResponseWriter, r *http.Request) <span style="color:var(--text-dim)">// http.Handler — serves the spec</span>
-<b>func</b> (d *Generator) WriteJSON(w io.Writer) error
-<b>func</b> (d *Generator) InjectExamples(ex map[RouteKey]map[int]any)</span>
+<b>func</b> (d *Generator) WriteJSON(w io.Writer) error</span>
 
   <h3>specout — handlers &amp; responses</h3>
   <span class="sig"><b>type</b> Handler[Req, Res <b>any</b>] <b>struct</b> { http.HandlerFunc; Responses []Response; Tags []string; Summary string; Deprecated <b>bool</b> }
@@ -1317,18 +1318,12 @@ specout.RequireDocumented(t, r, specout.Skip("/debug/*"))</code></pre>
 <b>type</b> Documented <b>interface</b> { Types() (req, res reflect.Type) }
 
 <b>type</b> Response <b>struct</b> {
-	Status  <b>int</b>          <span style="color:var(--text-dim)">// required</span>
-	Type    <b>any</b>          <span style="color:var(--text-dim)">// omitted = reuse Res's type at this code</span>
-	Headers []Header       <span style="color:var(--text-dim)">// response headers for this code</span>
-	Raw     map[string]any <span style="color:var(--text-dim)">// arbitrary OpenAPI merged into this response</span>
-	Omit    <b>bool</b>          <span style="color:var(--text-dim)">// remove this global default code from the route</span>
+	Status      <b>int</b>          <span style="color:var(--text-dim)">// required</span>
+	Type        <b>any</b>          <span style="color:var(--text-dim)">// omitted = reuse Res's type at this code</span>
+	ContentType <b>string</b>       <span style="color:var(--text-dim)">// binary body: "application/pdf" etc. — content entry with format: binary</span>
+	Raw         map[string]any <span style="color:var(--text-dim)">// arbitrary OpenAPI merged into this response (incl. headers)</span>
+	Omit        <b>bool</b>          <span style="color:var(--text-dim)">// remove this global default code from the route</span>
 }
-<b>type</b> Header <b>struct</b> { Name <b>string</b>; Type <b>any</b> }
-
-<b>type</b> NoContent <b>struct</b>{}   <span style="color:var(--text-dim)">// as Res → 204, no body</span>
-<b>type</b> File <b>struct</b>{}        <span style="color:var(--text-dim)">// request field → multipart/form-data + binary</span>
-<b>type</b> Binary <b>struct</b>{}      <span style="color:var(--text-dim)">// as Res → binary response body</span>
-<b>type</b> Variant <b>string</b>       <span style="color:var(--text-dim)">// discriminator field, paired with oneof_type</span>
 
 <b>func</b> Skip(pattern <b>string</b>) SkipRule</span>
 
@@ -1343,23 +1338,7 @@ specout.RequireDocumented(t, r, specout.Skip("/debug/*"))</code></pre>
 <span style="color:var(--text-dim)">// package specout/recorder:</span>
 <b>func</b> New(next http.Handler) *Recorder
 <b>func</b> (rec *Recorder) ServeHTTP(w http.ResponseWriter, r *http.Request)
-<b>func</b> (rec *Recorder) Examples() map[specout.RouteKey]map[int]any
 <b>func</b> Verify(t TestingT, d *specout.Generator, rec *Recorder)</span>
-
-  <h3>api — helpers</h3>
-  <span class="sig"><b>func</b> New(cfg Config) *Responder
-<b>type</b> Config <b>struct</b> { ErrorMapper func(error) (int, Problem) }
-
-<b>func</b> Decode[Req any](r *http.Request) (Req, error) <span style="color:var(--text-dim)">// pure — stays a function</span>
-<b>func</b> SendFile(w http.ResponseWriter, contentType, filename <b>string</b>, b []byte)
-
-<b>func</b> (a *Responder) OK[T any](w http.ResponseWriter, v T)
-<b>func</b> (a *Responder) Status[T any](w http.ResponseWriter, code <b>int</b>, v T)
-<b>func</b> (a *Responder) NoContent(w http.ResponseWriter)
-<b>func</b> (a *Responder) Err(w http.ResponseWriter, r *http.Request, err error)
-
-<b>type</b> DetailedError <b>interface</b> { error; HTTPStatus() <b>int</b>; Payload() any }
-<b>type</b> Problem <b>struct</b> { Type, Title <b>string</b>; Status <b>int</b>; Detail <b>string</b> }</span>
 
   <div class="footer">
     <code>internal/specout</code> design reference · OpenAPI 3.1 · generated specs are artifacts like any other code — review them in git, verify them in tests.

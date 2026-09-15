@@ -94,3 +94,26 @@ func pathParamObjs(pattern string) []any {
 	}
 	return out
 }
+
+// requestBodyFor picks the request content type: multipart/form-data when a
+// field carries jsonschema:"format=binary" (a file upload), JSON otherwise.
+func requestBodyFor(req reflect.Type, sr *schemaRegistry) (string, *obj) {
+	for req.Kind() == reflect.Pointer {
+		req = req.Elem()
+	}
+	schema := newObj().set("$ref", sr.refFor(req))
+	if req.Kind() == reflect.Struct && hasBinaryField(req) {
+		return "multipart/form-data", schema
+	}
+	return "application/json", schema
+}
+
+// hasBinaryField reports whether any field's jsonschema tag sets format=binary.
+func hasBinaryField(t reflect.Type) bool {
+	for i := 0; i < t.NumField(); i++ {
+		if tagValue(t.Field(i).Tag.Get("jsonschema"), "format") == "binary" {
+			return true
+		}
+	}
+	return false
+}

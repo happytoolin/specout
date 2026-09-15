@@ -201,9 +201,7 @@
           "required": true,
           "content": {
             "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpsertRequest"
-              }
+              "$ref": "#/components/schemas/UpsertRequest"
             }
           }
         },
@@ -416,9 +414,7 @@
           "required": true,
           "content": {
             "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpsertRequest"
-              }
+              "$ref": "#/components/schemas/UpsertRequest"
             }
           }
         },
@@ -523,7 +519,7 @@
           "200": {
             "description": "OK",
             "content": {
-              "application/octet-stream": {
+              "application/pdf": {
                 "schema": {
                   "type": "string",
                   "format": "binary"
@@ -684,10 +680,8 @@
         "requestBody": {
           "required": true,
           "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ImportRequest"
-              }
+            "multipart/form-data": {
+              "$ref": "#/components/schemas/ImportRequest"
             }
           }
         },
@@ -778,9 +772,7 @@
           "required": true,
           "content": {
             "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SyncRequest"
-              }
+              "$ref": "#/components/schemas/SyncRequest"
             }
           }
         },
@@ -868,9 +860,7 @@
           "required": true,
           "content": {
             "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Config"
-              }
+              "$ref": "#/components/schemas/Config"
             }
           }
         },
@@ -1111,8 +1101,9 @@
       "ImportRequest": {
         "properties": {
           "File": {
-            "properties": {},
-            "type": "object",
+            "type": "string",
+            "format": "binary",
+            "contentEncoding": "base64",
             "description": "CSV of onboarding records"
           },
           "Mode": {
@@ -1233,11 +1224,7 @@
           },
           "events": {
             "items": {
-              "type": "string",
-              "examples": [
-                "pinged",
-                "completed"
-              ]
+              "type": "string"
             },
             "type": "array"
           }

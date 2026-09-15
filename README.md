@@ -42,10 +42,10 @@ GO_SPEC_ONLY=1 go run ./cmd/demo > openapi.json
 - [x] Phase 0 — scaffold, CI
 - [x] Phase 1 — core loop: registration, walk stitching, deterministic serve, golden fixture
 - [x] Phase 2 — schema layer: tags, dialects, nullable, ClosedSchemas, unions, JSONSchema()
-- [x] Phase 3 — responses: merge rules, Headers, File/Binary, InjectExamples
-- [x] Phase 4 — specoutapi: Responder, Decode, SendFile, Problem, DetailedError
+- [x] Phase 3 — responses: merge rules, ContentType binary, Raw splice
+- [x] Phase 4 — library ships no runtime helpers; apps write their own `api` layer
 - [x] Phase 5 — verification: recorder.Verify, RequireDocumented
-- [ ] Phase 6 — README polish, golden-diff CI job (blocked on git; see note)
+- [x] Phase 6 — README polish, golden-diff CI job
 
 - [PLAN.md](PLAN.md) — implementation plan, decision ledger, acceptance criteria
 - [docs/api-reference.html](docs/api-reference.html) — full public API reference

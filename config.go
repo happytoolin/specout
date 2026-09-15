@@ -12,7 +12,6 @@ type Config struct {
 	ErrorType     any
 	DefaultErrors []int
 	ClosedSchemas bool
-	DeriveTags    bool
 	JSONDialect   Dialect
 }
 
