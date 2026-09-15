@@ -1,6 +1,9 @@
 package specout
 
-import "reflect"
+import (
+	"net/http"
+	"reflect"
+)
 
 // Handler is an http.HandlerFunc factory product carrying request and
 // response schema metadata in its type parameters. The embedded
