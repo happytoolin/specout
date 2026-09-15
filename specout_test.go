@@ -154,7 +154,7 @@ func TestGroupsAndMountsResolve(t *testing.T) {
 	var doc map[string]any
 	json.Unmarshal(buf.Bytes(), &doc)
 	paths := doc["paths"].(map[string]any)
-	if _, ok := paths["/onboarding/"]; !ok {
+	if _, ok := paths["/onboarding"]; !ok {
 		t.Errorf("group route not resolved to full path; have %v", paths)
 	}
 }

@@ -27,7 +27,7 @@ func TestDemoServesValidShape(t *testing.T) {
 
 	paths := doc["paths"].(map[string]any)
 	for _, p := range []string{
-		"/onboarding/", "/onboarding/{id}/", "/onboarding/{id}/sync",
+		"/onboarding", "/onboarding/{id}", "/onboarding/{id}/sync",
 		"/files/import", "/files/report", "/legacy", "/webhooks",
 	} {
 		if _, ok := paths[p]; !ok {
@@ -36,7 +36,7 @@ func TestDemoServesValidShape(t *testing.T) {
 	}
 
 	// query params on list
-	list := paths["/onboarding/"].(map[string]any)["get"].(map[string]any)
+	list := paths["/onboarding"].(map[string]any)["get"].(map[string]any)
 	params := list["parameters"].([]any)
 	if len(params) < 3 {
 		t.Errorf("list params = %d, want >= 3 (limit cursor sort)", len(params))

@@ -12,7 +12,7 @@
     }
   ],
   "paths": {
-    "/onboarding/{id}/": {
+    "/onboarding/{id}": {
       "delete": {
         "summary": "Delete an onboarding record",
         "operationId": "deleteOnboardingId",
@@ -303,7 +303,7 @@
         }
       }
     },
-    "/onboarding/": {
+    "/onboarding": {
       "get": {
         "summary": "List onboarding records",
         "operationId": "getOnboarding",

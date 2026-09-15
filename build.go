@@ -72,10 +72,11 @@ func (d *Generator) build() (*obj, error) {
 				set("content", newObj().set(ct, media)))
 		}
 		op.set("responses", d.responsesFor(rec, sr))
-		pathItem, _ := paths.get(rec.full)
+		norm := NormalizePath(rec.full)
+		pathItem, _ := paths.get(norm)
 		if pathItem == nil {
 			pathItem = newObj()
-			paths.set(rec.full, pathItem)
+			paths.set(NormalizePath(rec.full), pathItem)
 		}
 		pathItem.(*obj).set(strings.ToLower(rec.method), op)
 	}
