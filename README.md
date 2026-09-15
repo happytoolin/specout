@@ -124,6 +124,7 @@ Public routes opt out with `Public: true` on the Handler.
 ```sh
 go run ./cmd/demo
 # swagger ui: http://localhost:8080/
+# scalar:      http://localhost:8080/scalar
 # spec:        http://localhost:8080/openapi.json
 ```
 
