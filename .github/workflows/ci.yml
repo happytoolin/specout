@@ -17,4 +17,7 @@ jobs:
       - run: go vet ./...
       - run: gofmt -l . | tee /dev/stderr | (! read) || false
       - run: go test ./...
-      - # golden-diff job lands in Phase 6
+      - name: Golden spec is committed
+        run: |
+          GO_SPEC_ONLY=1 go run ./cmd/demo > /tmp/openapi.json
+          cmp /tmp/openapi.json testdata/openapi.json || (echo "testdata/openapi.json is stale — regenerate with UPDATE_GOLDEN=1 go test" && exit 1)

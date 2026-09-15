@@ -1,13 +1,20 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Onboarding API",
+    "title": "specout demo",
     "version": "1.0.0",
-    "description": "Internal onboarding service."
+    "description": "Every route shape the library supports, live."
   },
+  "servers": [
+    {
+      "url": "http://localhost:8080",
+      "description": "local"
+    }
+  ],
   "paths": {
     "/onboarding/{id}/": {
       "delete": {
+        "summary": "Delete",
         "tags": [
           "onboarding"
         ],
@@ -35,8 +42,38 @@
               }
             }
           },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
             "content": {
               "application/json": {
                 "schema": {
@@ -58,6 +95,7 @@
         }
       },
       "get": {
+        "summary": "Get one",
         "tags": [
           "onboarding"
         ],
@@ -92,8 +130,38 @@
               }
             }
           },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
             "content": {
               "application/json": {
                 "schema": {
@@ -115,6 +183,7 @@
         }
       },
       "put": {
+        "summary": "Upsert",
         "tags": [
           "onboarding"
         ],
@@ -159,6 +228,16 @@
               }
             }
           },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationError"
+                }
+              }
+            }
+          },
           "400": {
             "description": "Bad Request",
             "content": {
@@ -169,8 +248,38 @@
               }
             }
           },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
             "content": {
               "application/json": {
                 "schema": {
@@ -193,7 +302,113 @@
       }
     },
     "/onboarding/": {
+      "get": {
+        "summary": "List onboarding",
+        "tags": [
+          "onboarding"
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor from a previous page"
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
+        "summary": "Create onboarding",
         "tags": [
           "onboarding"
         ],
@@ -226,10 +441,382 @@
                   "$ref": "#/components/schemas/Onboarding"
                 }
               }
+            },
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
             }
           },
           "400": {
             "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/files/report": {
+      "get": {
+        "summary": "Download report",
+        "tags": [
+          "files"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/legacy": {
+      "get": {
+        "summary": "Replaced by PUT /onboarding/{id}",
+        "deprecated": true,
+        "tags": [
+          "onboarding"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Onboarding"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/files/import": {
+      "post": {
+        "summary": "Import CSV",
+        "tags": [
+          "files"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/onboarding/{id}/sync": {
+      "post": {
+        "summary": "Sync with conflict detail",
+        "tags": [
+          "sync"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncResult"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncConflict"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
             "content": {
               "application/json": {
                 "schema": {
@@ -261,18 +848,29 @@
         }
       }
     },
-    "/api/sync": {
+    "/webhooks": {
       "post": {
+        "summary": "Register webhook (union body)",
         "tags": [
           "sync"
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookConfig"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "OK",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Onboarding"
+                  "$ref": "#/components/schemas/WebhookConfig"
                 }
               }
             }
@@ -287,8 +885,38 @@
               }
             }
           },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
             "content": {
               "application/json": {
                 "schema": {
@@ -335,39 +963,121 @@
           "status"
         ]
       },
-      "OnboardingList": {
-        "items": {
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "owner": {
-              "type": "string",
-              "format": "email"
-            },
-            "stage": {
-              "type": "string",
-              "enum": [
-                "draft",
-                "active",
-                "archived"
-              ]
-            }
-          },
-          "type": "object",
-          "required": [
-            "id",
-            "owner",
-            "stage"
-          ]
-        },
-        "type": "array"
-      },
       "Onboarding": {
         "properties": {
           "id": {
-            "type": "string"
+            "type": "string",
+            "readOnly": true,
+            "examples": [
+              "onb_4f9x"
+            ]
           },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "readOnly": true
+          },
+          "owner": {
+            "type": "string",
+            "format": "email"
+          },
+          "apiKey": {
+            "type": "string",
+            "writeOnly": true
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "active",
+              "archived"
+            ],
+            "default": "draft"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "expiry": {
+            "format": "date-time",
+            "description": "Optional expiry",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "createdAt",
+          "owner",
+          "stage"
+        ]
+      },
+      "Page": {
+        "properties": {
+          "items": {
+            "items": {
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "examples": [
+                    "onb_4f9x"
+                  ]
+                },
+                "createdAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "owner": {
+                  "type": "string",
+                  "format": "email"
+                },
+                "apiKey": {
+                  "type": "string"
+                },
+                "stage": {
+                  "type": "string",
+                  "enum": [
+                    "draft",
+                    "active",
+                    "archived"
+                  ],
+                  "default": "draft"
+                },
+                "note": {
+                  "type": "string",
+                  "maxLength": 500
+                },
+                "expiry": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "Optional expiry"
+                }
+              },
+              "type": "object",
+              "required": [
+                "id",
+                "createdAt",
+                "owner",
+                "stage"
+              ]
+            },
+            "type": "array"
+          },
+          "next": {
+            "type": "string",
+            "description": "Cursor for next page"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ]
+      },
+      "UpsertRequest": {
+        "properties": {
           "owner": {
             "type": "string",
             "format": "email"
@@ -378,29 +1088,163 @@
               "draft",
               "active",
               "archived"
-            ]
+            ],
+            "default": "draft"
           }
         },
         "type": "object",
         "required": [
-          "id",
           "owner",
           "stage"
         ]
       },
-      "UpsertRequest": {
+      "ImportRequest": {
         "properties": {
-          "owner": {
-            "type": "string"
+          "File": {
+            "properties": {},
+            "type": "object",
+            "description": "CSV of onboardings"
           },
-          "stage": {
+          "Mode": {
+            "type": "string",
+            "enum": [
+              "merge",
+              "replace"
+            ],
+            "default": "merge"
+          }
+        },
+        "type": "object",
+        "required": [
+          "File",
+          "Mode"
+        ]
+      },
+      "SyncResult": {
+        "properties": {
+          "count": {
+            "type": "integer"
+          }
+        },
+        "type": "object",
+        "required": [
+          "count"
+        ]
+      },
+      "SyncConflict": {
+        "properties": {
+          "resource": {
+            "type": "string",
+            "examples": [
+              "onboarding"
+            ]
+          },
+          "expected": {
+            "type": "integer"
+          },
+          "actual": {
+            "type": "integer"
+          },
+          "resolveUrl": {
+            "type": "string",
+            "description": "Fetch current state here"
+          }
+        },
+        "type": "object",
+        "required": [
+          "resource",
+          "expected",
+          "actual",
+          "resolveUrl"
+        ]
+      },
+      "ValidationError": {
+        "properties": {
+          "problems": {
+            "items": {
+              "properties": {
+                "field": {
+                  "type": "string",
+                  "examples": [
+                    "owner"
+                  ]
+                },
+                "message": {
+                  "type": "string",
+                  "examples": [
+                    "must be a valid email"
+                  ]
+                }
+              },
+              "type": "object",
+              "required": [
+                "field",
+                "message"
+              ]
+            },
+            "type": "array"
+          }
+        },
+        "type": "object",
+        "required": [
+          "problems"
+        ]
+      },
+      "EmailConfig": {
+        "properties": {
+          "address": {
+            "type": "string",
+            "format": "email"
+          }
+        },
+        "type": "object",
+        "required": [
+          "address"
+        ]
+      },
+      "SlackConfig": {
+        "properties": {
+          "channel": {
             "type": "string"
           }
         },
         "type": "object",
         "required": [
-          "owner",
-          "stage"
+          "channel"
+        ]
+      },
+      "WebhookConfig": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "email",
+              "slack"
+            ],
+            "description": "Discriminator"
+          },
+          "data": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EmailConfig"
+              },
+              {
+                "$ref": "#/components/schemas/SlackConfig"
+              }
+            ],
+            "discriminator": {
+              "mapping": {
+                "email": "EmailConfig",
+                "slack": "SlackConfig"
+              },
+              "propertyName": "kind"
+            }
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "data"
         ]
       }
     }

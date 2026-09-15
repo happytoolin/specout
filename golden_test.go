@@ -5,12 +5,13 @@ import (
 	"os"
 	"testing"
 
-	"github.com/happytoolin/specout/internal/testapp"
+	"github.com/happytoolin/specout/internal/demoapp"
 )
 
 func TestGoldenSpec(t *testing.T) {
 	var buf bytes.Buffer
-	if err := testapp.WriteSpec(&buf); err != nil {
+	d, _, _ := demoapp.New()
+	if err := d.WriteJSON(&buf); err != nil {
 		t.Fatal(err)
 	}
 	golden, err := os.ReadFile("testdata/openapi.json")
@@ -25,7 +26,8 @@ func TestGoldenSpec(t *testing.T) {
 func TestMain(m *testing.M) {
 	if os.Getenv("UPDATE_GOLDEN") != "" {
 		var buf bytes.Buffer
-		if err := testapp.WriteSpec(&buf); err != nil {
+		d, _, _ := demoapp.New()
+		if err := d.WriteJSON(&buf); err != nil {
 			panic(err)
 		}
 		os.MkdirAll("testdata", 0o755)
