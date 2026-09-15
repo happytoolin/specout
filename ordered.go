@@ -30,6 +30,11 @@ func (o *obj) get(k string) (any, bool) {
 	return v, ok
 }
 
+func (o *obj) has(k string) bool {
+	_, ok := o.vals[k]
+	return ok
+}
+
 // MarshalJSON writes the object with keys in insertion order.
 func (o *obj) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer

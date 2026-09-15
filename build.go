@@ -102,6 +102,9 @@ func (d *Generator) build() (*obj, error) {
 			schemas.set(e.name, e.s)
 		}
 		for _, n := range sr.nameOrder {
+			if schemas.has(n) {
+				continue
+			}
 			schemas.set(n, sr.byName[n])
 		}
 		components.set("schemas", schemas)

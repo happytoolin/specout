@@ -2,6 +2,7 @@ package specout
 
 import (
 	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/invopop/jsonschema"
@@ -16,6 +17,7 @@ type schemaRegistry struct {
 	nameOrder []string
 	overrides map[reflect.Type]string // SchemaName[T] component-name overrides
 	variants  map[string]reflect.Type // Register[T] union variants, by name
+	anon      int                     // anonymous struct component counter
 	closed    bool
 	dialect   Dialect
 }
@@ -63,7 +65,6 @@ func (sr *schemaRegistry) refFor(t reflect.Type) string {
 	s := r.Reflect(reflect.New(t).Interface())
 	s.Version = ""
 	s = sr.unwrapDefs(t, s)
-
 	// invopop's oneof_type splits on ";", our docs use "|" — normalize.
 	normalizeOneOf(s, sr)
 	splitEnums(s)
@@ -84,6 +85,10 @@ func (sr *schemaRegistry) refFor(t reflect.Type) string {
 func (sr *schemaRegistry) nameFor(t reflect.Type) string {
 	if n, ok := sr.overrides[t]; ok {
 		return n
+	}
+	if t.Kind() == reflect.Struct && t.Name() == "" {
+		sr.anon++
+		return "Anonymous" + strconv.Itoa(sr.anon)
 	}
 	return sanitizeName(t)
 }
@@ -137,6 +142,11 @@ func (sr *schemaRegistry) defByName(name string) *jsonschema.Schema {
 // a synthetic type.
 func (sr *schemaRegistry) addDef(name string, def *jsonschema.Schema) {
 	def.Version = ""
+	splitEnums(def)
+	normalizeOneOf(def, sr)
+	if sr.closed {
+		closeSchema(def)
+	}
 	remapDefs(def)
 	if _, ok := sr.byName[name]; !ok {
 		sr.byName[name] = def
@@ -314,6 +324,12 @@ func splitEnums(s *jsonschema.Schema) {
 	if s.Items != nil {
 		splitEnums(s.Items)
 	}
+	for _, x := range s.OneOf {
+		splitEnums(x)
+	}
+	for _, x := range s.AnyOf {
+		splitEnums(x)
+	}
 }
 
 // applyNullable rewrites pointer fields to OpenAPI 3.1 type arrays
@@ -359,7 +375,7 @@ func nullable(p *jsonschema.Schema) {
 // applyFieldTags handles keywords invopop misses: bare readonly/writeonly
 // (it wants readOnly=true), often combined with example= in one tag.
 func applyFieldTags(t reflect.Type, s *jsonschema.Schema) {
-	if t.Kind() != reflect.Struct || s.Properties == nil {
+	if t == nil || t.Kind() != reflect.Struct || s.Properties == nil {
 		return
 	}
 	for i := 0; i < t.NumField(); i++ {

@@ -492,7 +492,10 @@
             "in": "query",
             "required": true,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20
             }
           },
           {
@@ -509,7 +512,12 @@
             "in": "query",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "enum": [
+                "created",
+                "updated"
+              ],
+              "default": "created"
             }
           },
           {
@@ -1027,25 +1035,30 @@
         "properties": {
           "id": {
             "type": "string",
+            "readOnly": true,
             "examples": [
               "onb_4f9x"
             ]
           },
           "createdAt": {
             "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "readOnly": true
           },
           "owner": {
             "type": "string",
             "format": "email"
           },
           "apiKey": {
-            "type": "string"
+            "type": "string",
+            "writeOnly": true
           },
           "stage": {
             "type": "string",
             "enum": [
-              "draft|active|archived"
+              "draft",
+              "active",
+              "archived"
             ],
             "default": "draft"
           },
@@ -1054,9 +1067,12 @@
             "maxLength": 500
           },
           "expiry": {
-            "type": "string",
             "format": "date-time",
-            "description": "Optional expiry"
+            "description": "Optional expiry",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "type": "object",

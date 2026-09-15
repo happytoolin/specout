@@ -51,25 +51,45 @@ func taggedParams(req reflect.Type, sr *schemaRegistry) ([]any, bool) {
 			continue
 		}
 		name := parts0(qt)
-		r := &jsonschema.Reflector{Anonymous: true, DoNotReference: true}
-		fs := r.Reflect(reflect.New(f.Type).Interface())
-		fs.Version = ""
+		// reflect a one-field wrapper so the field's jsonschema tag applies
+		fs := reflectParam(f)
 		if f.Type.Kind() == reflect.Pointer {
 			base := fs.Type
 			fs.Type = ""
 			fs.Extras = map[string]any{"type": []string{base, "null"}}
 		}
+		splitEnums(fs)
 		p := newObj().
 			set("name", name).
 			set("in", loc).
 			set("required", !strings.Contains(qt, ",omitempty") && !strings.Contains(f.Tag.Get("json"), "omitempty")).
 			set("schema", fs)
 		if desc := tagValue(f.Tag.Get("jsonschema"), "description"); desc != "" {
+			fs.Description = ""
 			p.set("description", desc)
 		}
 		params = append(params, p)
 	}
 	return params, hasBody
+}
+
+// reflectParam builds a synthetic struct with one field shaped like f, so
+// invopop applies the field's jsonschema tag, then returns the property.
+func reflectParam(f reflect.StructField) *jsonschema.Schema {
+	wrap := reflect.StructOf([]reflect.StructField{{
+		Name: "Wrap",
+		Type: f.Type,
+		Tag:  f.Tag,
+	}})
+	r := &jsonschema.Reflector{Anonymous: true, DoNotReference: true}
+	s := r.Reflect(reflect.New(wrap).Interface())
+	s.Version = ""
+	var p *jsonschema.Schema
+	for k := range s.Properties.KeysFromOldest() {
+		p, _ = s.Properties.Get(k)
+		break
+	}
+	return p
 }
 
 func parts0(s string) string {
