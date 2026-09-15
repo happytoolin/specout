@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/happytoolin/specout/internal/demoapp"
+	"github.com/happytoolin/specout/internal/demo/router"
 )
 
 // GO_SPEC_ONLY=1 ./demo > openapi.json makes CI golden-diff possible from
@@ -27,7 +27,7 @@ const uiPage = `<!DOCTYPE html>
 </html>`
 
 func main() {
-	d, r, _ := demoapp.New()
+	d, r := router.New()
 
 	if os.Getenv("GO_SPEC_ONLY") != "" {
 		if err := d.WriteJSON(os.Stdout); err != nil {

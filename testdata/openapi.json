@@ -1,20 +1,20 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "specout demo",
+    "title": "Onboarding API",
     "version": "1.0.0",
-    "description": "Every route shape the library supports, live."
+    "description": "specout demo service — every route shape in one app."
   },
   "servers": [
     {
       "url": "http://localhost:8080",
-      "description": "local"
+      "description": "development"
     }
   ],
   "paths": {
     "/onboarding/{id}/": {
       "delete": {
-        "summary": "Delete",
+        "summary": "Delete an onboarding record",
         "tags": [
           "onboarding"
         ],
@@ -95,7 +95,7 @@
         }
       },
       "get": {
-        "summary": "Get one",
+        "summary": "Fetch one onboarding record",
         "tags": [
           "onboarding"
         ],
@@ -183,7 +183,7 @@
         }
       },
       "put": {
-        "summary": "Upsert",
+        "summary": "Create or replace an onboarding record",
         "tags": [
           "onboarding"
         ],
@@ -303,7 +303,7 @@
     },
     "/onboarding/": {
       "get": {
-        "summary": "List onboarding",
+        "summary": "List onboarding records",
         "tags": [
           "onboarding"
         ],
@@ -408,7 +408,7 @@
         }
       },
       "post": {
-        "summary": "Create onboarding",
+        "summary": "Create an onboarding record",
         "tags": [
           "onboarding"
         ],
@@ -515,7 +515,7 @@
     },
     "/files/report": {
       "get": {
-        "summary": "Download report",
+        "summary": "Download the activity report",
         "tags": [
           "files"
         ],
@@ -596,7 +596,7 @@
     },
     "/legacy": {
       "get": {
-        "summary": "Replaced by PUT /onboarding/{id}",
+        "summary": "Replaced by GET /onboarding/{id}",
         "deprecated": true,
         "tags": [
           "onboarding"
@@ -677,7 +677,7 @@
     },
     "/files/import": {
       "post": {
-        "summary": "Import CSV",
+        "summary": "Bulk import from CSV",
         "tags": [
           "files"
         ],
@@ -760,7 +760,7 @@
     },
     "/onboarding/{id}/sync": {
       "post": {
-        "summary": "Sync with conflict detail",
+        "summary": "Sync a record against an expected version",
         "tags": [
           "sync"
         ],
@@ -774,6 +774,16 @@
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SyncRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "OK",
@@ -850,16 +860,16 @@
     },
     "/webhooks": {
       "post": {
-        "summary": "Register webhook (union body)",
+        "summary": "Register a webhook (email or slack)",
         "tags": [
-          "sync"
+          "webhooks"
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/WebhookConfig"
+                "$ref": "#/components/schemas/Config"
               }
             }
           }
@@ -870,7 +880,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WebhookConfig"
+                  "$ref": "#/components/schemas/Config"
                 }
               }
             }
@@ -1068,7 +1078,7 @@
           },
           "next": {
             "type": "string",
-            "description": "Cursor for next page"
+            "description": "Cursor for the next page"
           }
         },
         "type": "object",
@@ -1103,7 +1113,7 @@
           "File": {
             "properties": {},
             "type": "object",
-            "description": "CSV of onboardings"
+            "description": "CSV of onboarding records"
           },
           "Mode": {
             "type": "string",
@@ -1118,6 +1128,18 @@
         "required": [
           "File",
           "Mode"
+        ]
+      },
+      "SyncRequest": {
+        "properties": {
+          "expected": {
+            "type": "integer",
+            "description": "Client's last seen version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "expected"
         ]
       },
       "SyncResult": {
@@ -1140,14 +1162,16 @@
             ]
           },
           "expected": {
-            "type": "integer"
+            "type": "integer",
+            "description": "Version the client sent"
           },
           "actual": {
-            "type": "integer"
+            "type": "integer",
+            "description": "Version currently on the server"
           },
           "resolveUrl": {
             "type": "string",
-            "description": "Fetch current state here"
+            "description": "Fetch the current state here"
           }
         },
         "type": "object",
@@ -1206,6 +1230,16 @@
         "properties": {
           "channel": {
             "type": "string"
+          },
+          "events": {
+            "items": {
+              "type": "string",
+              "examples": [
+                "pinged",
+                "completed"
+              ]
+            },
+            "type": "array"
           }
         },
         "type": "object",
@@ -1213,7 +1247,7 @@
           "channel"
         ]
       },
-      "WebhookConfig": {
+      "Config": {
         "properties": {
           "kind": {
             "type": "string",

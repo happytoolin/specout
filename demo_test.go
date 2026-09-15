@@ -6,13 +6,13 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/happytoolin/specout/internal/demoapp"
+	"github.com/happytoolin/specout/internal/demo/router"
 )
 
 // TestDemoServesValidShape: the demo spec parses and carries the showcase
 // features — union refs, readOnly, query params, headers, omit, binary.
 func TestDemoServesValidShape(t *testing.T) {
-	d, r, _ := demoapp.New()
+	d, r := router.New()
 	_ = d
 	srv := httptest.NewServer(r)
 	defer srv.Close()
@@ -54,7 +54,7 @@ func TestDemoServesValidShape(t *testing.T) {
 
 	// union: webhooks body oneOf refs
 	comps := doc["components"].(map[string]any)["schemas"].(map[string]any)
-	for _, name := range []string{"EmailConfig", "SlackConfig", "WebhookConfig"} {
+	for _, name := range []string{"EmailConfig", "SlackConfig", "Config"} {
 		if _, ok := comps[name]; !ok {
 			t.Errorf("missing component %s", name)
 		}

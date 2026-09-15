@@ -5,12 +5,12 @@ import (
 	"os"
 	"testing"
 
-	"github.com/happytoolin/specout/internal/demoapp"
+	"github.com/happytoolin/specout/internal/demo/router"
 )
 
 func TestGoldenSpec(t *testing.T) {
 	var buf bytes.Buffer
-	d, _, _ := demoapp.New()
+	d, _ := router.New()
 	if err := d.WriteJSON(&buf); err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +26,7 @@ func TestGoldenSpec(t *testing.T) {
 func TestMain(m *testing.M) {
 	if os.Getenv("UPDATE_GOLDEN") != "" {
 		var buf bytes.Buffer
-		d, _, _ := demoapp.New()
+		d, _ := router.New()
 		if err := d.WriteJSON(&buf); err != nil {
 			panic(err)
 		}

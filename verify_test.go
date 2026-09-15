@@ -6,16 +6,16 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/happytoolin/specout"
-	"github.com/happytoolin/specout/internal/demoapp"
+	"github.com/happytoolin/specout/internal/demo/router"
 )
 
 func TestRequireDocumentedPasses(t *testing.T) {
-	_, r, _ := demoapp.New()
+	_, r := router.New()
 	specout.RequireDocumented(t, r.(chi.Router))
 }
 
 func TestRequireDocumentedFailsOnStray(t *testing.T) {
-	_, r, _ := demoapp.New()
+	_, r := router.New()
 	r.(chi.Router).Get("/debug/vars", func(w http.ResponseWriter, _ *http.Request) {})
 	r.(chi.Router).Get("/debug/hidden", func(w http.ResponseWriter, _ *http.Request) {})
 

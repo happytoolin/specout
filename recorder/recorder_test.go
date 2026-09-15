@@ -4,71 +4,51 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
-	"github.com/happytoolin/specout/internal/demoapp"
+	"github.com/happytoolin/specout/internal/demo/router"
 	"github.com/happytoolin/specout/recorder"
 )
 
-type failT struct {
-	errs []string
-}
-
-func (f *failT) Errorf(format string, args ...any) {
-	f.errs = append(f.errs, sprintf(format, args...))
-}
+type failT struct{ errs []string }
 
 func (f *failT) Helper() {}
-
 func (f *failT) Fatalf(format string, args ...any) {
-	f.errs = append(f.errs, sprintf(format, args...))
+	f.errs = append(f.errs, fmt.Sprintf(format, args...))
+}
+func (f *failT) Errorf(format string, args ...any) {
+	f.errs = append(f.errs, fmt.Sprintf(format, args...))
 }
 
-func sprintf(format string, args ...any) string {
-	return fmt.Sprintf(format, args...)
-}
-
+// TestVerifyPassesOnFullCoverage exercises every declared route and status
+// once, then expects a clean Verify — the "recorder in your test suite"
+// flow from the api-reference.
 func TestVerifyPassesOnFullCoverage(t *testing.T) {
-	d, r, _ := demoapp.New()
+	d, r := router.New()
 	rec := recorder.New(r)
 
-	// exercise every declared route/status in one pass
-	req := httptest.NewRequest(http.MethodGet, "/onboarding", nil)
-	rec.ServeHTTP(httptest.NewRecorder(), req)
-	req = httptest.NewRequest(http.MethodPut, "/onboarding/onb_1", nil)
-	rec.ServeHTTP(httptest.NewRecorder(), req)
-	req = httptest.NewRequest(http.MethodPost, "/onboarding/onb_1/sync", nil)
-	rec.ServeHTTP(httptest.NewRecorder(), req)
-	req = httptest.NewRequest(http.MethodPost, "/onboarding/onb_1/sync?conflict=1", nil)
-	rec.ServeHTTP(httptest.NewRecorder(), req)
-	req = httptest.NewRequest(http.MethodPost, "/onboarding/onb_1/sync?case=conflict", nil)
-	rec.ServeHTTP(httptest.NewRecorder(), req)
-	req = httptest.NewRequest(http.MethodPost, "/onboarding/onb_1/sync?case=invalid", nil)
-	rec.ServeHTTP(httptest.NewRecorder(), req)
-	req = httptest.NewRequest(http.MethodPut, "/onboarding/onb_1?created=1", nil)
-	rec.ServeHTTP(httptest.NewRecorder(), req)
-	req = httptest.NewRequest(http.MethodPut, "/onboarding/onb_1?invalid=1", nil)
-	rec.ServeHTTP(httptest.NewRecorder(), req)
-	req = httptest.NewRequest(http.MethodPut, "/onboarding/onb_1", nil)
-	rec.ServeHTTP(httptest.NewRecorder(), req)
-	req = httptest.NewRequest(http.MethodPost, "/onboarding", nil)
-	rec.ServeHTTP(httptest.NewRecorder(), req)
-	req = httptest.NewRequest(http.MethodPost, "/onboarding?existing=1", nil)
-	rec.ServeHTTP(httptest.NewRecorder(), req)
-	req = httptest.NewRequest(http.MethodDelete, "/onboarding/onb_1", nil)
-	rec.ServeHTTP(httptest.NewRecorder(), req)
-	req = httptest.NewRequest(http.MethodGet, "/onboarding/onb_1", nil)
-	rec.ServeHTTP(httptest.NewRecorder(), req)
-	req = httptest.NewRequest(http.MethodPost, "/onboarding", nil)
-	rec.ServeHTTP(httptest.NewRecorder(), req)
-	req = httptest.NewRequest(http.MethodPost, "/files/import", nil)
-	rec.ServeHTTP(httptest.NewRecorder(), req)
-	req = httptest.NewRequest(http.MethodGet, "/files/report", nil)
-	rec.ServeHTTP(httptest.NewRecorder(), req)
-	req = httptest.NewRequest(http.MethodGet, "/legacy", nil)
-	rec.ServeHTTP(httptest.NewRecorder(), req)
-	req = httptest.NewRequest(http.MethodPost, "/webhooks", nil)
-	rec.ServeHTTP(httptest.NewRecorder(), req)
+	hit := func(method, target, body string) {
+		req := httptest.NewRequest(method, target, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec.ServeHTTP(httptest.NewRecorder(), req)
+	}
+
+	hit(http.MethodGet, "/onboarding", "")                                                     // list 200
+hit(http.MethodPost, "/onboarding", `{"owner":"new@example.com","stage":"draft"}`)         // create 201
+hit(http.MethodPost, "/onboarding?existing=1", `{"owner":"again@example.com","stage":"draft"}`) // idempotent 200
+	hit(http.MethodGet, "/onboarding/onb_4f9x", "")                                            // get 200
+	hit(http.MethodPut, "/onboarding/onb_4f9x", `{"owner":"up@example.com","stage":"active"}`) // update 200
+	hit(http.MethodPut, "/onboarding/onb_new1", `{"owner":"x@example.com","stage":"draft"}`)   // create 201
+	hit(http.MethodPut, "/onboarding/onb_4f9x", `{"owner":"not-an-email","stage":"draft"}`)    // 422
+	hit(http.MethodDelete, "/onboarding/onb_new1", "")                                         // 204
+hit(http.MethodPost, "/onboarding/onb_4f9x/sync", `{"expected":0}`)                       // 200 (version 0)
+	hit(http.MethodPost, "/onboarding/onb_4f9x/sync", `{"expected":999}`)                      // 409
+	hit(http.MethodPost, "/onboarding/onb_4f9x/sync", `{"expected":-1}`)                       // 422 (negative)
+	hit(http.MethodPost, "/files/import", "")                                                  // 204
+	hit(http.MethodGet, "/files/report", "")                                                   // 200 binary
+	hit(http.MethodPost, "/webhooks", `{"kind":"email","data":{"address":"ops@example.com"}}`) // 200
+	hit(http.MethodGet, "/legacy", "")                                                         // 200
 
 	ft := &failT{}
 	recorder.Verify(ft, d, rec)
@@ -77,33 +57,25 @@ func TestVerifyPassesOnFullCoverage(t *testing.T) {
 	}
 }
 
-func TestVerifyFailsOnUndeclaredCode(t *testing.T) {
-	d, r, _ := demoapp.New()
-	// don't build d; DeclaredStatuses works without build
+// TestVerifyFailsOnDeclaredButUnproduced: a fresh recorder hitting only one
+// branch leaves the other declared codes unexercised — Verify must fire.
+func TestVerifyFailsOnDeclaredButUnproduced(t *testing.T) {
+	d, r := router.New()
 	rec := recorder.New(r)
-	rec.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPut, "/onboarding/onb_1?conflict=1", nil))
+
+	req := httptest.NewRequest(http.MethodPost, "/onboarding/onb_4f9x/sync", strings.NewReader(`{"expected":5}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec.ServeHTTP(httptest.NewRecorder(), req)
+
 	ft := &failT{}
 	recorder.Verify(ft, d, rec)
 	found := false
 	for _, e := range ft.errs {
-		if contains(e, "409") {
+		if strings.Contains(e, "never produced") {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("expected 409-undeclared failure, got %v", ft.errs)
+		t.Fatalf("expected never-produced failure, got %v", ft.errs)
 	}
-}
-
-func contains(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub || len(s) > 0 && stringContains(s, sub))
-}
-
-func stringContains(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }

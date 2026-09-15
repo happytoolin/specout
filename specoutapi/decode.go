@@ -2,6 +2,8 @@ package specoutapi
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -14,6 +16,11 @@ func Decode[Req any](r *http.Request) (Req, error) {
 	var req Req
 	if strings.Contains(r.Header.Get("Content-Type"), "json") && r.Body != nil {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			if errors.Is(err, io.EOF) {
+				// empty body with a JSON content type: treat as absent
+				fillQueryFields(&req, r.URL.Query())
+				return req, nil
+			}
 			return req, err
 		}
 	}
