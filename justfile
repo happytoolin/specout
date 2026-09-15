@@ -6,6 +6,14 @@ gofmt := `go env GOROOT` + "/bin/gofmt"
 # default: what CI runs
 default: lint test check-golden
 
+# validate the golden spec against the official OpenAPI 3.1 schema
+# (creates a local venv on first run; openapi-spec-validator is the
+# reference validator from the FastAPI ecosystem)
+validate:
+    #!/bin/sh
+    if [ ! -x .venv/bin/python ]; then python3 -m venv .venv && .venv/bin/pip install -q openapi-spec-validator; fi
+    .venv/bin/python tools/validate_spec.py testdata/openapi.json
+
 # build every package
 build:
     go build ./...

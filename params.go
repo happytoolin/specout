@@ -128,7 +128,7 @@ func requestBodyFor(req reflect.Type, sr *schemaRegistry) (string, *obj) {
 	for req.Kind() == reflect.Pointer {
 		req = req.Elem()
 	}
-	schema := newObj().set("$ref", sr.refFor(req))
+	schema := newObj().set("schema", newObj().set("$ref", sr.refFor(req)))
 	if req.Kind() == reflect.Struct && hasBinaryField(req) {
 		return "multipart/form-data", schema
 	}

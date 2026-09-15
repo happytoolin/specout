@@ -21,3 +21,8 @@ jobs:
         run: |
           GO_SPEC_ONLY=1 go run ./cmd/demo > /tmp/openapi.json
           cmp /tmp/openapi.json testdata/openapi.json || (echo "testdata/openapi.json is stale — regenerate with UPDATE_GOLDEN=1 go test" && exit 1)
+      - name: Spec validates against OpenAPI 3.1 schema
+        run: |
+          python3 -m venv /tmp/venv
+          /tmp/venv/bin/pip install -q openapi-spec-validator
+          /tmp/venv/bin/python tools/validate_spec.py testdata/openapi.json
