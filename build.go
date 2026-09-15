@@ -103,8 +103,6 @@ func (d *Generator) flatRecords() []*routeRecord {
 	return out
 }
 
-// isEmptyStruct: Res = struct{} means 204, no body — Go's own idiom for
-// "nothing". Replaces the old NoContent marker type.
 func isEmptyStruct(t reflect.Type) bool {
 	return t != nil && t.Kind() == reflect.Struct && t.NumField() == 0
 }
@@ -240,6 +238,13 @@ func (d *Generator) responsesFor(rec *routeRecord, sr *schemaRegistry) *obj {
 			body.set("content", newObj().set(ct,
 				newObj().set("schema", newObj().set("type", "string").set("format", "binary"))))
 		}
+		if len(resp.Headers) > 0 {
+			hdrs := newObj()
+			for _, hd := range resp.Headers {
+				hdrs.set(hd.Name, headerObj(hd, sr))
+			}
+			body.set("headers", hdrs)
+		}
 		if len(resp.Raw) > 0 {
 			body = mergeRaw(body, resp.Raw)
 		}
@@ -291,6 +296,15 @@ func refResponse(desc, ref string) *obj {
 	return newObj().set("description", desc).set("content",
 		newObj().set("application/json",
 			newObj().set("schema", newObj().set("$ref", ref))))
+}
+
+// headerObj builds one OpenAPI header object: bare Name = string schema;
+// Type set = the type schema (components dedupe applies).
+func headerObj(hd Header, sr *schemaRegistry) *obj {
+	if hd.Type == nil {
+		return newObj().set("schema", newObj().set("type", "string"))
+	}
+	return newObj().set("schema", newObj().set("$ref", sr.refFor(reflect.TypeOf(hd.Type))))
 }
 
 func toAny[T any](s []T) []any {

@@ -108,9 +108,17 @@ func requestBodyFor(req reflect.Type, sr *schemaRegistry) (string, *obj) {
 	return "application/json", schema
 }
 
-// hasBinaryField reports whether any field's jsonschema tag sets format=binary.
+// hasBinaryField reports whether any field is a File marker or tagged format=binary.
 func hasBinaryField(t reflect.Type) bool {
+	fileT := reflect.TypeOf(File{})
+	if t == fileT {
+		return true
+	}
 	for i := 0; i < t.NumField(); i++ {
+		ft := t.Field(i).Type
+		if ft == fileT || (ft.Kind() == reflect.Slice && ft.Elem() == fileT) {
+			return true
+		}
 		if tagValue(t.Field(i).Tag.Get("jsonschema"), "format") == "binary" {
 			return true
 		}

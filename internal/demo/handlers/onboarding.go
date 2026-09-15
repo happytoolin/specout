@@ -70,11 +70,8 @@ func HandleCreate(d Deps) specout.Handler[onboarding.UpsertRequest, onboarding.O
 		Tags:    []string{"onboarding"},
 		Responses: []specout.Response{
 			{Status: http.StatusOK},
-			{Status: http.StatusCreated, Raw: map[string]any{
-				"headers": map[string]any{"Location": map[string]any{
-					"schema": map[string]any{"type": "string"},
-				}},
-			}},
+			{Status: http.StatusCreated,
+				Headers: []specout.Header{{Name: "Location"}}},
 		},
 	}
 }
@@ -129,8 +126,8 @@ func HandleUpsert(d Deps) specout.Handler[onboarding.UpsertRequest, onboarding.O
 	}
 }
 
-func HandleDelete(d Deps) specout.Handler[struct{}, struct{}] {
-	return specout.Handler[struct{}, struct{}]{
+func HandleDelete(d Deps) specout.Handler[struct{}, specout.NoContent] {
+	return specout.Handler[struct{}, specout.NoContent]{
 		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
 			if err := d.Store.Delete(chi.URLParam(r, "id")); err != nil {
 				writeErr(w, d, err)

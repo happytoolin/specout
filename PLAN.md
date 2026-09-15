@@ -116,6 +116,7 @@ The minimal path from factory to served spec:
 | 5 | Struct literals, no `parts ...any` constructors | `doc.Res(code, typ, opts...)` sugar | No runtime type-switching; everything greppable in one godoc'd struct |
 | 6 | Config struct + generic knobs as methods | Functional options | Options can't express `Register[T]`; data knobs want a struct |
 | 7 | No runtime helpers; app-owned api layer | Responder/Decode shipped in-module | Library does only what reflection cannot see; users write their own runtime code |
+| 11 (revision) | Declaration markers stay (NoContent, File, Header); runtime helpers stay out | Full marker purge | Markers carry intent reflection cannot see, touch no runtime behavior; middle ground after user review |
 | 8 | Verb methods `d.Get(r, ...)` | `d.Wrap(r)` decorator + pointer registry | The assignability wall (defined func types) makes true-native impossible; the registry is hidden global state |
 | 9 | Build-time walk for chi paths | Trust as-passed patterns | `r.Route`/`r.Mount` compose prefixes invisibly at registration time |
 | 10 | `*Generator` implements `http.Handler` | `Mount()` method | Composes with both routers for free |

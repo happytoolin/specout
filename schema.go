@@ -284,6 +284,12 @@ func applyFieldTags(t reflect.Type, s *jsonschema.Schema) {
 		if !ok || p == nil {
 			continue
 		}
+		if ft := f.Type; ft == reflect.TypeOf(File{}) || (ft.Kind() == reflect.Slice && ft.Elem() == reflect.TypeOf(File{})) {
+			p.Type = "string"
+			p.Format = "binary"
+			p.Ref = ""
+			p.Properties = nil
+		}
 		for _, part := range strings.Split(f.Tag.Get("jsonschema"), ",") {
 			switch part {
 			case "readonly", "readOnly=true":

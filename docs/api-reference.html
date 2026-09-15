@@ -393,7 +393,7 @@ func HandleDeleteOnboarding(deps *dependencies.Dependencies) specout.Handler[Del
 
   <div class="callout rule">
     <span class="label">Convention</span>
-    <p><code>Res</code> defaults to <strong>200 + schema(Res)</strong>. <code>struct{}</code> as <code>Res</code> means <strong>204, no body</strong>. Path params like <code>{id}</code> are picked up from the route pattern automatically. Everything else is opt-in.</p>
+    <p><code>Res</code> defaults to <strong>200 + schema(Res)</strong>. <code>specout.NoContent</code> (or <code>struct{}</code>) as <code>Res</code> means <strong>204, no body</strong>. Path params like <code>{id}</code> are picked up from the route pattern automatically. Everything else is opt-in.</p>
   </div>
 </section>
 
@@ -493,7 +493,7 @@ d.Handle(mux, "GET /onboarding", handlers.HandleListOnboarding(deps))</code></pr
     <thead><tr><th>Case</th><th>What you write</th><th>What the spec says</th></tr></thead>
     <tbody>
       <tr><td>Plain success</td><td><code>Res = T</code>, nothing else</td><td><code>200 → $ref T</code></td></tr>
-      <tr><td>Empty response</td><td><code>Res = struct{}</code>, call <code>w.WriteHeader(204)</code></td><td><code>204</code>, no body</td></tr>
+      <tr><td>Empty response</td><td><code>Res = specout.NoContent</code>, call <code>w.WriteHeader(204)</code></td><td><code>204</code>, no body</td></tr>
       <tr><td>Created, same shape</td><td><code>{Status: 201}</code>, write 201 yourself</td><td><code>200 → $ref T</code> and <code>201 → $ref T</code> (same schema, two codes)</td></tr>
       <tr><td>Created, different shape</td><td><code>{Status: 201, Type: Created{}}</code></td><td><code>201 → $ref Created</code></td></tr>
       <tr><td>Validation body</td><td><code>{Status: 422, Type: ValidationError{}}</code></td><td><code>422 → $ref ValidationError</code></td></tr>
@@ -1094,10 +1094,7 @@ func (Money) JSONSchema() *jsonschema.Schema {
 		api.JSON(w, http.StatusCreated, onb)
 	},
 	Responses: []specout.Response{
-		{Status: http.StatusCreated,
-			Raw: map[string]any{"headers": map[string]any{
-				"Location": map[string]any{"schema": map[string]any{"type": "string"}},
-			}}},
+		{Status: http.StatusCreated, Headers: []specout.Header{{Name: "Location"}}},
 	},
 }</code></pre>
       </figure>
@@ -1142,9 +1139,9 @@ api.JSON(w, http.StatusUnprocessableEntity, ValidationError{Problems: problems})
     <div class="recipe">
       <h4>File upload (multipart)</h4>
       <figure class="code" data-lang="go">
-        <figcaption><span>format=binary switches the content type</span><button class="copy">copy</button></figcaption>
+        <figcaption><span>specout.File switches the content type</span><button class="copy">copy</button></figcaption>
         <pre><code>type ImportRequest struct {
-	File []byte `form:"file" jsonschema:"format=binary,description=CSV of onboardings"`
+	File specout.File `form:"file" jsonschema:"description=CSV of onboardings"`
 	Mode string  `form:"mode" jsonschema:"enum=merge|replace,default=merge"`
 }
 
@@ -1321,9 +1318,14 @@ specout.RequireDocumented(t, r, specout.Skip("/debug/*"))</code></pre>
 	Status      <b>int</b>          <span style="color:var(--text-dim)">// required</span>
 	Type        <b>any</b>          <span style="color:var(--text-dim)">// omitted = reuse Res's type at this code</span>
 	ContentType <b>string</b>       <span style="color:var(--text-dim)">// binary body: "application/pdf" etc. — content entry with format: binary</span>
+	Headers     []Header       <span style="color:var(--text-dim)">// response headers for this code</span>
 	Raw         map[string]any <span style="color:var(--text-dim)">// arbitrary OpenAPI merged into this response (incl. headers)</span>
 	Omit        <b>bool</b>          <span style="color:var(--text-dim)">// remove this global default code from the route</span>
 }
+
+<b>type</b> Header <b>struct</b> { Name <b>string</b>; Type <b>any</b> }   <span style="color:var(--text-dim)">// nil Type = plain string header</span>
+<b>type</b> NoContent <b>struct</b>{}                    <span style="color:var(--text-dim)">// as Res = 204, no body (same as struct{})</span>
+<b>type</b> File <b>struct</b>{}                        <span style="color:var(--text-dim)">// request field = multipart/form-data + binary property</span>
 
 <b>func</b> Skip(pattern <b>string</b>) SkipRule</span>
 

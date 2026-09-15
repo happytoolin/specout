@@ -1103,7 +1103,6 @@
           "File": {
             "type": "string",
             "format": "binary",
-            "contentEncoding": "base64",
             "description": "CSV of onboarding records"
           },
           "Mode": {

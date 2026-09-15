@@ -6,16 +6,16 @@ import (
 	"github.com/happytoolin/specout"
 )
 
-// ImportRequest: the format=binary tag makes this multipart/form-data.
+// ImportRequest: the File field makes this multipart/form-data.
 type ImportRequest struct {
-	File []byte `form:"file" jsonschema:"format=binary,description=CSV of onboarding records"`
+	File specout.File `form:"file" jsonschema:"description=CSV of onboarding records"`
 	Mode string `form:"mode"  jsonschema:"enum=merge|replace,default=merge"`
 }
 
 // struct{} as Res means "no default body"; the explicit 200 entry below
 // carries the real declaration (PDF bytes).
-func HandleImport(d Deps) specout.Handler[ImportRequest, struct{}] {
-	return specout.Handler[ImportRequest, struct{}]{
+func HandleImport(d Deps) specout.Handler[ImportRequest, specout.NoContent] {
+	return specout.Handler[ImportRequest, specout.NoContent]{
 		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
 		},
