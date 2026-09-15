@@ -35,9 +35,9 @@ func HandleSync(d Deps) specout.Handler[onboarding.SyncRequest, onboarding.SyncR
 			}
 			api.JSON(w, http.StatusOK, result)
 		},
-		Summary: "Sync a record against an expected version",
+		Summary:     "Sync a record against an expected version",
 		Description: "Optimistic concurrency: the client sends the version it last saw; a mismatch returns 409 with the current version and a resolve URL.",
-		Tags:    []string{"sync"},
+		Tags:        []string{"sync"},
 		Responses: []specout.Response{
 			{Status: http.StatusConflict, Type: onboarding.SyncConflict{}},
 			{Status: http.StatusUnprocessableEntity, Type: api.ValidationError{}},

@@ -121,6 +121,14 @@ Public routes opt out with `Public: true` on the Handler.
 
 ## Demo
 
+Daily tasks live in the justfile — `just` runs what CI runs:
+
+```sh
+just          # lint + test + golden check (the CI gate)
+just demo     # serve swagger ui (/) and scalar (/scalar)
+just golden   # regenerate the committed spec after intentional changes
+```
+
 ```sh
 go run ./cmd/demo
 # swagger ui: http://localhost:8080/

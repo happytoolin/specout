@@ -9,7 +9,7 @@ import (
 // ImportRequest: the File field makes this multipart/form-data.
 type ImportRequest struct {
 	File specout.File `form:"file" jsonschema:"description=CSV of onboarding records"`
-	Mode string `form:"mode"  jsonschema:"enum=merge|replace,default=merge"`
+	Mode string       `form:"mode"  jsonschema:"enum=merge|replace,default=merge"`
 }
 
 // struct{} as Res means "no default body"; the explicit 200 entry below
