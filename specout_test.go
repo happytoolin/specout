@@ -194,3 +194,27 @@ func TestServeOnlyGet(t *testing.T) {
 		t.Errorf("content-type = %q", ct)
 	}
 }
+
+func TestStdMuxHandle(t *testing.T) {
+	d := specout.New(specout.Config{Title: "T", Version: "1"})
+	mux := http.NewServeMux()
+	d.Handle(mux, "DELETE /onboarding/{id}", specout.Handler[EmptyReq, specout.NoContent]{HandlerFunc: noContent})
+	d.Handle(mux, "GET /onboarding", specout.Handler[EmptyReq, []Onboarding]{HandlerFunc: okJSON})
+
+	var buf bytes.Buffer
+	if err := d.WriteJSON(&buf); err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	json.Unmarshal(buf.Bytes(), &doc)
+	paths := doc["paths"].(map[string]any)
+	for _, p := range []string{"/onboarding", "/onboarding/{id}"} {
+		if _, ok := paths[p]; !ok {
+			t.Errorf("missing std path %q; have %v", p, paths)
+		}
+	}
+	del := paths["/onboarding/{id}"].(map[string]any)["delete"].(map[string]any)
+	if _, ok := del["responses"].(map[string]any)["204"]; !ok {
+		t.Error("std delete missing 204")
+	}
+}

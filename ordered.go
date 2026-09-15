@@ -3,8 +3,8 @@ package specout
 import (
 	"bytes"
 
-	json "encoding/json/v2"
 	"encoding/json/jsontext"
+	json "encoding/json/v2"
 )
 
 // obj is an insertion-ordered JSON object. encoding/json/v2 does not sort
