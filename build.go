@@ -1,7 +1,6 @@
 package specout
 
 import (
-	"fmt"
 	"net/http"
 	"reflect"
 	"sort"
@@ -12,25 +11,8 @@ import (
 // build assembles the OpenAPI document: resolve chi paths via a single walk,
 // merge std patterns, reflect schemas, emit operations in path order.
 func (d *Generator) build() (*obj, error) {
+	d.resolvePathsLocked()
 	records := d.flatRecords()
-
-	// resolve chi paths: walk the root router once
-	hits, err := d.walkAll()
-	if err != nil {
-		return nil, fmt.Errorf("chi walk: %w", err)
-	}
-
-	var unresolved []string
-	for _, rec := range records {
-		if hit, ok := hits[rkey{reflect.ValueOf(rec.fn).Pointer(), rec.method}]; ok {
-			rec.full = hit
-		} else if rec.full == "" {
-			unresolved = append(unresolved, rec.method+" "+rec.pattern)
-		}
-	}
-	if len(unresolved) > 0 {
-		return nil, fmt.Errorf("specout: unresolved routes: %s", strings.Join(unresolved, ", "))
-	}
 
 	spec := newObj()
 	info := newObj().set("title", d.cfg.Title).set("version", d.cfg.Version)
@@ -49,7 +31,13 @@ func (d *Generator) build() (*obj, error) {
 	}
 
 	paths := newObj()
-	sr := newSchemaRegistry()
+	sr := newSchemaRegistry(d.cfg)
+	for name, t := range d.variants {
+		sr.registerVariant(t, name)
+	}
+	for t, name := range d.nameOverrides {
+		sr.overrideName(t, name)
+	}
 
 	for _, rec := range records {
 		op := newObj()
@@ -65,6 +53,22 @@ func (d *Generator) build() (*obj, error) {
 		}
 		if len(tags) > 0 {
 			op.set("tags", toAny(tags))
+		}
+		// path params from the resolved pattern, query params from Req tags
+		var parameters []any
+		parameters = append(parameters, pathParamObjs(rec.full)...)
+		qp, hasBody := queryParams(rec.req, sr)
+		parameters = append(parameters, qp...)
+		if len(parameters) > 0 {
+			op.set("parameters", parameters)
+		}
+		if hasBody && rec.req != nil && rec.req != reflect.TypeFor[NoContent]() {
+			if ref := sr.refFor(rec.req); ref != "" {
+				op.set("requestBody", newObj().
+					set("required", true).
+					set("content", newObj().set("application/json",
+						newObj().set("schema", newObj().set("$ref", ref)))))
+			}
 		}
 		op.set("responses", d.responsesFor(rec, sr))
 		pathItem, _ := paths.get(rec.full)
@@ -110,6 +114,69 @@ func deriveTag(path string) string {
 	return strings.SplitN(seg, "{", 2)[0]
 }
 
+// NormalizePath canonicalizes route patterns for comparison: chi walks emit
+// a trailing slash for "/" patterns inside Route groups, while RoutePattern
+// at serve time does not. One shape everywhere.
+func NormalizePath(p string) string {
+	if len(p) > 1 {
+		return strings.TrimSuffix(p, "/")
+	}
+	return p
+}
+
+// resolvePathsLocked stitches full paths via chi walks. Caller holds d.mu.
+func (d *Generator) resolvePathsLocked() {
+	if d.resolved {
+		return
+	}
+	hits, err := d.walkAll()
+	if err != nil {
+		return
+	}
+	for _, recs := range d.routes {
+		for _, rec := range recs {
+			if hit, ok := hits[rkey{reflect.ValueOf(rec.fn).Pointer(), rec.method}]; ok {
+				rec.full = hit
+			}
+		}
+	}
+	d.resolved = true
+}
+
+// DeclaredStatuses exposes the declared method+path -> codes map, for the
+// recorder's drift check.
+func (d *Generator) DeclaredStatuses() map[RouteKey]map[int]bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.resolvePathsLocked()
+	records := d.flatRecords()
+	out := make(map[RouteKey]map[int]bool)
+	for _, rec := range records {
+		if rec.full == "" {
+			continue
+		}
+		key := RouteKey{Method: rec.method, Path: NormalizePath(rec.full)}
+		codes := out[key]
+		if codes == nil {
+			codes = make(map[int]bool)
+			out[key] = codes
+		}
+		if rec.res == reflect.TypeFor[NoContent]() {
+			codes[204] = true
+		} else {
+			codes[200] = true
+		}
+		for _, resp := range rec.responses {
+			if !resp.Omit {
+				codes[resp.Status] = true
+			} else {
+				delete(codes, resp.Status)
+			}
+		}
+	}
+	return out
+}
+
 // responsesFor assembles the responses object for one operation: the Res
 // default (200+ref or 204 for NoContent), explicit Responses entries, and
 // global DefaultErrors stamped with the ErrorType shape.
@@ -117,6 +184,7 @@ func (d *Generator) responsesFor(rec *routeRecord, sr *schemaRegistry) *obj {
 	out := newObj()
 	ordered := []int{}
 	statuses := map[int]*obj{}
+	omitted := map[int]bool{}
 
 	add := func(code int, body *obj) {
 		if _, ok := statuses[code]; !ok {
@@ -128,12 +196,18 @@ func (d *Generator) responsesFor(rec *routeRecord, sr *schemaRegistry) *obj {
 	// default from Res
 	if rec.res == reflect.TypeFor[NoContent]() {
 		add(204, newObj().set("description", "No content"))
+	} else if rec.res == reflect.TypeFor[Binary]() {
+		add(200, newObj().
+			set("description", "OK").
+			set("content", newObj().set("application/octet-stream",
+				newObj().set("schema", newObj().set("type", "string").set("format", "binary")))))
 	} else {
 		ref := sr.refFor(rec.res)
 		add(200, refResponse("OK", ref))
 	}
 	for _, resp := range rec.responses {
 		if resp.Omit {
+			omitted[resp.Status] = true
 			delete(statuses, resp.Status)
 			for i, c := range ordered {
 				if c == resp.Status {
@@ -147,12 +221,32 @@ func (d *Generator) responsesFor(rec *routeRecord, sr *schemaRegistry) *obj {
 		if resp.Type != nil {
 			t = reflect.TypeOf(resp.Type)
 		}
-		add(resp.Status, contentResponse(resp.Status, t, sr))
+		body := contentResponse(resp.Status, t, sr)
+		if len(resp.Headers) > 0 {
+			headers := newObj()
+			for _, h := range resp.Headers {
+				hs := newObj().set("type", "string")
+				if h.Type != nil {
+					if ref := sr.refFor(reflect.TypeOf(h.Type)); ref != "" {
+						hs = newObj().set("$ref", ref)
+					}
+				}
+				headers.set(h.Name, newObj().set("schema", hs))
+			}
+			body.set("headers", headers)
+		}
+		if len(resp.Raw) > 0 {
+			body = mergeRaw(body, resp.Raw)
+		}
+		add(resp.Status, body)
 	}
 	// global defaults: only for codes not already declared per-route
 	errType := reflect.TypeOf(d.cfg.ErrorType)
 	for _, code := range d.cfg.DefaultErrors {
 		if _, ok := statuses[code]; ok {
+			continue
+		}
+		if omitted[code] {
 			continue
 		}
 		if errType != nil {
@@ -165,6 +259,19 @@ func (d *Generator) responsesFor(rec *routeRecord, sr *schemaRegistry) *obj {
 		}
 	}
 	return out
+}
+
+// mergeRaw splices arbitrary OpenAPI fragments into a response object.
+func mergeRaw(base *obj, raw map[string]any) *obj {
+	keys := make([]string, 0, len(raw))
+	for k := range raw {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		base.set(k, raw[k])
+	}
+	return base
 }
 
 func contentResponse(code int, t reflect.Type, sr *schemaRegistry) *obj {

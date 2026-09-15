@@ -22,6 +22,7 @@ func (d *Generator) registerChi(r chi.Router, method, pattern string, rec routeR
 	// interface comparison of chi.Router values; pointer equality underneath
 	if !known {
 		d.chiRoots = append(d.chiRoots, r)
+		linkRouter(r, d)
 	}
 	r.Method(method, pattern, http.HandlerFunc(rec.fn))
 	d.register(rec)

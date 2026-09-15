@@ -36,6 +36,17 @@ func (d *Generator) WriteJSON(w io.Writer) error {
 	return err
 }
 
+// InjectExamples stamps observed response bodies into the spec as per-code
+// examples. Call before the first serve (while unfrozen).
+func (d *Generator) InjectExamples(ex map[RouteKey]map[int]any) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.frozen {
+		panic("specout: InjectExamples after the spec was built")
+	}
+	d.examples = ex
+}
+
 // isSelf reports whether handler is (wrapped) d — used to skip the spec's
 // own mount when adopting a router.
 func isSelf(d *Generator, handler http.Handler) bool {

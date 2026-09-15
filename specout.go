@@ -2,6 +2,7 @@
 package specout
 
 import (
+	"reflect"
 	"sync"
 )
 
@@ -18,12 +19,20 @@ type Generator struct {
 	routes map[uintptr][]*routeRecord
 	// chiRoots: every distinct chi router registrations were made on.
 	chiRoots []chiRouter
+	// union variant registrations and component-name overrides
+	variants      map[string]reflect.Type
+	nameOverrides map[reflect.Type]string
+	examples      map[RouteKey]map[int]any
+	resolved      bool
 
 	specJSON []byte
 }
 
 func New(cfg Config) *Generator {
-	// ponytail: single walk root assumed; multiple mounted roots need a
-	// build-time walk of each and path-prefixing (same as r.Mount).
-	return &Generator{cfg: cfg, routes: make(map[uintptr][]*routeRecord)}
+	return &Generator{
+		cfg:           cfg,
+		routes:        make(map[uintptr][]*routeRecord),
+		variants:      make(map[string]reflect.Type),
+		nameOverrides: make(map[reflect.Type]string),
+	}
 }
