@@ -125,7 +125,7 @@ Daily tasks live in the justfile — `just` runs what CI runs:
 
 ```sh
 just          # lint + test + golden check (the CI gate)
-just demo     # serve swagger ui (/) and scalar (/scalar)
+just demo     # serve swagger ui (/), scalar (/scalar), redoc (/redoc)
 just golden   # regenerate the committed spec after intentional changes
 ```
 
@@ -133,6 +133,7 @@ just golden   # regenerate the committed spec after intentional changes
 go run ./cmd/demo
 # swagger ui: http://localhost:8080/
 # scalar:      http://localhost:8080/scalar
+# redoc:       http://localhost:8080/redoc
 # spec:        http://localhost:8080/openapi.json
 ```
 
