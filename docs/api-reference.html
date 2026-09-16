@@ -476,6 +476,7 @@ d.Handle(mux, "GET /onboarding", handlers.HandleListOnboarding(deps))</code></pr
     Responses  []Response   <span style="color:var(--text-dim)">// any code beyond the Res default: 2xx adds success variants, 4xx/5xx override the global error shape (§05)</span>
     Tags       []string     <span style="color:var(--text-dim)">// operation tags, for grouping in the spec</span>
     Summary    string
+    OperationID string      <span style="color:var(--text-dim)">// optional; derived from method+path when empty</span>
     Deprecated <b>bool</b>
 }</span>
   <span class="sig"><b>func</b> (h Handler[Req, Res]) Types() (req, res reflect.Type)</span>

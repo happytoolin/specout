@@ -47,7 +47,11 @@ func (d *Generator) build() (*obj, error) {
 		if rec.description != "" {
 			op.set("description", rec.description)
 		}
-		op.set("operationId", operationID(rec.method, rec.full))
+		opID := rec.operationID
+		if opID == "" {
+			opID = operationID(rec.method, rec.full)
+		}
+		op.set("operationId", opID)
 		if rec.deprecated {
 			op.set("deprecated", true)
 		}

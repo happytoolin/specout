@@ -66,7 +66,7 @@ func (d *Generator) Get[Req, Res any](r chi.Router, pattern string, h Handler[Re
 	d.registerChi(r, http.MethodGet, pattern, routeRecord{
 		method: http.MethodGet, pattern: pattern,
 		req: reflect.TypeFor[Req](), res: reflect.TypeFor[Res](),
-		responses: h.Responses, tags: h.Tags, summary: h.Summary,
+		responses: h.Responses, tags: h.Tags, summary: h.Summary, operationID: h.OperationID,
 		description: h.Description, deprecated: h.Deprecated, public: h.Public, fn: h.HandlerFunc,
 	})
 }
@@ -76,7 +76,7 @@ func (d *Generator) Head[Req, Res any](r chi.Router, pattern string, h Handler[R
 	d.registerChi(r, http.MethodHead, pattern, routeRecord{
 		method: http.MethodHead, pattern: pattern,
 		req: reflect.TypeFor[Req](), res: reflect.TypeFor[Res](),
-		responses: h.Responses, tags: h.Tags, summary: h.Summary,
+		responses: h.Responses, tags: h.Tags, summary: h.Summary, operationID: h.OperationID,
 		description: h.Description, deprecated: h.Deprecated, public: h.Public, fn: h.HandlerFunc,
 	})
 }
@@ -86,7 +86,7 @@ func (d *Generator) Post[Req, Res any](r chi.Router, pattern string, h Handler[R
 	d.registerChi(r, http.MethodPost, pattern, routeRecord{
 		method: http.MethodPost, pattern: pattern,
 		req: reflect.TypeFor[Req](), res: reflect.TypeFor[Res](),
-		responses: h.Responses, tags: h.Tags, summary: h.Summary,
+		responses: h.Responses, tags: h.Tags, summary: h.Summary, operationID: h.OperationID,
 		description: h.Description, deprecated: h.Deprecated, public: h.Public, fn: h.HandlerFunc,
 	})
 }
@@ -96,7 +96,7 @@ func (d *Generator) Put[Req, Res any](r chi.Router, pattern string, h Handler[Re
 	d.registerChi(r, http.MethodPut, pattern, routeRecord{
 		method: http.MethodPut, pattern: pattern,
 		req: reflect.TypeFor[Req](), res: reflect.TypeFor[Res](),
-		responses: h.Responses, tags: h.Tags, summary: h.Summary,
+		responses: h.Responses, tags: h.Tags, summary: h.Summary, operationID: h.OperationID,
 		description: h.Description, deprecated: h.Deprecated, public: h.Public, fn: h.HandlerFunc,
 	})
 }
@@ -106,7 +106,7 @@ func (d *Generator) Patch[Req, Res any](r chi.Router, pattern string, h Handler[
 	d.registerChi(r, http.MethodPatch, pattern, routeRecord{
 		method: http.MethodPatch, pattern: pattern,
 		req: reflect.TypeFor[Req](), res: reflect.TypeFor[Res](),
-		responses: h.Responses, tags: h.Tags, summary: h.Summary,
+		responses: h.Responses, tags: h.Tags, summary: h.Summary, operationID: h.OperationID,
 		description: h.Description, deprecated: h.Deprecated, public: h.Public, fn: h.HandlerFunc,
 	})
 }
@@ -116,7 +116,7 @@ func (d *Generator) Delete[Req, Res any](r chi.Router, pattern string, h Handler
 	d.registerChi(r, http.MethodDelete, pattern, routeRecord{
 		method: http.MethodDelete, pattern: pattern,
 		req: reflect.TypeFor[Req](), res: reflect.TypeFor[Res](),
-		responses: h.Responses, tags: h.Tags, summary: h.Summary,
+		responses: h.Responses, tags: h.Tags, summary: h.Summary, operationID: h.OperationID,
 		description: h.Description, deprecated: h.Deprecated, public: h.Public, fn: h.HandlerFunc,
 	})
 }
@@ -126,7 +126,7 @@ func (d *Generator) Options[Req, Res any](r chi.Router, pattern string, h Handle
 	d.registerChi(r, http.MethodOptions, pattern, routeRecord{
 		method: http.MethodOptions, pattern: pattern,
 		req: reflect.TypeFor[Req](), res: reflect.TypeFor[Res](),
-		responses: h.Responses, tags: h.Tags, summary: h.Summary,
+		responses: h.Responses, tags: h.Tags, summary: h.Summary, operationID: h.OperationID,
 		description: h.Description, deprecated: h.Deprecated, public: h.Public, fn: h.HandlerFunc,
 	})
 }
@@ -136,7 +136,7 @@ func (d *Generator) Trace[Req, Res any](r chi.Router, pattern string, h Handler[
 	d.registerChi(r, http.MethodTrace, pattern, routeRecord{
 		method: http.MethodTrace, pattern: pattern,
 		req: reflect.TypeFor[Req](), res: reflect.TypeFor[Res](),
-		responses: h.Responses, tags: h.Tags, summary: h.Summary,
+		responses: h.Responses, tags: h.Tags, summary: h.Summary, operationID: h.OperationID,
 		description: h.Description, deprecated: h.Deprecated, public: h.Public, fn: h.HandlerFunc,
 	})
 }

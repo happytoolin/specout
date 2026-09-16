@@ -17,7 +17,7 @@ func (d *Generator) Handle[Req, Res any](mux *http.ServeMux, pattern string, h H
 	d.register(routeRecord{
 		method: method, pattern: path, full: path,
 		req: reflect.TypeFor[Req](), res: reflect.TypeFor[Res](),
-		responses: h.Responses, tags: h.Tags, summary: h.Summary, description: h.Description,
+		responses: h.Responses, tags: h.Tags, summary: h.Summary, operationID: h.OperationID, description: h.Description,
 		deprecated: h.Deprecated, public: h.Public, fn: h.HandlerFunc,
 	})
 }

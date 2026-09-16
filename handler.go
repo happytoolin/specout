@@ -14,6 +14,7 @@ type Handler[Req, Res any] struct {
 	Responses   []Response
 	Tags        []string
 	Summary     string
+	OperationID string
 	Description string
 	Deprecated  bool
 	Public      bool // exclude this operation from the global auth requirement

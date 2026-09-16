@@ -20,6 +20,7 @@ type routeRecord struct {
 	responses   []Response
 	tags        []string
 	summary     string
+	operationID string
 	description string
 	deprecated  bool
 	public      bool
@@ -32,6 +33,7 @@ type HandlerMeta struct {
 	Responses   []Response
 	Tags        []string
 	Summary     string
+	OperationID string
 	Description string
 	Deprecated  bool
 	Public      bool
