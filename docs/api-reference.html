@@ -1023,7 +1023,12 @@ $ git diff --exit-code openapi.json   # spec changes must be reviewed, like code
 <!-- ============================================================ -->
 <section id="testing">
   <h2><span class="num">13</span>Tests that keep the spec honest</h2>
-  <p>Because the spec comes from the live router, your integration tests can verify it. Two tests, ~30 lines total:</p>
+      <p>Because the spec comes from the live router, your integration tests can verify it. Two tests, ~30 lines total:</p>
+
+  <div class="callout note">
+    <span class="label">Two declaration views</span>
+    <p><code>d.DeclaredStatuses()</code> is what each route declares for itself — the codes your tests must produce. <code>d.SpecStatuses()</code> adds the global <code>DefaultErrors</code> envelope, so it is exactly what the emitted spec lists per route. <code>Verify</code> uses both: a route's own codes must each be exercised, while a handler returning a declared default (say a 404) is not drift. A code removed with <code>Omit: true</code> is in neither view, so it fires as drift if it appears.</p>
+  </div>
 
   <h3>Completeness — every route is documented</h3>
   <figure class="code" data-lang="go">
@@ -1040,7 +1045,9 @@ $ git diff --exit-code openapi.json   # spec changes must be reviewed, like code
     <figcaption><span>spec_test.go</span><button class="copy">copy</button></figcaption>
     <pre><code>func TestSpecMatchesReality(t *testing.T) {
 	d := app.NewDoc()           // the real doc setup
-	rec := recorder.New(router(testDeps))
+	// a route that is not an API operation (your spec endpoint, /healthz)
+	// is served but not recorded
+	rec := recorder.New(router(testDeps), specout.Skip("/openapi.json"))
 
 	runIntegrationSuite(t, rec) // your existing httptest suite, hitting rec
 
@@ -1051,7 +1058,7 @@ $ git diff --exit-code openapi.json   # spec changes must be reviewed, like code
 }</code></pre>
   </figure>
 
-  <span class="sig"><b>func</b> New(next http.Handler) *Recorder            <span style="color:var(--text-dim)">// package specout/recorder — mirrors net/http/httptest</span></span>
+  <span class="sig"><b>func</b> New(next http.Handler, skips ...specout.SkipRule) *Recorder            <span style="color:var(--text-dim)">// package specout/recorder — mirrors net/http/httptest</span></span>
   <span class="sig"><b>func</b> (rec *Recorder) ServeHTTP(w http.ResponseWriter, r *http.Request)</span>
   <span class="sig"><b>func</b> Verify(t TestingT, d *specout.Generator, rec *Recorder)</span>
 </section>
@@ -1297,6 +1304,11 @@ specout.Chi(d, r).RequireDocumented(t, specout.Skip("/debug/*"))</code></pre>
   </details>
 
   <details>
+    <summary>Does the recorder work with echo, fiber or gin?</summary>
+    <p>No. <code>Verify</code> keys observations by the router's matched pattern, which is readable for chi (<code>RouteContext</code>), gorilla and <code>net/http.ServeMux</code>. A router specout reaches only through <code>Document</code> exposes no pattern here, so its routes read as never produced. Assert those codes by hand, or put the router behind an adapter.</p>
+  </details>
+
+  <details>
     <summary>Circular types (trees, linked structures)?</summary>
     <p>Handled — schemas that reference themselves resolve through <code>$defs</code>/<code>$ref</code> instead of recursing forever. Go 1.26's self-referential type parameters make some recursive generic shapes (CRTP-style trees) expressible that weren't before; the generated schemas still stay flat via <code>$defs</code>.</p>
   </details>
@@ -1372,7 +1384,7 @@ specout.Chi(d, r).RequireDocumented(t, specout.Skip("/debug/*"))</code></pre>
 <b>func</b> Document[Req, Res <b>any</b>](d *Generator, method, pattern <b>string</b>, h Handler[Req, Res])
 
 <span style="color:var(--text-dim)">// package specout/recorder:</span>
-<b>func</b> New(next http.Handler) *Recorder
+<b>func</b> New(next http.Handler, skips ...specout.SkipRule) *Recorder
 <b>func</b> (rec *Recorder) ServeHTTP(w http.ResponseWriter, r *http.Request)
 <b>func</b> Verify(t TestingT, d *specout.Generator, rec *Recorder)</span>
 

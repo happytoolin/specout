@@ -172,3 +172,19 @@ The minimal path from factory to served spec:
   segments return no derived id rather than panicking.
 - Multipart property names honour form tags; a query param with a default
   is not required.
+- Routing regexes may nest braces ({id:[0-9]{4}}). One regex now matches a
+  balanced brace pair inside the constraint, so the documented path and the
+  recorder drift key both read /x/{id} instead of leaking a stray brace.
+- The duplicate-path check keys on the documented path, not the as-passed
+  pattern: /x/{id:[0-9]+} and /x/{id:[a-z]+} are one OpenAPI path, and the
+  second used to overwrite the first silently.
+- Method tokens are checked against the OpenAPI set (GET/HEAD/POST/PUT/PATCH/
+  DELETE/OPTIONS/TRACE). CONNECT or a lowercase typo used to emit an invalid
+  path-item key that failed the official 3.1 validator.
+- A repeated path param name (/x/{id}/y/{id}) emits one parameter object:
+  OpenAPI forbids two parameters with one name in one operation.
+- A zero Handler (no HandlerFunc) panics at registration, in the one funnel
+  every binder shares. It used to document an endpoint that segfaulted when
+  served.
+- recorder.New takes skip rules (specout.Skip). A spec endpoint or /healthz on
+  the app router used to read as an undocumented operation and fail Verify.

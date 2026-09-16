@@ -62,9 +62,13 @@ func (d *Generator) build() (*obj, error) {
 		}
 		opID := rec.operationID
 		if opID == "" {
-			opID = operationID(rec.method, rec.full)
+			opID = operationID(rec.method, docPath(rec.full))
 		}
-		op.set("operationId", opID)
+		// a malformed segment ({}) derives no id: omit the field rather than
+		// emit an empty, unusable operationId
+		if opID != "" {
+			op.set("operationId", opID)
+		}
 		if rec.deprecated {
 			op.set("deprecated", true)
 		}
@@ -92,10 +96,11 @@ func (d *Generator) build() (*obj, error) {
 		if rec.omit {
 			continue
 		}
-		pathItem, _ := paths.get(rec.full)
+		docP := docPath(rec.full)
+		pathItem, _ := paths.get(docP)
 		if pathItem == nil {
 			pathItem = newObj()
-			paths.set(rec.full, pathItem)
+			paths.set(docP, pathItem)
 		}
 		pathItem.(*obj).set(strings.ToLower(rec.method), op)
 	}
@@ -162,10 +167,11 @@ func operationID(method, path string) string {
 		if seg == "" {
 			continue
 		}
-		if seg == "{}" {
+		seg = strings.Trim(seg, "{}")
+		// braces with nothing to name: no derivable id
+		if seg == "" {
 			return ""
 		}
-		seg = strings.Trim(seg, "{}")
 		b.WriteString(strings.ToUpper(seg[:1]) + seg[1:])
 	}
 	return b.String()
@@ -181,13 +187,13 @@ func checkOperationIDs(records []*routeRecord) error {
 		}
 		id := rec.operationID
 		if id == "" {
-			id = operationID(rec.method, rec.full)
+			id = operationID(rec.method, docPath(rec.full))
 		}
 		if id == "" {
 			continue
 		}
 		if first, dup := seen[id]; dup {
-			return fmt.Errorf("specout: duplicate operationId %s (%s and %s %s)", id, first, rec.method, rec.full)
+			return fmt.Errorf("specout: duplicate operationId %s (%s and %s %s) — set OperationID on one route", id, first, rec.method, rec.full)
 		}
 		seen[id] = rec.method + " " + rec.full
 	}
@@ -231,10 +237,17 @@ func isEmptyStruct(t reflect.Type) bool {
 // "/a"), so served-side keys trim one trailing slash to match. Registered
 // doc paths keep their exact form: /a and /a/ are distinct OpenAPI paths.
 func driftKey(p string) string {
+	p = docPath(p)
 	if len(p) > 1 {
 		return strings.TrimSuffix(p, "/")
 	}
 	return p
+}
+
+// docPath rewrites router regex constraints to plain OpenAPI templates:
+// chi and gorilla report /items/{id:[0-9]+}, OpenAPI only knows {id}.
+func docPath(p string) string {
+	return pathParamRe.ReplaceAllString(p, "{$1}")
 }
 
 // isCatchAll reports patterns OpenAPI cannot express: trailing wildcards,
@@ -244,9 +257,25 @@ func isCatchAll(p string) bool {
 	return strings.Contains(p, "*") || strings.Contains(p, "...}")
 }
 
-// DeclaredStatuses exposes the declared method+path -> codes map, for the
-// recorder's drift check.
+// DeclaredStatuses exposes the method+path -> codes map a route declares for
+// itself, for the recorder's "declared but never produced" drift check. It
+// excludes the global DefaultErrors envelope: no test is expected to trigger
+// a 500 on every route.
 func (d *Generator) DeclaredStatuses() (map[RouteKey]map[int]bool, error) {
+	return d.statusMap(false)
+}
+
+// SpecStatuses is DeclaredStatuses plus the global DefaultErrors envelope:
+// exactly the codes the emitted spec lists for each route. The recorder uses
+// it for the other drift direction, so a handler that returns a declared
+// default (say a 404) is not reported as "spec does not declare it".
+func (d *Generator) SpecStatuses() (map[RouteKey]map[int]bool, error) {
+	return d.statusMap(true)
+}
+
+// statusMap is one implementation for both views so the drift check and the
+// emitted spec cannot diverge (responsesFor stamps the same defaults).
+func (d *Generator) statusMap(withDefaults bool) (map[RouteKey]map[int]bool, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if err := d.resolveLocked(); err != nil {
@@ -279,11 +308,22 @@ func (d *Generator) DeclaredStatuses() (map[RouteKey]map[int]bool, error) {
 		} else {
 			codes[200] = true
 		}
+		omitted := map[int]bool{}
 		for _, resp := range rec.responses {
 			if !resp.Omit {
 				codes[resp.Status] = true
 			} else {
+				omitted[resp.Status] = true
 				delete(codes, resp.Status)
+			}
+		}
+		// global defaults, exactly as responsesFor stamps them
+		if withDefaults && reflect.TypeOf(d.cfg.ErrorType) != nil {
+			for _, code := range d.cfg.DefaultErrors {
+				if codes[code] || omitted[code] {
+					continue
+				}
+				codes[code] = true
 			}
 		}
 	}

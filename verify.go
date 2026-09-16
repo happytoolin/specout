@@ -14,6 +14,9 @@ type SkipRule struct{ pattern string }
 // Skip builds a SkipRule for a wildcard pattern like "/debug/*".
 func Skip(pattern string) SkipRule { return SkipRule{pattern: pattern} }
 
+// Matches reports whether route matches this rule.
+func (s SkipRule) Matches(route string) bool { return matchSkip(s.pattern, route) }
+
 // RouteKey identifies one method+path for the recorder drift check.
 type RouteKey struct{ Method, Path string }
 

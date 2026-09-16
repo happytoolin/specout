@@ -19,8 +19,10 @@ type StdRouter struct {
 // Handle registers h for "METHOD /path" and records its metadata.
 func (s *StdRouter) Handle[Req, Res any](pattern string, h Handler[Req, Res]) {
 	method, path, ok := strings.Cut(pattern, " ")
-	if !ok {
-		panic("specout: std pattern must be " + "METHOD /path")
+	// one space, absolute path: "GET  /x" would document a path with a
+	// leading blank, and net/http panics on "GET x" with its own message.
+	if !ok || !strings.HasPrefix(path, "/") || strings.Contains(path, " ") {
+		panic("specout: std pattern must be METHOD /path, got " + pattern)
 	}
 	checkMethod(method)
 	s.mux.HandleFunc(pattern, h.HandlerFunc)
@@ -68,10 +70,14 @@ func stdCanonical(p string) string {
 	return strings.TrimSuffix(p, "{$}")
 }
 
-// checkMethod panics on non-uppercase method tokens (finding 17).
+// checkMethod panics on a method token OpenAPI cannot name (finding 17). A
+// path-item object allows only these keys, so a token like CONNECT or a
+// lowercase typo would make the emitted document invalid.
 func checkMethod(method string) {
-	if method == strings.ToUpper(method) && method != "" {
+	switch method {
+	case http.MethodGet, http.MethodPut, http.MethodPost, http.MethodDelete,
+		http.MethodOptions, http.MethodHead, http.MethodPatch, http.MethodTrace:
 		return
 	}
-	panic("specout: method token must be uppercase, got " + method)
+	panic("specout: method must be one of GET/HEAD/POST/PUT/PATCH/DELETE/OPTIONS/TRACE, got " + method)
 }

@@ -2,6 +2,7 @@ package recorder
 
 import (
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -14,47 +15,56 @@ import (
 // the matched pattern. Method-less matches (404s) record nothing.
 type Recorder struct {
 	next http.Handler
+	// skips: routes whose observations are not API drift, e.g. the spec
+	// endpoint mounted on the same router.
+	skips []specout.SkipRule
 
 	mu    sync.Mutex
 	codes map[specout.RouteKey]map[int]bool
 }
 
-// New wraps next (the app router) for observation.
-func New(next http.Handler) *Recorder {
-	return &Recorder{
-		next:  next,
-		codes: make(map[specout.RouteKey]map[int]bool),
-	}
+// New wraps next (the app router) for observation. A route matching a skip
+// is served but not recorded, so a spec endpoint on the same router does not
+// read as an undocumented operation.
+//
+// Pattern capture covers chi, gorilla/mux and net/http.ServeMux. A router
+// specout reaches only through Document[Req,Res] (echo, fiber, gin) exposes
+// no pattern here, so Verify reports its routes as never produced.
+func New(next http.Handler, skips ...specout.SkipRule) *Recorder {
+	return &Recorder{next: next, skips: skips, codes: make(map[specout.RouteKey]map[int]bool)}
 }
 
 func (rec *Recorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// chi populates RouteContext before dispatch completes and resets it
 	// after. If the request reaches us unwrapped, match manually.
-	chiPattern := ""
+	pattern := ""
 	if rctx := chi.RouteContext(r.Context()); rctx != nil {
-		chiPattern = rctx.RoutePattern()
+		pattern = rctx.RoutePattern()
 	}
-	if chiPattern == "" {
+	if pattern == "" {
 		if routes, ok := rec.next.(chi.Routes); ok {
 			rctx := chi.NewRouteContext()
 			if routes.Match(rctx, r.Method, r.URL.Path) {
-				chiPattern = rctx.RoutePattern()
+				pattern = rctx.RoutePattern()
+			}
+		}
+	}
+	// gorilla puts the matched route on a request copy the caller never
+	// sees, so CurrentRoute(r) is always nil after dispatch: match here.
+	if pattern == "" {
+		if mr, ok := rec.next.(*mux.Router); ok {
+			var match mux.RouteMatch
+			if mr.Match(r, &match) && match.Route != nil {
+				if tpl, err := match.Route.GetPathTemplate(); err == nil {
+					pattern = tpl
+				}
 			}
 		}
 	}
 	rw := &observingWriter{ResponseWriter: w}
 	rec.next.ServeHTTP(rw, r)
 
-	// gorilla and std populate during dispatch; read after.
-	pattern := ""
-	pattern = chiPattern
-	if pattern == "" {
-		if cr := mux.CurrentRoute(r); cr != nil {
-			if tpl, err := cr.GetPathTemplate(); err == nil {
-				pattern = tpl
-			}
-		}
-	}
+	// std populates r.Pattern during dispatch; read after.
 	if pattern == "" && r.Pattern != "" {
 		pattern = r.Pattern
 		if _, path, ok := strings.Cut(pattern, " "); ok {
@@ -65,6 +75,11 @@ func (rec *Recorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// unmatched: no key, no drift entry
 	if pattern == "" {
 		return
+	}
+	for _, s := range rec.skips {
+		if s.Matches(pattern) {
+			return
+		}
 	}
 
 	key := specout.RouteKey{Method: r.Method, Path: driftKey(pattern)}
@@ -97,9 +112,15 @@ func (w *observingWriter) Write(b []byte) (int, error) {
 
 func (w *observingWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
-// driftKey mirrors specout served-path canonicalization: chi collapses
-// /a and /a/ to the same RoutePattern, so trim one trailing slash.
+// paramRe strips router regex constraints, exactly like the root package's
+// docPath so both sides of the drift check agree (duplicated because the root
+// helper is unexported). driftKey then mirrors specout's served-path
+// canonicalization: chi collapses /a and /a/ to one RoutePattern, so trim one
+// trailing slash.
+var paramRe = regexp.MustCompile(`\{([^}:]+)(:[^{}]*(?:\{[^{}]*\}[^{}]*)*)?\}`)
+
 func driftKey(p string) string {
+	p = paramRe.ReplaceAllString(p, "{$1}")
 	if len(p) > 1 {
 		return strings.TrimSuffix(p, "/")
 	}

@@ -55,12 +55,14 @@ func New() (*specout.Generator, http.Handler) {
 	}
 
 	r := chi.NewRouter()
-	rc := specout.Chi(d, r)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
-	// enforcement is app code; the spec only declares the schemes
+	// enforcement is app code; the spec only declares the schemes.
+	// Bind inside each group: a binder captured on the root registers on the
+	// root, so the group's middleware would silently never run.
 	r.Group(func(r chi.Router) {
 		r.Use(auth.Require)
+		rc := specout.Chi(d, r)
 		rc.Post("/onboarding", handlers.HandleCreate(deps))
 		rc.Put("/onboarding/{id}", handlers.HandleUpsert(deps))
 		rc.Delete("/onboarding/{id}", handlers.HandleDelete(deps))
@@ -73,6 +75,7 @@ func New() (*specout.Generator, http.Handler) {
 
 	// public: no credentials needed
 	r.Group(func(r chi.Router) {
+		rc := specout.Chi(d, r)
 		rc.Get("/onboarding", handlers.HandleList(deps))
 		rc.Get("/onboarding/{id}", handlers.HandleGet(deps))
 		rc.Get("/files/report", handlers.HandleReport(deps))
@@ -83,7 +86,7 @@ func New() (*specout.Generator, http.Handler) {
 	r.Mount("/openapi.json", d)
 
 	// Adopt the root: Route/Mount prefixes compose into full paths at build.
-	if err := rc.Adopt(); err != nil {
+	if err := specout.Chi(d, r).Adopt(); err != nil {
 		panic(err)
 	}
 	return d, r

@@ -85,10 +85,13 @@ func (c *ChiRouter) Adopt(skips ...SkipRule) error {
 	if err != nil {
 		return err
 	}
+	// Adopt is the only place the walk is registered, so it must happen even
+	// when strays are found: otherwise one undocumented route leaves every
+	// relative pattern unresolved and the spec build dies with the wrong error.
+	c.source()
 	if len(unknown) > 0 {
 		return &StrayError{Routes: unknown}
 	}
-	c.source()
 	return nil
 }
 

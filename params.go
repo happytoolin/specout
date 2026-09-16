@@ -8,7 +8,13 @@ import (
 	"github.com/invopop/jsonschema"
 )
 
-var pathParamRe = regexp.MustCompile(`\{([^}:]+)(:[^}]+)?\}`)
+// pathParamRe matches one route param, with or without a regex constraint.
+// A constraint may itself carry a {n} quantifier, so braces are excluded from
+// the constraint body and a balanced pair is matched explicitly; otherwise
+// {id:[0-9]{4}} would stop at the inner } and leave a stray brace behind.
+// ponytail: one nesting level; a two-deep regex stays unnormalized rather
+// than mangled. Swap in a brace scanner if such a pattern ever appears.
+var pathParamRe = regexp.MustCompile(`\{([^}:]+)(:[^{}]*(?:\{[^{}]*\}[^{}]*)*)?\}`)
 
 // pathParams extracts {name} placeholders from a route pattern.
 func pathParams(pattern string) []string {
@@ -112,7 +118,14 @@ func tagValue(tag, key string) string {
 // pathParamObjs builds OpenAPI parameter objects for {name} placeholders.
 func pathParamObjs(pattern string) []any {
 	var out []any
+	seen := make(map[string]bool)
 	for _, name := range pathParams(pattern) {
+		// one object per name: /a/{id}/b/{id} is a legal route template but
+		// OpenAPI forbids two parameters with one name in one operation.
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
 		out = append(out, newObj().
 			set("name", name).
 			set("in", "path").

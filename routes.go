@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"slices"
 	"sort"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -39,6 +41,11 @@ type routeRecord struct {
 }
 
 func (d *Generator) register(rec routeRecord) {
+	// A zero Handler has no func: it would document an endpoint that panics
+	// when served. Catch it here, the one funnel every binder goes through.
+	if rec.fn == nil {
+		panic("specout: nil HandlerFunc registered for " + rec.method + " " + rec.pattern)
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.frozen {
@@ -77,13 +84,18 @@ func (d *Generator) resolveLocked() error {
 		src.walk(func(method, pattern string, h http.Handler) {
 			ptr := reflect.ValueOf(h).Pointer()
 			k := rkey{ptr, method}
-			hits[k] = append(hits[k], pattern)
+			// chi reports one r.Handle(mALL) route once per method, so the
+			// same path can arrive twice; the surplus check below counts
+			// distinct paths, not observations.
+			if !slices.Contains(hits[k], pattern) {
+				hits[k] = append(hits[k], pattern)
+			}
 		})
 	}
 
-	// pair records sharing (ptr, method) deterministically: records sorted
-	// by as-passed pattern, candidates by length desc then lexical, each
-	// claims one.
+	// pair records sharing (ptr, method) deterministically: candidates equal
+	// to the as-passed pattern win (the common case: the pattern is already
+	// absolute), then longest, then lexical. Records sorted by pattern.
 	type pairing struct {
 		rec   *routeRecord
 		cands []string
@@ -101,6 +113,9 @@ func (d *Generator) resolveLocked() error {
 	claimed := make(map[string]bool)
 	for _, p := range pairs {
 		sort.Slice(p.cands, func(i, j int) bool {
+			if ei, ej := p.cands[i] == p.rec.pattern, p.cands[j] == p.rec.pattern; ei != ej {
+				return ei
+			}
 			if len(p.cands[i]) != len(p.cands[j]) {
 				return len(p.cands[i]) > len(p.cands[j])
 			}
@@ -118,6 +133,23 @@ func (d *Generator) resolveLocked() error {
 		}
 	}
 
+	// a handler served at more paths than it has records: chi cannot say
+	// which mount the caller meant, and documenting one drops the rest, so
+	// fail loud and name every path.
+	for _, p := range pairs {
+		var extra []string
+		k := reflect.ValueOf(p.rec.fn).Pointer()
+		for _, c := range p.cands {
+			if !claimed[fmt.Sprintf("%d|%s|%s", k, p.rec.method, c)] {
+				extra = append(extra, c)
+			}
+		}
+		if len(extra) > 0 {
+			return fmt.Errorf("specout: %s %s is also served at %s; adopt only the outermost router, or register each path with Document",
+				p.rec.method, p.rec.pattern, strings.Join(extra, ", "))
+		}
+	}
+
 	// unresolved records are a build error: name the pattern
 	for _, rec := range d.records {
 		if rec.full == "" {
@@ -126,11 +158,14 @@ func (d *Generator) resolveLocked() error {
 	}
 
 	// duplicate canonical (path, method) from two registrations fails loud.
+	// Keyed on the documented path: /x/{id:[0-9]+} and /x/{id:[a-z]+} are two
+	// distinct route patterns but one OpenAPI path, and the later one would
+	// silently overwrite the earlier operation.
 	seen := make(map[string]string)
 	for _, rec := range d.records {
-		ck := rec.full + "|" + rec.method
+		ck := docPath(rec.full) + "|" + rec.method
 		if first, dup := seen[ck]; dup {
-			return fmt.Errorf("specout: duplicate route %s %s (registered as %q and %q)", rec.method, rec.full, first, rec.pattern)
+			return fmt.Errorf("specout: duplicate route %s %s (registered as %q and %q)", rec.method, docPath(rec.full), first, rec.pattern)
 		}
 		seen[ck] = rec.pattern
 	}

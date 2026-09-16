@@ -18,7 +18,16 @@ type TestingT interface {
 // the generator are reported, not swallowed.
 func Verify(t TestingT, d *specout.Generator, rec *Recorder) {
 	t.Helper()
-	declared, err := d.DeclaredStatuses()
+	// required: what each route declares for itself; a code never produced
+	// there is a coverage gap.
+	required, err := d.DeclaredStatuses()
+	if err != nil {
+		t.Errorf("%v", err)
+		return
+	}
+	// allowed: the full spec set, including the global error envelope; a
+	// handler that returns a declared default is not drift.
+	allowed, err := d.SpecStatuses()
 	if err != nil {
 		t.Errorf("%v", err)
 		return
@@ -30,7 +39,7 @@ func Verify(t TestingT, d *specout.Generator, rec *Recorder) {
 	}
 	rec.mu.Unlock()
 
-	for key, codes := range declared {
+	for key, codes := range required {
 		seen := lookupKey(observed, key)
 		for code := range codes {
 			if !seen[code] {
@@ -39,7 +48,7 @@ func Verify(t TestingT, d *specout.Generator, rec *Recorder) {
 		}
 	}
 	for key, codes := range observed {
-		want := lookupKey(declared, key)
+		want := lookupKey(allowed, key)
 		for code := range codes {
 			if !want[code] {
 				t.Errorf("handler wrote %s %s %d but spec does not declare it", key.Method, key.Path, code)

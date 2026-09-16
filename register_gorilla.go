@@ -72,6 +72,16 @@ func (g *GorillaRouter) Adopt(skips ...SkipRule) error {
 		if err != nil {
 			return err
 		}
+		// A route with no handler is a PathPrefix/Subrouter mount, not an
+		// endpoint: skip it like chi skips Mount stubs.
+		if route.GetHandler() == nil {
+			return nil
+		}
+		// the spec itself is usually served from this router; chi's Adopt
+		// skips the generator for the same reason.
+		if route.GetHandler() == http.Handler(g.d) {
+			return nil
+		}
 		for _, s := range skips {
 			if matchSkip(s.pattern, tpl) {
 				return nil

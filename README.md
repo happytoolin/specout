@@ -106,7 +106,8 @@ func TestEveryRouteIsDocumented(t *testing.T) { specout.Chi(d, r).RequireDocumen
 
 func TestSpecMatchesReality(t *testing.T) {
 	d, r := router.New()
-	rec := recorder.New(r)
+	// skip routes that are not API operations, e.g. the spec endpoint
+	rec := recorder.New(r, specout.Skip("/openapi.json"))
 	// ... hit every route through rec
 	recorder.Verify(t, d, rec)
 }
