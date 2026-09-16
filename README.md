@@ -103,7 +103,7 @@ explicit entries add codes, change shapes, declare headers or binary bodies:
 Responses: []specout.Response{
     {Status: 200, ContentType: "application/pdf"},        // binary download
     {Status: 409, Type: SyncConflict{}},                  // per-route error shape
-    {Status: 401, Omit: true},                            // this route is public
+    {Status: 401, Omit: true},                            // drop one default error code
 }
 ```
 
@@ -121,7 +121,18 @@ Any one scheme satisfies auth (OR semantics). Public routes opt out with
 `Public: true` on the Handler.
 
 **Operations** — `Summary`, `Description`, `Tags`, `Deprecated` on each Handler;
-`operationId` derives deterministically from method+path (`getOnboardingId`).
+`OperationID` overrides the derived `operationId` when set; otherwise it derives
+deterministically from method+path (`getUsersIdProfile`).
+
+**Name collisions** — component names come from type names, so two types with the
+same name (different packages) panic at build time instead of silently merging:
+
+```
+panic: specout: duplicate component name Widget (pa.Widget vs pb.Widget), call SchemaName to disambiguate
+```
+
+`d.SchemaName[pb.Widget]("PbWidget")` is the fix. Union variant names (`Register`)
+are global the same way.
 
 ## Demo
 
@@ -129,6 +140,7 @@ Daily tasks live in the justfile — `just` runs what CI runs:
 
 ```sh
 just          # lint + test + golden check (the CI gate)
+just validate # check the golden spec against the official OpenAPI 3.1 schema
 just demo     # serve swagger ui (/), scalar (/scalar), redoc (/redoc)
 just golden   # regenerate the committed spec after intentional changes
 ```
@@ -153,6 +165,9 @@ A realistic multi-package service — every route shape in one app:
 | `POST /files/import` | `specout.File` field → multipart/form-data |
 | `GET /files/report` | binary response (`ContentType: "application/pdf"`) |
 | `POST /webhooks` | oneOf union with discriminator, enum-tagged kind |
+| `POST /things` | every constraint keyword in one body: pattern, bounds, multipleOf, minItems, uniqueItems, typed maps |
+| `GET /things` | the same constraints on query params |
+| `POST /channels` | second oneOf union (namespaced variants `notify_email`/`notify_slack`) |
 | `GET /legacy` | `Deprecated: true` |
 
 Layout — app code, no library involvement beyond declarations:
@@ -162,6 +177,7 @@ internal/demo/
 ├── api/          # the app's own helpers: JSON, Error, Problem, mapper
 ├── onboarding/   # domain types + store (typed ConflictError)
 ├── webhooks/     # union variants
+├── validators/   # constraint-keyword showcase types
 ├── handlers/     # raw http.HandlerFunc factories per resource
 └── router/       # wiring: config, groups, Adopt, spec mount
 ```
@@ -190,6 +206,13 @@ And the golden export — same binary, byte-identical output:
 ```sh
 GO_SPEC_ONLY=1 go run ./cmd/demo > openapi.json
 git diff --exit-code openapi.json
+```
+
+Plus schema validation in CI — the golden spec is checked against the official
+OpenAPI 3.1 JSON Schema (tools/validate_spec.py):
+
+```sh
+just validate
 ```
 
 ## Design
