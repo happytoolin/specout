@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -124,7 +125,7 @@ func (d *Generator) build() (*obj, error) {
 			continue
 		}
 		docP := docPath(rec.full)
-		pathItem, _ := paths.get(docP)
+		pathItem := paths.get(docP)
 		if pathItem == nil {
 			pathItem = newObj()
 			paths.set(docP, pathItem)
@@ -339,13 +340,24 @@ func sortedKeys[V any](m map[string]V) []string {
 }
 
 func (d *Generator) flatRecords() []*routeRecord {
-	out := make([]*routeRecord, len(d.records))
-	copy(out, d.records)
 	// Registration order: paths come out in the order the code declares them,
 	// so the document reads like the router. Sorting here put every DELETE
 	// first and scattered one resource across the paths object.
-	return out
+	return slices.Clone(d.records)
 }
+
+// anyExplicit reports whether a route declares a response of its own. One
+// non-omitted entry is enough to replace the Res default (e.g. a 200 binary
+// download on a handler whose Res is struct{}).
+func anyExplicit(responses []Response) bool {
+	for _, r := range responses {
+		if !r.Omit {
+			return true
+		}
+	}
+	return false
+}
+
 func isEmptyStruct(t reflect.Type) bool {
 	return t != nil && t.Kind() == reflect.Struct && t.NumField() == 0
 }
@@ -414,13 +426,7 @@ func (d *Generator) statusMap(withDefaults bool) (map[RouteKey]map[int]bool, err
 		if isEmptyStruct(rec.res) {
 			// struct{} Res declares nothing on its own; explicit entries
 			// replace it entirely (e.g. a 200 binary download).
-			hasExplicit := false
-			for _, resp := range rec.responses {
-				if !resp.Omit {
-					hasExplicit = true
-				}
-			}
-			if !hasExplicit {
+			if !anyExplicit(rec.responses) {
 				codes[204] = true
 			}
 		} else {
@@ -492,13 +498,7 @@ func (d *Generator) responsesFor(rec *routeRecord, sr *schemaRegistry) *obj {
 	if isEmptyStruct(rec.res) {
 		// struct{} Res declares nothing on its own; any explicit Response
 		// replaces it (e.g. {Status:200, ContentType:"application/pdf"}).
-		hasExplicit := false
-		for _, resp := range rec.responses {
-			if !resp.Omit {
-				hasExplicit = true
-			}
-		}
-		if !hasExplicit {
+		if !anyExplicit(rec.responses) {
 			add(responseKey(204, ""), newObj().set("description", "No content"))
 		}
 	} else {
@@ -627,12 +627,7 @@ func rangeOf(key string) (lo, hi int, ok bool) {
 
 // mergeRaw splices arbitrary OpenAPI fragments into a response object.
 func mergeRaw(base *obj, raw map[string]any) *obj {
-	keys := make([]string, 0, len(raw))
-	for k := range raw {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
+	for _, k := range sortedKeys(raw) {
 		base.set(k, raw[k])
 	}
 	return base

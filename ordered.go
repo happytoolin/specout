@@ -25,10 +25,8 @@ func (o *obj) set(k string, v any) *obj {
 	return o
 }
 
-func (o *obj) get(k string) (any, bool) {
-	v, ok := o.vals[k]
-	return v, ok
-}
+// get returns the value at k, or nil when the key is absent.
+func (o *obj) get(k string) any { return o.vals[k] }
 
 func (o *obj) has(k string) bool {
 	_, ok := o.vals[k]

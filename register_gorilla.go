@@ -83,7 +83,7 @@ func (g *GorillaRouter) Adopt(skips ...SkipRule) error {
 			return nil
 		}
 		for _, s := range skips {
-			if matchSkip(s.pattern, tpl) {
+			if s.Matches(tpl) {
 				return nil
 			}
 		}

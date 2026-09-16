@@ -221,7 +221,7 @@ func (sr *schemaRegistry) unwrapDefs(t reflect.Type, s *jsonschema.Schema) *json
 	}
 	slices.Sort(defNames)
 	for _, defName := range defNames {
-		if sr.defByName(defName) == nil {
+		if sr.byName[defName] == nil {
 			sr.addDef(defName, s.Definitions[defName])
 		}
 	}
@@ -232,11 +232,6 @@ func (sr *schemaRegistry) unwrapDefs(t reflect.Type, s *jsonschema.Schema) *json
 		s.Definitions = nil
 	}
 	return body
-}
-
-// defByName finds a registered component emitted from a hoisted $def.
-func (sr *schemaRegistry) defByName(name string) *jsonschema.Schema {
-	return sr.byName[name]
 }
 
 // addDef registers a hoisted $def as a component directly by name; no

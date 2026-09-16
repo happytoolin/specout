@@ -74,6 +74,7 @@ type OAuth2Flow struct {
 	Scopes           map[string]string
 }
 
+// Bearer is the standard Authorization: Bearer scheme, ready for Config.Auth.
 var Bearer = AuthScheme{Name: "bearerAuth", Type: "httpBearer"}
 
 // OAuth2 declares an oauth2 scheme with the publisher's flows and scopes.
@@ -86,6 +87,7 @@ func APIKey(scheme, key, in string) AuthScheme {
 	return AuthScheme{Name: scheme, Type: "apiKey", Key: key, In: in}
 }
 
+// APIKey.In values: where the key travels.
 const (
 	InHeader = "header"
 	InQuery  = "query"

@@ -69,7 +69,7 @@ func (c *ChiRouter) Adopt(skips ...SkipRule) error {
 	var unknown []string
 	err := chi.Walk(c.r, func(method, route string, handler http.Handler, _ ...func(http.Handler) http.Handler) error {
 		for _, s := range skips {
-			if matchSkip(s.pattern, route) {
+			if s.Matches(route) {
 				return nil
 			}
 		}
