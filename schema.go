@@ -18,6 +18,7 @@ type schemaRegistry struct {
 	overrides map[reflect.Type]string // SchemaName[T] component-name overrides
 	variants  map[string]reflect.Type // Register[T] union variants, by name
 	anon      int                     // anonymous struct component counter
+	owned     map[string]reflect.Type // component name -> owning Go type
 	closed    bool
 	dialect   Dialect
 }
@@ -33,6 +34,7 @@ func newSchemaRegistry(cfg Config) *schemaRegistry {
 		byName:    make(map[string]*jsonschema.Schema),
 		overrides: make(map[reflect.Type]string),
 		variants:  make(map[string]reflect.Type),
+		owned:     make(map[string]reflect.Type),
 		closed:    cfg.ClosedSchemas,
 		dialect:   cfg.JSONDialect,
 	}
@@ -76,8 +78,12 @@ func (sr *schemaRegistry) refFor(t reflect.Type) string {
 	}
 
 	e := &schemaEntry{name: sr.nameFor(t), s: s}
+	if owner, clash := sr.owned[e.name]; clash && owner != t {
+		panic("specout: duplicate component name " + e.name + " (" + owner.String() + " vs " + t.String() + "), call SchemaName to disambiguate")
+	}
 	sr.byType[t] = e
 	sr.order = append(sr.order, t)
+	sr.owned[e.name] = t
 	return "#/components/schemas/" + e.name
 }
 
