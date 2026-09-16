@@ -21,8 +21,11 @@ type GorillaRouter struct {
 
 func (g *GorillaRouter) register(method, pattern string, rec routeRecord) {
 	rec.method, rec.pattern = method, pattern
-	g.r.HandleFunc(pattern, rec.fn).Methods(method)
-	rec.full = pattern
+	// gorilla folds subrouter PathPrefix into the route's own template when
+	// the route is created, so the composed path is available right away.
+	if tpl, err := g.r.HandleFunc(pattern, rec.fn).Methods(method).GetPathTemplate(); err == nil {
+		rec.full = tpl
+	}
 	rec.absolute = true
 	g.d.register(rec)
 }
@@ -81,8 +84,7 @@ func (g *GorillaRouter) Adopt(skips ...SkipRule) error {
 		}
 		handler := route.GetHandler()
 		ptr := reflect.ValueOf(handler).Pointer()
-		known, _ := g.d.lookup(ptr)
-		if !known {
+		if !g.d.lookup(ptr) {
 			unknown = append(unknown, strings.Join(methods, ",")+" "+tpl)
 		}
 		return nil

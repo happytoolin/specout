@@ -185,6 +185,20 @@ func TestGorillaAdapter(t *testing.T) {
 	}
 }
 
+// Gorilla Adopt: a plain gorilla route is a stray; a skip suppresses it.
+func TestGorillaAdoptStrayAndSkip(t *testing.T) {
+	d := specout.New(specout.Config{Title: "t", Version: "1"})
+	g := gmux.NewRouter()
+	specout.Gorilla(d, g).Get("/ok", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
+	g.HandleFunc("/stray", strayHandler).Methods("GET")
+	if err := specout.Gorilla(d, g).Adopt(); err == nil || !strings.Contains(err.Error(), "/stray") {
+		t.Fatalf("want /stray stray, got %v", err)
+	}
+	if err := specout.Gorilla(d, g).Adopt(specout.Skip("/stray")); err != nil {
+		t.Fatalf("skip should suppress: %v", err)
+	}
+}
+
 // Gorilla Adopt: method-less route fails loud instead of silently skipping.
 func TestGorillaMethodlessFails(t *testing.T) {
 	d := specout.New(specout.Config{Title: "t", Version: "1"})
@@ -232,3 +246,55 @@ func TestBadMethodPanics(t *testing.T) {
 }
 
 func d2() *specout.Generator { return specout.New(specout.Config{Title: "t", Version: "1"}) }
+
+// Gorilla composes subrouter prefixes into the route template, so the spec
+// path is the one the server actually serves.
+func TestGorillaSubrouterPrefixComposed(t *testing.T) {
+	d := specout.New(specout.Config{Title: "t", Version: "1"})
+	root := gmux.NewRouter()
+	specout.Gorilla(d, root.PathPrefix("/api").Subrouter()).Get("/items", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
+	if _, ok := docPaths(t, d)["/api/items"]; !ok {
+		t.Fatalf("prefix lost; have %v", docPaths(t, d))
+	}
+	w := httptest.NewRecorder()
+	root.ServeHTTP(w, httptest.NewRequest("GET", "/api/items", nil))
+	if w.Code != 204 {
+		t.Fatalf("serve: %d", w.Code)
+	}
+}
+
+// A std multi-segment wildcard is a catch-all: kept for drift, out of paths.
+func TestStdMultiSegmentWildcardOmitted(t *testing.T) {
+	d := specout.New(specout.Config{Title: "t", Version: "1"})
+	specout.Std(d, http.NewServeMux()).Handle("GET /files/{path...}", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
+	if _, ok := docPaths(t, d)["/files/{path...}"]; ok {
+		t.Error("std {path...} leaked into paths")
+	}
+	declared, err := d.DeclaredStatuses()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := declared[specout.RouteKey{Method: "GET", Path: "/files/{path...}"}]; !ok {
+		t.Errorf("catch-all missing from drift keys; have %v", declared)
+	}
+}
+
+// One func on a std mux and a chi router keeps both paths: the absolute
+// record is not overwritten by the chi walk.
+func TestStdAndChiShareFunc(t *testing.T) {
+	d := specout.New(specout.Config{Title: "t", Version: "1"})
+	h := specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody}
+	specout.Std(d, http.NewServeMux()).Handle("GET /std", h)
+	r := chi.NewRouter()
+	rc := specout.Chi(d, r)
+	rc.Get("/chi", h)
+	if err := rc.Adopt(); err != nil {
+		t.Fatal(err)
+	}
+	paths := docPaths(t, d)
+	for _, p := range []string{"/std", "/chi"} {
+		if _, ok := paths[p]; !ok {
+			t.Errorf("%s missing; have %v", p, paths)
+		}
+	}
+}

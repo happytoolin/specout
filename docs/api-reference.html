@@ -360,9 +360,9 @@
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 
+	rc := specout.Chi(d, r)
 	rc.Delete("/onboarding/{id}", handlers.HandleDeleteOnboarding(deps))
 	rc.Put("/onboarding/{id}", handlers.HandleUpsertOnboarding(deps))
-	rc := specout.Chi(d, r)
 	rc.Get("/onboarding", handlers.HandleListOnboarding(deps))
 
 	r.Mount("/openapi.json", d) // *Generator implements http.Handler
@@ -401,7 +401,7 @@ func HandleDeleteOnboarding(deps *dependencies.Dependencies) specout.Handler[Del
 <!-- ============================================================ -->
 <section id="register">
   <h2><span class="num">02</span>Registration</h2>
-  <p>As native as Go permits: grouping, middleware scoping, and mounting are pure chi/stdlib, untouched. The one custom thing is the per-router binder (<code>specout.Chi(d, r)</code>) that carries your types at compile time so it can carry your types at compile time. <code>d.Adopt(r)</code> is the fallback for routers you don't register yourself.</p>
+  <p>As native as Go permits: grouping, middleware scoping, and mounting are pure chi/stdlib, untouched. The one custom thing is the per-router binder (<code>specout.Chi(d, r)</code>), which carries your types at compile time. <code>rc.Adopt()</code> is the fallback for routers you don't register yourself.</p>
 
   <h3>Verb methods — chi's interface, one subject over</h3>
   <p>One method per HTTP verb, same names and argument order as chi. Go 1.27's generic methods let them take <code>Handler[Req, Res]</code> directly, so passing a plain <code>http.HandlerFunc</code> is a <em>compile error</em> instead of a silently undocumented route:</p>
@@ -413,7 +413,7 @@ rc.Get("/onboarding", handlers.HandleListOnboarding(deps))
 rc.Put("/onboarding/{id}", handlers.HandleUpsertOnboarding(deps))
 rc.Delete("/onboarding/{id}", handlers.HandleDeleteOnboarding(deps))
 
-// func (d *Generator) Get[Req, Res any](r chi.Router, pattern string, h Handler[Req, Res])
+// func (rc *ChiRouter) Get[Req, Res any](pattern string, h Handler[Req, Res])
 // — Head/Post/Put/Patch/Delete/Options/Trace identical, the full chi verb set
 
 // A plain http.HandlerFunc here fails to compile — the compiler becomes
@@ -447,7 +447,7 @@ rc.Delete("/onboarding/{id}", handlers.HandleDeleteOnboarding(deps))
 r.Mount("/api", onboarding.Router(d, deps)) // relative patterns inside come out right</code></pre>
   </figure>
 
-  <p>Registration records only metadata — handler → method, types, responses. Full paths resolve when the spec builds, from a single walk of the live router: chi composes <code>Route</code>/<code>Mount</code> prefixes at match time, invisible at registration time, so trusting the pattern as-passed would put wrong paths in the spec. If you wrap a handler in your own middleware before passing it in, the pointer link falls back to the as-passed pattern, and <code>RequireDocumented</code> flags anything unresolved rather than guessing. Spec-side grouping is OpenAPI tags — the explicit <code>Tags</code> field on the handler.</p>
+  <p>Registration records only metadata — handler → method, types, responses. Full paths resolve when the spec builds, from a single walk of the adopted router: chi composes <code>Route</code>/<code>Mount</code> prefixes at match time, invisible at registration time, so trusting the pattern as-passed would put wrong paths in the spec. A registration the walk never sees is a build error that names the pattern — never a guess. Spec-side grouping is OpenAPI tags — the explicit <code>Tags</code> field on the handler.</p>
 
   <h3>std http.ServeMux</h3>
   <figure class="code" data-lang="go">
@@ -459,10 +459,25 @@ sm.Handle("GET /onboarding", handlers.HandleListOnboarding(deps))</code></pre>
 
   <div class="callout warn">
     <span class="label">Why the shim?</span>
-    <p><code>http.ServeMux</code> has no public API to enumerate registered routes, so <code>d.Handle</code> records what it needs at registration time — its patterns are always full and unambiguous, no resolution needed. On chi, metadata comes from registration and paths from the build-time walk; middleware never interferes because it wraps at serve time, not in the walk.</p>
+    <p><code>http.ServeMux</code> has no public API to enumerate registered routes, so <code>sm.Handle</code> records what it needs at registration time — its patterns are always full and unambiguous, no resolution needed. On chi, metadata comes from registration and paths from the build-time walk; middleware never interferes because it wraps at serve time, not in the walk.</p>
   </div>
 
-  <h3>Adopting an existing chi router</h3>
+  <h3>gorilla/mux</h3>
+  <figure class="code" data-lang="go">
+    <figcaption><span>subrouter prefixes compose into the documented path</span><button class="copy">copy</button></figcaption>
+    <pre><code>gm := specout.Gorilla(d, r)
+gm.Get("/items/{id:[0-9]+}", handlers.HandleGetItem(deps))
+
+api := r.PathPrefix("/api").Subrouter()   // /api/items comes out whole
+specout.Gorilla(d, api).Get("/items", handlers.HandleListItems(deps))</code></pre>
+  </figure>
+
+  <div class="callout warn">
+    <span class="label">Catch-alls stay out</span>
+    <p>Patterns OpenAPI cannot express (<code>/files/*</code>, <code>/files/{path...}</code>) are omitted from <code>paths</code>, but keep their drift key so <code>recorder.Verify</code> still checks them.</p>
+  </div>
+
+  <h3>Adopting an existing router</h3>
   <figure class="code" data-lang="go">
     <figcaption><span>fallback: walk an already-built router</span><button class="copy">copy</button></figcaption>
     <pre><code>if err := rc.Adopt(); err != nil {
@@ -1263,12 +1278,12 @@ specout.Chi(d, r).RequireDocumented(t, specout.Skip("/debug/*"))</code></pre>
 
   <details>
     <summary>What about middleware wrapping handlers?</summary>
-    <p>The generic registration signatures take <code>Handler[Req, Res]</code> directly, so metadata capture at registration time is guaranteed by the compiler. Wrap with all the middleware you want afterwards — discovery doesn't depend on the call chain. Only <code>d.Adopt(r)</code> (walk fallback) is sensitive to wrapping, which is why the registration helpers are primary.</p>
+    <p>The generic registration signatures take <code>Handler[Req, Res]</code> directly, so metadata capture at registration time is guaranteed by the compiler. Wrap with all the middleware you want afterwards — discovery doesn't depend on the call chain. Only the walk fallback (<code>rc.Adopt()</code>) is sensitive to wrapping, which is why the registration helpers are primary.</p>
   </details>
 
   <details>
-    <summary>Why do I have to call <code>d.Get</code> instead of <code>r.Get</code>?</summary>
-    <p>chi's verb methods take <code>http.HandlerFunc</code> — a defined function type — and a metadata-carrying <code>Handler[Req, Res]</code> isn't assignable to it. Interface methods can't take type parameters either, so <code>chi.Router</code> can't grow these itself. A recording wrapper plus a global handler registry would hide the cost in invisible state; <code>d.Get</code> is the same call with the subject moved, and the custom part stays visible.</p>
+    <summary>Why do I have to call <code>rc.Get</code> instead of <code>r.Get</code>?</summary>
+    <p>chi's verb methods take <code>http.HandlerFunc</code> — a defined function type — and a metadata-carrying <code>Handler[Req, Res]</code> isn't assignable to it. Interface methods can't take type parameters either, so <code>chi.Router</code> can't grow these itself. A recording wrapper plus a global handler registry would hide the cost in invisible state; <code>rc.Get</code> is the same call with the subject moved, and the custom part stays visible.</p>
   </details>
 
   <details>
@@ -1278,7 +1293,7 @@ specout.Chi(d, r).RequireDocumented(t, specout.Skip("/debug/*"))</code></pre>
 
   <details>
     <summary>Why can't it walk my std ServeMux?</summary>
-    <p><code>http.ServeMux</code> has no public API to enumerate routes — they live in unexported fields. The <code>d.Handle</code> shim records patterns as you register them, which is the same information, obtained reliably.</p>
+    <p><code>http.ServeMux</code> has no public API to enumerate routes — they live in unexported fields. The <code>StdRouter.Handle</code> shim records patterns as you register them, which is the same information, obtained reliably.</p>
   </details>
 
   <details>
@@ -1348,7 +1363,13 @@ specout.Chi(d, r).RequireDocumented(t, specout.Skip("/debug/*"))</code></pre>
 
   <h3>specout — testing</h3>
   <span class="sig"><b>type</b> RouteKey <b>struct</b> { Method, Path <b>string</b> }
-<b>func</b> RequireDocumented(t TestingT, r chi.Router, skips ...SkipRule)
+<b>func</b> Chi(d *Generator, r chi.Router) *ChiRouter
+<b>func</b> (c *ChiRouter) RequireDocumented(t TestingT, skips ...SkipRule)
+<b>func</b> (c *ChiRouter) Adopt(skips ...SkipRule) <b>error</b>
+<b>func</b> Gorilla(d *Generator, r *mux.Router) *GorillaRouter
+<b>func</b> (g *GorillaRouter) RequireDocumented(t TestingT, skips ...SkipRule)
+<b>func</b> Std(d *Generator, mux *http.ServeMux) *StdRouter
+<b>func</b> Document[Req, Res <b>any</b>](d *Generator, method, pattern <b>string</b>, h Handler[Req, Res])
 
 <span style="color:var(--text-dim)">// package specout/recorder:</span>
 <b>func</b> New(next http.Handler) *Recorder

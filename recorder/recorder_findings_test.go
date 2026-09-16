@@ -35,6 +35,24 @@ func TestHeadMatchesGet(t *testing.T) {
 }
 
 // Unmatched requests record nothing (finding 12).
+// A route declared as HEAD stays HEAD: the recorder does not relabel it GET.
+func TestDeclaredHeadNoDrift(t *testing.T) {
+	d := specout.New(specout.Config{Title: "t", Version: "1"})
+	r := chi.NewRouter()
+	rc := specout.Chi(d, r)
+	rc.Head("/x", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: hit204})
+	if err := rc.Adopt(); err != nil {
+		t.Fatal(err)
+	}
+	rec := recorder.New(r)
+	rec.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("HEAD", "/x", nil))
+	ft := &failT{}
+	recorder.Verify(ft, d, rec)
+	if len(ft.errs) > 0 {
+		t.Fatalf("declared HEAD drift: %s", strings.Join(ft.errs, "; "))
+	}
+}
+
 func TestUnmatchedRecordsNothing(t *testing.T) {
 	d := specout.New(specout.Config{Title: "t", Version: "1"})
 	r := chi.NewRouter()

@@ -140,7 +140,9 @@ The minimal path from factory to served spec:
 4. Recorder fails CI on an undeclared status code and on an untested declared one.
 5. `RequireDocumented` fails on a plain `r.Get` stray (chi).
 6. Two `GO_SPEC_ONLY` runs produce identical bytes.
-7. No chi import outside `register_chi.go`, `routes.go`, `recorder/`.
+7. chi imports live only in the chi adapter files (`register_chi.go`,
+   `routes.go`, `recorder/`); gorilla only in `register_gorilla.go`;
+   `recorder/` may import either one for pattern capture.
 
 ## Ledger: router adapters refactor
 
@@ -156,8 +158,14 @@ The minimal path from factory to served spec:
 - Doc path and drift key are separate values. Doc paths keep their exact
   form (/a and /a/ are distinct chi routes - walk reports both; only the
   recorder drift key collapses, mirroring RoutePattern).
-- Catch-alls (paths containing *) are omitted from paths but keep their
-  drift key so the recorder still checks them.
+- Catch-alls (paths containing * or a {name...} wildcard) are omitted from
+  paths but keep their drift key so the recorder still checks them.
+- gorilla needs no walk for paths: the library folds subrouter PathPrefix
+  into the route template at creation, so GetPathTemplate gives the
+  composed path at registration time. The plan's walk was drawn for that
+  outcome; this reaches it with less code and no extra Adopt call.
+- Recorder keys by the real method and treats HEAD and GET as one route in
+  Verify; rewriting the key instead mislabelled declared HEAD routes.
 - gorilla method-less routes fail Adopt loudly: they are all-methods
   endpoints, not mounts; silent skipping would hide undocumented routes.
 - Duplicate operationId across distinct paths is a build error; empty {}

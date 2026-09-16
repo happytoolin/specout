@@ -77,8 +77,7 @@ func (c *ChiRouter) Adopt(skips ...SkipRule) error {
 			return nil
 		}
 		ptr := reflect.ValueOf(handler).Pointer()
-		known, _ := c.d.lookup(ptr)
-		if !known {
+		if !c.d.lookup(ptr) {
 			unknown = append(unknown, method+" "+route)
 		}
 		return nil

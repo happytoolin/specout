@@ -237,9 +237,11 @@ func driftKey(p string) string {
 	return p
 }
 
-// isCatchAll reports patterns OpenAPI cannot express: trailing wildcards.
+// isCatchAll reports patterns OpenAPI cannot express: trailing wildcards,
+// both the chi/std form (/files/*) and the std multi-segment form
+// (/files/{path...}).
 func isCatchAll(p string) bool {
-	return strings.Contains(p, "*")
+	return strings.Contains(p, "*") || strings.Contains(p, "...}")
 }
 
 // DeclaredStatuses exposes the declared method+path -> codes map, for the

@@ -48,11 +48,14 @@ func (d *Generator) register(rec routeRecord) {
 	d.known[reflect.ValueOf(rec.fn).Pointer()] = true
 }
 
-func (d *Generator) lookup(ptr uintptr) (bool, bool) {
+// lookup reports whether a handler func is known to specout. ponytail:
+// identity is the code pointer, so two routes that share one func literal
+// cannot be told apart; a stray reusing a documented handler goes
+// unreported. Per-route identity if that ever bites.
+func (d *Generator) lookup(ptr uintptr) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	_, ok := d.known[ptr]
-	return ok, d.frozen
+	return d.known[ptr]
 }
 
 // addSource remembers a router to walk at build time. Idempotent per router.

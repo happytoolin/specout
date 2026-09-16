@@ -67,13 +67,7 @@ func (rec *Recorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// HEAD requests match a declared GET: same handler, same status set.
-	method := r.Method
-	if method == http.MethodHead {
-		method = http.MethodGet
-	}
-
-	key := specout.RouteKey{Method: method, Path: driftKey(pattern)}
+	key := specout.RouteKey{Method: r.Method, Path: driftKey(pattern)}
 	rec.mu.Lock()
 	if rec.codes[key] == nil {
 		rec.codes[key] = make(map[int]bool)
