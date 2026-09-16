@@ -18,6 +18,7 @@ type schemaRegistry struct {
 	byName    map[string]*jsonschema.Schema // hoisted $defs with no Go type
 	nameOrder []string
 	overrides map[reflect.Type]string   // SchemaName[T] component-name overrides
+	defOwners map[string]reflect.Type   // component name -> type that claimed it
 	variants  map[string]reflect.Type   // Register[T] union variants, by name
 	anon      int                       // anonymous struct component counter
 	owned     map[string]reflect.Type   // component name -> owning Go type
@@ -36,6 +37,7 @@ func newSchemaRegistry(cfg Config) *schemaRegistry {
 		byType:    make(map[reflect.Type]*schemaEntry),
 		byName:    make(map[string]*jsonschema.Schema),
 		overrides: make(map[reflect.Type]string),
+		defOwners: make(map[string]reflect.Type),
 		variants:  make(map[string]reflect.Type),
 		owned:     make(map[string]reflect.Type),
 		bodyViews: make(map[reflect.Type]bodyView),
@@ -76,6 +78,26 @@ func (sr *schemaRegistry) refFor(t reflect.Type) string {
 			}
 			return nil
 		},
+		// invopop names hoisted $defs after the bare Go type name, so a
+		// SchemaName override never reached a nested-only type, and two
+		// packages owning the same type name collapsed into one component
+		// (the second shape silently lost, every $ref pointing at it).
+		// Name defs the way the registry names components, and fail loud on
+		// a real clash: a wrong schema is worse than a panic.
+		Namer: func(t reflect.Type) string {
+			name := t.Name()
+			if n, ok := sr.overrides[t]; ok {
+				name = n
+			}
+			if name == "" {
+				return ""
+			}
+			if owner, ok := sr.defOwners[name]; ok && owner != t {
+				panic("specout: duplicate component name " + name + " (" + owner.String() + " vs " + t.String() + "), call SchemaName to disambiguate")
+			}
+			sr.defOwners[name] = t
+			return name
+		},
 	}
 	s := r.Reflect(reflect.New(t).Interface())
 	s.Version = ""
@@ -83,8 +105,7 @@ func (sr *schemaRegistry) refFor(t reflect.Type) string {
 	// invopop's oneof_type splits on ";", our docs use "|" — normalize.
 	normalizeOneOf(s, sr)
 	splitEnums(s)
-	applyNullable(t, s)
-	applyFieldTags(t, s)
+	sr.applySchemaFixes(t, s, map[reflect.Type]bool{})
 	// closed schemas: additionalProperties: false at every object node
 	if sr.closed {
 		closeSchema(s)
@@ -183,6 +204,9 @@ func (sr *schemaRegistry) unwrapDefs(t reflect.Type, s *jsonschema.Schema) *json
 		return s
 	}
 	name := sanitizeName(t)
+	if n, ok := sr.overrides[t]; ok {
+		name = n
+	}
 	body := s
 	if s.Ref != "" && strings.HasSuffix(s.Ref, "/"+name) {
 		body = s.Definitions[name]
@@ -418,33 +442,12 @@ func splitEnums(s *jsonschema.Schema) {
 	}
 }
 
-// applyNullable rewrites pointer fields to OpenAPI 3.1 type arrays
-// ([T, "null"]). invopop only understands an explicit 'nullable' tag and
-// emits oneOf; the api-reference table wants pointer ⇒ nullable, always.
-func applyNullable(t reflect.Type, s *jsonschema.Schema) {
-	if t.Kind() != reflect.Struct || s.Properties == nil {
-		return
-	}
-	for i := 0; i < t.NumField(); i++ {
-		f := t.Field(i)
-		if f.Type.Kind() != reflect.Pointer || f.PkgPath != "" {
-			continue
-		}
-		name := f.Name
-		if jt := f.Tag.Get("json"); jt != "" {
-			if parts := strings.Split(jt, ","); parts[0] != "" {
-				name = parts[0]
-			}
-		}
-		if p, ok := s.Properties.Get(name); ok && p != nil {
-			nullable(p)
-		}
-	}
-}
-
 // nullable makes a property schema accept null: plain types widen to
 // [T, "null"]; refs become anyOf: [{$ref}, {type: null}].
 func nullable(p *jsonschema.Schema) {
+	if p == nil {
+		return
+	}
 	if p.Ref != "" {
 		p.OneOf = []*jsonschema.Schema{{Ref: p.Ref}, {Type: "null"}}
 		p.Ref = ""
@@ -458,23 +461,77 @@ func nullable(p *jsonschema.Schema) {
 	p.Extras["type"] = []string{base, "null"}
 }
 
-// applyFieldTags handles keywords invopop misses: bare readonly/writeonly
-// (it wants readOnly=true), often combined with example= in one tag.
-func applyFieldTags(t reflect.Type, s *jsonschema.Schema) {
-	if t == nil || t.Kind() != reflect.Struct || s.Properties == nil {
+// applySchemaFixes runs the post-reflection fixups over the whole type graph:
+// pointer fields become nullable, and the tag keywords invopop misses (bare
+// readonly/writeonly/deprecated, form= renames) reach the property.
+//
+// invopop hoists every named struct into components.schemas before this runs,
+// so the walk follows $refs into those components. Without it only the root
+// type is fixed up: a nested struct keeps invopop's raw output, no
+// nullability and no readonly/deprecated tags.
+func (sr *schemaRegistry) applySchemaFixes(t reflect.Type, s *jsonschema.Schema, seen map[reflect.Type]bool) {
+	for t != nil && t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t == nil || s == nil {
 		return
 	}
+	if s.Ref != "" {
+		if body := sr.bodyForRef(s.Ref); body != nil {
+			s = body
+		}
+	}
+	switch t.Kind() {
+	case reflect.Slice, reflect.Array:
+		sr.applySchemaFixes(t.Elem(), s.Items, seen)
+		if t.Elem().Kind() == reflect.Pointer {
+			nullable(s.Items)
+		}
+		return
+	case reflect.Map:
+		sr.applySchemaFixes(t.Elem(), s.AdditionalProperties, seen)
+		if t.Elem().Kind() == reflect.Pointer {
+			nullable(s.AdditionalProperties)
+		}
+		return
+	case reflect.Struct:
+	default:
+		return
+	}
+	// a recursive type reaches itself: each component body needs one pass
+	if seen[t] || s.Properties == nil {
+		return
+	}
+	seen[t] = true
+	sr.fixStructFields(t, s, seen)
+}
+
+// fixStructFields applies the per-field fixups to one struct's schema. It is
+// separate from applySchemaFixes so the embedded-struct descent can run on the
+// parent's schema without marking the embedded type as seen: the type still
+// needs its own pass when it is also reached as a component body elsewhere.
+func (sr *schemaRegistry) fixStructFields(t reflect.Type, s *jsonschema.Schema, seen map[reflect.Type]bool) {
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
-		if f.PkgPath != "" {
-			continue
-		}
-		name := f.Name
-		if jt := f.Tag.Get("json"); jt != "" {
-			if parts := strings.Split(jt, ","); parts[0] != "" {
-				name = parts[0]
+		if f.Anonymous && parts0(f.Tag.Get("json")) == "" {
+			// invopop flattens an untagged embedded struct into this schema:
+			// its fields are properties of s itself, not of a nested object.
+			ft := f.Type
+			for ft.Kind() == reflect.Pointer {
+				ft = ft.Elem()
+			}
+			if ft.Kind() == reflect.Struct {
+				// a by-value embedding cycle is impossible in Go, so this
+				// descent terminates
+				sr.fixStructFields(ft, s, seen)
+				continue
 			}
 		}
+		// an embedded field is promoted even when its Go name is unexported
+		if f.PkgPath != "" && !f.Anonymous {
+			continue
+		}
+		name := fieldName(f)
 		p, ok := s.Properties.Get(name)
 		if !ok || p == nil {
 			continue
@@ -503,5 +560,39 @@ func applyFieldTags(t reflect.Type, s *jsonschema.Schema) {
 				p.Deprecated = true
 			}
 		}
+		// descend before nullable() clears a $ref: the recursion needs the link
+		sr.applySchemaFixes(f.Type, p, seen)
+		if f.Type.Kind() == reflect.Pointer {
+			nullable(p)
+		}
 	}
+}
+
+// fieldName is a struct field's wire name: the json tag name when it has one,
+// else the Go name.
+func fieldName(f reflect.StructField) string {
+	if jt := f.Tag.Get("json"); jt != "" {
+		if parts := strings.Split(jt, ","); parts[0] != "" {
+			return parts[0]
+		}
+	}
+	return f.Name
+}
+
+// bodyForRef resolves a component $ref to the schema it names, so the fixup
+// walk can follow a nested named struct into its hoisted component.
+func (sr *schemaRegistry) bodyForRef(ref string) *jsonschema.Schema {
+	name, ok := strings.CutPrefix(ref, "#/components/schemas/")
+	if !ok {
+		return nil
+	}
+	if s, ok := sr.byName[name]; ok {
+		return s
+	}
+	for _, e := range sr.byType {
+		if e.name == name {
+			return e.s
+		}
+	}
+	return nil
 }

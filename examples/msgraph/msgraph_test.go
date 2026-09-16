@@ -183,6 +183,15 @@ func TestSpecKeepsPublishedShapes(t *testing.T) {
 		}
 	}
 
+	// InnerError is reached only through MainError's pointer field, so it is
+	// nested-only: the pointer must still widen to [InnerError, null].
+	// Regression — the pointer field kept invopop's bare $ref.
+	main := schemas["MainError"].(map[string]any)["properties"].(map[string]any)["innerError"].(map[string]any)
+	arms, _ := main["oneOf"].([]any)
+	if len(arms) != 2 || arms[1].(map[string]any)["type"] != "null" {
+		t.Errorf("MainError.innerError = %v, want a $ref and a null arm", main)
+	}
+
 	// a hyphenated path template name keeps its published spelling
 	pathParam := paramNamed(t, graphOp(t, doc, "/users/{user-id}", "get"), "user-id", "path")
 	if pathParam["required"] != true {

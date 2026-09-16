@@ -89,6 +89,7 @@ Everything the spec needs is visible in the source you already write:
 | externalDocs | `ExternalDocs` on `Config`, a handler, or a tag |
 
 Two types with the same name panic at build time, with the fix in the message:
+the check covers nested types too, not only request and response bodies.
 
 ```
 panic: specout: duplicate component name Widget (pa.Widget vs pb.Widget), call SchemaName to disambiguate

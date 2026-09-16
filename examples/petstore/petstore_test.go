@@ -179,6 +179,17 @@ func TestSpecKeepsPublishedShapes(t *testing.T) {
 	if _, ok := req["properties"].(map[string]any)["file"].(map[string]any)["format"]; !ok {
 		t.Errorf("file field = %v", req["properties"])
 	}
+
+	// Tag and Category are reached only through Pet, so invopop hoists them
+	// without a Go-type entry: the property fixups must follow the $ref into
+	// the nested component. Regression — the format= tag used to survive on
+	// Pet but vanish on Tag.
+	for _, name := range []string{"Pet", "Tag", "Category"} {
+		id := schemas[name].(map[string]any)["properties"].(map[string]any)["id"].(map[string]any)
+		if id["format"] != "int64" {
+			t.Errorf("%s.id = %v, want format int64", name, id)
+		}
+	}
 }
 
 // captureT collects failures so a test can assert on one drift category

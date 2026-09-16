@@ -179,12 +179,7 @@ func (sr *schemaRegistry) bodyType(req reflect.Type) (reflect.Type, string) {
 	if v, ok := sr.bodyViews[req]; ok {
 		return v.t, v.name
 	}
-	var fields []reflect.StructField
-	for i := 0; i < req.NumField(); i++ {
-		if f := req.Field(i); !isParamField(f) {
-			fields = append(fields, f)
-		}
-	}
+	fields := bodyFields(req)
 	if len(fields) == 0 {
 		// every field is a parameter: the operation has no body at all
 		return nil, ""
@@ -192,6 +187,80 @@ func (sr *schemaRegistry) bodyType(req reflect.Type) (reflect.Type, string) {
 	v := bodyView{t: reflect.StructOf(fields), name: sr.nameFor(req)}
 	sr.bodyViews[req] = v
 	return v.t, v.name
+}
+
+// bodyFields lists the StructOf fields of a request-body view: req's exported,
+// non-parameter fields, with untagged embedded structs expanded the way
+// encoding/json expands them. reflect.StructOf rejects an unexported field,
+// and the promoted fields belong in the body, so the expansion is required: a
+// body that embeds a base type (ids, timestamps) must not panic the moment it
+// also carries a query parameter.
+func bodyFields(req reflect.Type) []reflect.StructField {
+	// a direct field shadows a promoted one of the same name, and StructOf
+	// rejects the duplicate: reserve the direct names before expanding
+	taken := make(map[string]bool, req.NumField())
+	for i := 0; i < req.NumField(); i++ {
+		if f := req.Field(i); !isParamField(f) && !promotes(f) {
+			taken[f.Name] = true
+		}
+	}
+	var out []reflect.StructField
+	for i := 0; i < req.NumField(); i++ {
+		if f := req.Field(i); !isParamField(f) {
+			out = bodyField(out, f, taken)
+		}
+	}
+	return out
+}
+
+// promotes reports whether f is an untagged embedded struct: the fields it
+// promotes are properties of the parent object.
+func promotes(f reflect.StructField) bool {
+	if !f.Anonymous || parts0(f.Tag.Get("json")) != "" {
+		return false
+	}
+	return deref(f.Type).Kind() == reflect.Struct
+}
+
+func deref(t reflect.Type) reflect.Type {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	return t
+}
+
+// ponytail: first declaration wins when two embedded structs promote the same
+// name; encoding/json drops both as ambiguous. Add a depth map if that shows up.
+func bodyField(out []reflect.StructField, f reflect.StructField, taken map[string]bool) []reflect.StructField {
+	if promotes(f) {
+		et := deref(f.Type)
+		for i := 0; i < et.NumField(); i++ {
+			sub := et.Field(i)
+			if sub.PkgPath != "" && !sub.Anonymous {
+				continue // unexported plain field: never marshaled
+			}
+			if taken[sub.Name] {
+				continue // shadowed by a field at this or a shallower level
+			}
+			taken[sub.Name] = true
+			out = bodyField(out, sub, taken)
+		}
+		return out
+	}
+	if f.PkgPath != "" {
+		if !f.Anonymous {
+			return out // unexported plain field: never marshaled
+		}
+		// unexported embedded type: StructOf needs an exported Go name; the
+		// JSON property name still comes from the tag.
+		if parts0(f.Tag.Get("json")) == "" {
+			f.Tag = reflect.StructTag(`json:"` + f.Name + `" ` + string(f.Tag))
+		}
+		f.Anonymous = false
+		f.Name = "Embedded" + f.Name
+		f.PkgPath = ""
+	}
+	return append(out, f)
 }
 
 // reflectParam builds a synthetic struct with one field shaped like f, so

@@ -29,6 +29,22 @@ func serveDoc(t *testing.T, d *specout.Generator, r chi.Router) map[string]any {
 
 func noop2(http.ResponseWriter, *http.Request) {}
 
+// recA and recB recurse through each other; package-level because local type
+// declarations are scoped from the point of declaration, so neither can name
+// the other.
+type recA struct {
+	B  *recB `json:"b,omitempty"`
+	ID *int  `json:"id,omitempty"`
+}
+
+type recB struct {
+	A *recA `json:"a,omitempty"`
+}
+
+type recPair struct {
+	Left recA `json:"left"`
+}
+
 // Regression: nested named types hoisted to $defs must keep jsonschema
 // fixups (enum split, readonly, nullable) and must not overwrite the
 // properly-reflected component registered later under the same name.
@@ -70,6 +86,74 @@ func TestNestedDefsKeepFixups(t *testing.T) {
 	typ, _ := due["type"].([]any)
 	if len(typ) != 2 || typ[1] != "null" {
 		t.Errorf("due type = %v, want [string null]", due["type"])
+	}
+}
+
+// Recursive types reach themselves through a $ref. The fixup walk must not
+// loop, and each component must still get its pass, including when two types
+// recurse through each other.
+func TestRecursiveNestedDefsFixed(t *testing.T) {
+	type Node struct {
+		Name string `json:"name"`
+		Next *Node  `json:"next,omitempty"`
+	}
+	type Tree struct {
+		Root Node `json:"root"`
+	}
+	d := specout.New(specout.Config{Title: "t", Version: "1"})
+	r := chi.NewRouter()
+	specout.Chi(d, r).Get("/tree", specout.Handler[struct{}, Tree]{HandlerFunc: noop2})
+	specout.Chi(d, r).Get("/pair", specout.Handler[struct{}, recPair]{HandlerFunc: noop2})
+	doc := serveDoc(t, d, r)
+
+	wantNullable := func(name, prop string) {
+		t.Helper()
+		schemas := doc["components"].(map[string]any)["schemas"].(map[string]any)
+		p := schemas[name].(map[string]any)["properties"].(map[string]any)[prop].(map[string]any)
+		if arms, _ := p["oneOf"].([]any); len(arms) == 2 {
+			return
+		}
+		if typ, _ := p["type"].([]any); len(typ) == 2 && typ[1] == "null" {
+			return
+		}
+		t.Errorf("%s.%s = %v, want a null arm", name, prop, p)
+	}
+	wantNullable("Node", "next")
+	wantNullable("recA", "b")
+	wantNullable("recA", "id")
+	wantNullable("recB", "a")
+}
+
+// Regression: a nested-only type — never a top-level Req or Res — is hoisted
+// to $defs before the fixup pass runs. The pass must follow the $ref into
+// that component: without the walk the whole nested type keeps invopop's raw
+// output, so its pointer fields are not nullable and its readonly/deprecated
+// tags vanish. TestNestedDefsKeepFixups cannot catch this: it registers Issue
+// top-level as well, and byType wins the name clash.
+func TestNestedOnlyDefsKeepFixups(t *testing.T) {
+	type Inner struct {
+		ID   int64   `json:"id" jsonschema:"readonly"`
+		Note string  `json:"note" jsonschema:"deprecated"`
+		Due  *string `json:"due,omitempty"`
+	}
+	type Outer struct {
+		Items []Inner `json:"items"`
+	}
+
+	d := specout.New(specout.Config{Title: "t", Version: "1"})
+	r := chi.NewRouter()
+	specout.Chi(d, r).Get("/outer", specout.Handler[struct{}, Outer]{HandlerFunc: noop2})
+
+	doc := serveDoc(t, d, r)
+	inner := doc["components"].(map[string]any)["schemas"].(map[string]any)["Inner"].(map[string]any)["properties"].(map[string]any)
+	if inner["id"].(map[string]any)["readOnly"] != true {
+		t.Errorf("nested readOnly lost: %v", inner["id"])
+	}
+	if inner["note"].(map[string]any)["deprecated"] != true {
+		t.Errorf("nested deprecated lost: %v", inner["note"])
+	}
+	if typ, _ := inner["due"].(map[string]any)["type"].([]any); len(typ) != 2 || typ[1] != "null" {
+		t.Errorf("nested nullable lost: %v", inner["due"])
 	}
 }
 
