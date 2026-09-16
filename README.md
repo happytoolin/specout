@@ -1,234 +1,155 @@
 # specout
 
-**OpenAPI 3.1 from plain Go handlers. No comments. Doc-only. Verified by your own tests.**
+**OpenAPI 3.1 from plain Go handlers. No comments to keep in sync. No runtime to adopt. Specs your tests can prove honest.**
+
+Point it at the router you already have. Tag the types you already have. It emits the spec; your tests verify it.
 
 ```go
 d := specout.New(specout.Config{
-    Title:         "Onboarding API",
-    Version:       "1.0.0",
-    Auth:          specout.Bearer,
-    ErrorType:     api.Problem{},
-    DefaultErrors: []int{400, 401, 403, 404, 409, 500},
+	Title: "Onboarding API",
+	Version: "1.0.0",
 })
 
-d.Get(r, "/onboarding", handlers.HandleList(deps))
+func HandleList(deps Deps) specout.Handler[ListRequest, Page] {
+	return specout.Handler[ListRequest, Page]{
+		HandlerFunc: func(w http.ResponseWriter, r *http.Request) { /* raw std */ },
+		Summary:     "List onboarding records",
+	}
+}
+
+d.Get(r, "/onboarding", HandleList(deps))
 r.Mount("/openapi.json", d)
 ```
 
-Handlers stay raw `http.HandlerFunc` factories. The generic return type carries the
-schemas. Registration is compile-checked (Go 1.27+). The spec builds from the live
-router, so it cannot drift. A recorder in your test suite fails CI when reality and
-declaration disagree.
+## Why
 
-## The contract
+Specs rot because they live apart from the code. specout closes the gap from the Go side:
 
-specout is **doc, nothing else**. It reads what reflection can see — types, tags,
-route patterns — and emits the spec. It never touches a request or a response:
+- **No drift.** The spec builds from the same mux that serves traffic. An undocumented route fails a test, not a review.
+- **No lock-in.** Handlers stay plain `http.HandlerFunc`. No framework, no request lifecycle to adopt — or later escape.
+- **Doc, nothing else.** It reads types, tags, and route patterns. It never decodes, validates, or writes a response.
+- **Provable.** A test-time recorder fails CI when a handler emits a status the spec does not declare, or vice versa.
+- **Byte-deterministic.** Same binary, same routes, same bytes. Diffs are reviewable; the spec commits like code.
 
-- no decoding, no responding, no error mapping, no middleware
-- runtime helpers are your code (`internal/demo/api` is ~40 lines; copy it)
-- everything specout ships is a declaration: types, tags, config
+OpenAPI 3.1 (JSON Schema 2020-12), Go 1.27+, two dependencies: chi and the reflection layer.
 
-## Quick start
+## Install
+
+Requires Go 1.27 or newer:
 
 ```sh
 go get github.com/happytoolin/specout@latest
 ```
 
-A handler factory:
+## The idea in one endpoint
+
+Metadata rides the generic return type. Reflection sees it at registration; the handler itself stays untouched std:
 
 ```go
 type UpsertRequest struct {
-    Owner string `json:"owner" jsonschema:"format=email"`
-    Stage string `json:"stage" jsonschema:"enum=draft|active|archived,default=draft"`
+	Owner string `json:"owner" jsonschema:"format=email"`
+	Stage string `json:"stage" jsonschema:"enum=draft|active|archived,default=draft"`
 }
 
 func HandleUpsert(d Deps) specout.Handler[UpsertRequest, Onboarding] {
-    return specout.Handler[UpsertRequest, Onboarding]{
-        HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
-            var req UpsertRequest
-            json.NewDecoder(r.Body).Decode(&req) // your code, your way
-            // ... store, validate, write — all yours
-            api.JSON(w, 200, onb) // your helper
-        },
-        Summary: "Create or replace a record",
-        Tags:    []string{"onboarding"},
-        Responses: []specout.Response{
-            {Status: 201, Headers: []specout.Header{{Name: "Location"}}},
-            {Status: 422, Type: api.ValidationError{}},
-        },
-    }
+	return specout.Handler[UpsertRequest, Onboarding]{
+		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
+			var req UpsertRequest
+			json.NewDecoder(r.Body).Decode(&req) // your code, your way
+			api.JSON(w, 200, onb)               // your helper, not ours
+		},
+		Summary: "Create or replace a record",
+		Responses: []specout.Response{{Status: 422, Type: api.ValidationError{}}},
+	}
 }
 ```
 
-Register it — the verb call is the only custom bit:
+Everything the spec needs is visible in the source you already write:
 
-```go
-r.Route("/onboarding/{id}", func(r chi.Router) {
-    d.Put(r, "/", HandleUpsert(deps))
-})
-r.Mount("/openapi.json", d)
-```
+| Spec feature | How you declare it |
+|---|---|
+| path params | route pattern `{id}` |
+| query/header/cookie params | `query:` / `header:` / `cookie:` tags on `Req` |
+| required vs optional | presence of `omitempty` |
+| nullable | Go pointer (`type: [T, "null"]`) |
+| enums, bounds, patterns, formats | `jsonschema:` tag |
+| oneOf unions with discriminator | `d.Register[T]("name")` + `oneof_type` tag |
+| readOnly / writeOnly | `jsonschema:` tag |
+| auth schemes | `Config.Auth` (Bearer, API key header/cookie); `Public: true` opts out |
+| operationId | derived from method+path, or set `OperationID` |
 
-Std mux works the same: `d.Handle(mux, "PUT /onboarding/{id}", HandleUpsert(deps))`.
-
-## What it documents
-
-**Parameters** — from tags on the request type:
-
-```go
-type ListRequest struct {
-    Session string `cookie:"session"    jsonschema:"description=Session cookie"`
-    Trace   string `header:"X-Trace-Id" jsonschema:"description=Trace id"`
-    Limit   int    `query:"limit"      jsonschema:"default=20,minimum=1,maximum=100"`
-    Sort    string `query:"sort"       jsonschema:"enum=created|updated,default=created"`
-}
-```
-
-Path params (`{id}`) come from the route pattern automatically.
-
-**Schemas** — from Go types via reflection, deduped into components:
-
-- enums, formats, bounds, patterns, examples — all through the `jsonschema` tag
-- required = no `omitempty`; nullable = pointers
-- `readOnly`/`writeOnly` for shared request/response types
-- oneOf unions with discriminators (`d.Register[EmailConfig]("email")` + `oneof_type` tag)
-- `JSONSchema()` method on a type for full control
-- `ClosedSchemas: true` for `additionalProperties: false`
-
-**Responses** — `Res` defaults to 200 + schema; `specout.NoContent` (or `struct{}`) means 204;
-explicit entries add codes, change shapes, declare headers or binary bodies:
-
-```go
-Responses: []specout.Response{
-    {Status: 200, ContentType: "application/pdf"},        // binary download
-    {Status: 409, Type: SyncConflict{}},                  // per-route error shape
-    {Status: 401, Omit: true},                            // drop one default error code
-}
-```
-
-**Auth** — declare once, every operation inherits it:
-
-```go
-Auth: []specout.AuthScheme{
-    specout.Bearer,                                          // Authorization: Bearer <token>
-    specout.APIKey("apiKey", "X-API-Key", specout.InHeader),  // X-API-Key header
-    specout.APIKey("session", "session", specout.InCookie),   // session cookie
-}
-```
-
-Any one scheme satisfies auth (OR semantics). Public routes opt out with
-`Public: true` on the Handler.
-
-**Operations** — `Summary`, `Description`, `Tags`, `Deprecated` on each Handler;
-`OperationID` overrides the derived `operationId` when set; otherwise it derives
-deterministically from method+path (`getUsersIdProfile`).
-
-**Name collisions** — component names come from type names, so two types with the
-same name (different packages) panic at build time instead of silently merging:
+Two types with the same name panic at build time, with the fix in the message:
 
 ```
 panic: specout: duplicate component name Widget (pa.Widget vs pb.Widget), call SchemaName to disambiguate
 ```
 
-`d.SchemaName[pb.Widget]("PbWidget")` is the fix. Union variant names (`Register`)
-are global the same way.
-
-## Demo
-
-Daily tasks live in the justfile — `just` runs what CI runs:
-
-```sh
-just          # lint + test + golden check (the CI gate)
-just validate # check the golden spec against the official OpenAPI 3.1 schema
-just demo     # serve swagger ui (/), scalar (/scalar), redoc (/redoc)
-just golden   # regenerate the committed spec after intentional changes
-```
-
-```sh
-go run ./cmd/demo
-# swagger ui: http://localhost:8080/
-# scalar:      http://localhost:8080/scalar
-# redoc:       http://localhost:8080/redoc
-# spec:        http://localhost:8080/openapi.json
-```
-
-A realistic multi-package service — every route shape in one app:
-
-| Route | What it shows |
-|---|---|
-| `GET /onboarding` | cookie + header + query params on one request type |
-| `GET /onboarding/{id}` | path params, `Public: true` (no auth needed) |
-| auth (all routes) | three OR'd schemes: Bearer, X-API-Key header, session cookie; enforced by demo middleware in `internal/demo/auth` |
-| `PUT /onboarding/{id}` | multi-status upsert (200/201), Location header, 422 override |
-| `POST /onboarding/{id}/sync` | optimistic concurrency, rich 409 body, 401 omitted, Description |
-| `POST /files/import` | `specout.File` field → multipart/form-data |
-| `GET /files/report` | binary response (`ContentType: "application/pdf"`) |
-| `POST /webhooks` | oneOf union with discriminator, enum-tagged kind |
-| `POST /things` | every constraint keyword in one body: pattern, bounds, multipleOf, minItems, uniqueItems, typed maps |
-| `GET /things` | the same constraints on query params |
-| `POST /channels` | second oneOf union (namespaced variants `notify_email`/`notify_slack`) |
-| `GET /legacy` | `Deprecated: true` |
-
-Layout — app code, no library involvement beyond declarations:
-
-```
-internal/demo/
-├── api/          # the app's own helpers: JSON, Error, Problem, mapper
-├── onboarding/   # domain types + store (typed ConflictError)
-├── webhooks/     # union variants
-├── validators/   # constraint-keyword showcase types
-├── handlers/     # raw http.HandlerFunc factories per resource
-└── router/       # wiring: config, groups, Adopt, spec mount
-```
-
-## Verify the spec in CI
-
-Two tests keep the doc honest:
+## Responses beyond 200
 
 ```go
-// every route is documented
-func TestEveryRouteIsDocumented(t *testing.T) {
-    specout.RequireDocumented(t, r)
-}
-
-// declared statuses == observed statuses
-func TestSpecMatchesReality(t *testing.T) {
-    d, r := router.New()
-    rec := recorder.New(r)
-    // ... hit every route through rec
-    recorder.Verify(t, d, rec)
+Responses: []specout.Response{
+	{Status: 200, ContentType: "application/pdf"}, // binary download
+	{Status: 201, Headers: []specout.Header{{Name: "Location"}}},
+	{Status: 409, Type: SyncConflict{}},       // per-route error shape
+	{Status: 401, Omit: true},                 // drop one default error code
 }
 ```
 
-And the golden export — same binary, byte-identical output:
+## Verify it in CI
+
+Two tests keep the doc honest — every route documented, every declared status actually produced:
+
+```go
+func TestEveryRouteIsDocumented(t *testing.T) { specout.RequireDocumented(t, r) }
+
+func TestSpecMatchesReality(t *testing.T) {
+	d, r := router.New()
+	rec := recorder.New(r)
+	// ... hit every route through rec
+	recorder.Verify(t, d, rec)
+}
+```
+
+The golden export is committed — same binary, byte-identical output, checked in CI along with validation against the official OpenAPI 3.1 schema:
 
 ```sh
 GO_SPEC_ONLY=1 go run ./cmd/demo > openapi.json
 git diff --exit-code openapi.json
 ```
 
-Plus schema validation in CI — the golden spec is checked against the official
-OpenAPI 3.1 JSON Schema (tools/validate_spec.py):
+## Demo
 
 ```sh
-just validate
+git clone https://github.com/happytoolin/specout && cd specout
+just demo   # or: go run ./cmd/demo
 ```
 
-## Design
+Swagger UI at http://localhost:8080/, Scalar at /scalar, Redoc at /redoc, the spec at /openapi.json.
+
+| Route | What it shows |
+|---|---|
+| `GET /onboarding` | cookie + header + query params on one request type |
+| `PUT /onboarding/{id}` | multi-status upsert (200/201), Location header, 422 override |
+| `POST /onboarding/{id}/sync` | optimistic concurrency, rich 409 body |
+| `POST /files/import` | file upload → multipart/form-data |
+| `GET /files/report` | binary response (PDF) |
+| `POST /webhooks`, `POST /channels` | oneOf unions with discriminators |
+| `POST /things` | every constraint keyword in one body |
+| `GET /legacy` | `Deprecated: true` |
+
+## Design rules
 
 - **Lazy build, freeze on first serve.** Registering after the spec is served panics.
-- **Byte-deterministic.** Same binary + same routes → identical bytes. Key order is
-  insertion order, never map order.
-- **Two routers.** chi (walk-based path resolution; `d.Adopt(r)` for existing routers)
-  and std `http.ServeMux` (`d.Handle` with method+wildcard patterns).
-- **Go 1.27+ only.** Generic verb methods make an undocumented route a compile error.
+- **No package globals.** One generator per service; deterministic output by construction.
+- **chi and std mux both work.** `d.Get(r, ...)` / `d.Handle(mux, "GET /path", ...)`.
+- **No comment parsing, ever.** Types are the single source of truth.
 
-## Status
+## Docs
 
-- [x] Phase 0–6 complete; see [PLAN.md](PLAN.md) for the decision ledger
-- [ ] v0 tag after real-project feedback
+- [docs/api-reference.html](docs/api-reference.html) — the full public surface with generated-output examples
+- [docs/design-discussion.md](docs/design-discussion.md) — rationale and trade-offs
+- [PLAN.md](PLAN.md) — implementation log and decision ledger
 
-Docs: [api-reference.html](docs/api-reference.html) (full public surface) ·
-[design-discussion.md](docs/design-discussion.md) (rationale) ·
-[PLAN.md](PLAN.md) (implementation log)
+## License
+
+MIT
