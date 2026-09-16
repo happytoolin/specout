@@ -499,6 +499,8 @@ func applyFieldTags(t reflect.Type, s *jsonschema.Schema) {
 				p.ReadOnly = true
 			case "writeonly", "writeOnly=true":
 				p.WriteOnly = true
+			case "deprecated", "deprecated=true":
+				p.Deprecated = true
 			}
 		}
 	}

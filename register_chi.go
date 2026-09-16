@@ -130,6 +130,8 @@ func recOf[Req, Res any](h Handler[Req, Res]) routeRecord {
 		req: reflect.TypeFor[Req](), res: reflect.TypeFor[Res](),
 		responses: h.Responses, tags: h.Tags, summary: h.Summary,
 		operationID: h.OperationID, description: h.Description,
+		externalDocs: h.ExternalDocs, reqContentTypes: h.RequestContentTypes,
+		raw:        h.Raw,
 		deprecated: h.Deprecated, public: h.Public, fn: h.HandlerFunc,
 	}
 }

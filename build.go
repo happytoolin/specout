@@ -30,6 +30,15 @@ func (d *Generator) build() (*obj, error) {
 	if d.cfg.Description != "" {
 		info.set("description", d.cfg.Description)
 	}
+	if d.cfg.TermsOfService != "" {
+		info.set("termsOfService", d.cfg.TermsOfService)
+	}
+	if c := d.cfg.Contact; c != nil {
+		info.set("contact", strObj("name", c.Name, "url", c.URL, "email", c.Email))
+	}
+	if l := d.cfg.License; l != nil {
+		info.set("license", strObj("name", l.Name, "url", l.URL))
+	}
 	spec.set("openapi", "3.1.0").set("info", info)
 	if len(d.cfg.Servers) > 0 {
 		servers := make([]any, 0, len(d.cfg.Servers))
@@ -72,6 +81,9 @@ func (d *Generator) build() (*obj, error) {
 		if rec.deprecated {
 			op.set("deprecated", true)
 		}
+		if rec.externalDocs != nil {
+			op.set("externalDocs", externalDocsObj(rec.externalDocs))
+		}
 		if rec.public && len(d.cfg.Auth) > 0 {
 			op.set("security", []any{})
 		}
@@ -91,11 +103,23 @@ func (d *Generator) build() (*obj, error) {
 				sr.overrideName(bt, name)
 			}
 			ct, media := requestBodyFor(bt, sr)
+			content := newObj()
+			if len(rec.reqContentTypes) > 0 {
+				// one body shape under several media types
+				for _, c := range rec.reqContentTypes {
+					content.set(c, media)
+				}
+			} else {
+				content.set(ct, media)
+			}
 			op.set("requestBody", newObj().
 				set("required", true).
-				set("content", newObj().set(ct, media)))
+				set("content", content))
 		}
 		op.set("responses", d.responsesFor(rec, sr))
+		if len(rec.raw) > 0 {
+			op = mergeRaw(op, rec.raw)
+		}
 		if rec.omit {
 			continue
 		}
@@ -115,6 +139,9 @@ func (d *Generator) build() (*obj, error) {
 			e := newObj().set("name", t.Name)
 			if t.Description != "" {
 				e.set("description", t.Description)
+			}
+			if t.ExternalDocs != nil {
+				e.set("externalDocs", externalDocsObj(t.ExternalDocs))
 			}
 			tags = append(tags, e)
 		}
@@ -152,13 +179,30 @@ func (d *Generator) build() (*obj, error) {
 		spec.set("components", components)
 	}
 	if d.cfg.ExternalDocs != nil {
-		ed := newObj().set("url", d.cfg.ExternalDocs.URL)
-		if d.cfg.ExternalDocs.Description != "" {
-			ed.set("description", d.cfg.ExternalDocs.Description)
-		}
-		spec.set("externalDocs", ed)
+		spec.set("externalDocs", externalDocsObj(d.cfg.ExternalDocs))
 	}
 	return spec, nil
+}
+
+// strObj builds an object from name/value pairs, skipping empty values.
+// Every one of these (contact, license, externalDocs) is optional per field.
+func strObj(pairs ...string) *obj {
+	o := newObj()
+	for i := 0; i+1 < len(pairs); i += 2 {
+		if pairs[i+1] != "" {
+			o.set(pairs[i], pairs[i+1])
+		}
+	}
+	return o
+}
+
+// externalDocsObj builds an externalDocs object. OpenAPI requires the url
+// field, so an empty one is a mistake rather than an omission.
+func externalDocsObj(ed *ExternalDocs) *obj {
+	if ed.URL == "" {
+		panic("specout: ExternalDocs needs a URL")
+	}
+	return strObj("url", ed.URL, "description", ed.Description)
 }
 
 // operationID derives a deterministic id from method+path:
@@ -226,15 +270,72 @@ func securitySchemeObj(a AuthScheme) *obj {
 			panic("specout: AuthScheme " + a.Name + " has in=" + a.In + ", must be header, query or cookie")
 		}
 		o.set("type", "apiKey").set("name", a.Key).set("in", a.In)
+	case "oauth2":
+		if len(a.Flows) == 0 {
+			panic("specout: AuthScheme " + a.Name + " is oauth2 but has no Flows")
+		}
+		o.set("type", "oauth2").set("flows", oauth2Flows(a))
 	case "openIdConnect":
 		if a.URL == "" {
 			panic("specout: AuthScheme " + a.Name + " is openIdConnect but has no URL")
 		}
 		o.set("type", "openIdConnect").set("openIdConnectUrl", a.URL)
 	default:
-		panic("specout: AuthScheme " + a.Name + " has type " + a.Type + ", must be httpBearer, apiKey or openIdConnect")
+		panic("specout: AuthScheme " + a.Name + " has type " + a.Type + ", must be httpBearer, apiKey, oauth2 or openIdConnect")
 	}
 	return o
+}
+
+// oauth2Flows emits an oauth2 scheme's flows object. Flow and scope names are
+// sorted: a Go map has no order and the document must stay byte-stable.
+func oauth2Flows(a AuthScheme) *obj {
+	flows := newObj()
+	for _, name := range sortedKeys(a.Flows) {
+		f := a.Flows[name]
+		fo := newObj()
+		// OpenAPI requires a URL per flow: implicit and authorizationCode
+		// authorize in the browser, the other two take credentials directly.
+		switch name {
+		case "implicit":
+			requireURL(a, name, "AuthorizationURL", f.AuthorizationURL)
+			fo.set("authorizationUrl", f.AuthorizationURL)
+		case "password", "clientCredentials":
+			requireURL(a, name, "TokenURL", f.TokenURL)
+			fo.set("tokenUrl", f.TokenURL)
+		case "authorizationCode":
+			requireURL(a, name, "AuthorizationURL", f.AuthorizationURL)
+			requireURL(a, name, "TokenURL", f.TokenURL)
+			fo.set("authorizationUrl", f.AuthorizationURL).set("tokenUrl", f.TokenURL)
+		default:
+			panic("specout: AuthScheme " + a.Name + " has flow " + name + ", must be implicit, password, clientCredentials or authorizationCode")
+		}
+		if f.RefreshURL != "" {
+			fo.set("refreshUrl", f.RefreshURL)
+		}
+		scopes := newObj()
+		for _, s := range sortedKeys(f.Scopes) {
+			scopes.set(s, f.Scopes[s])
+		}
+		flows.set(name, fo.set("scopes", scopes))
+	}
+	return flows
+}
+
+func requireURL(a AuthScheme, flow, field, url string) {
+	if url == "" {
+		panic("specout: AuthScheme " + a.Name + " flow " + flow + " has no " + field)
+	}
+}
+
+// sortedKeys returns a string-keyed map's keys in sorted order: anything
+// driven by a Go map would otherwise emit a different document per run.
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func (d *Generator) flatRecords() []*routeRecord {
@@ -327,18 +428,34 @@ func (d *Generator) statusMap(withDefaults bool) (map[RouteKey]map[int]bool, err
 		}
 		omitted := map[int]bool{}
 		for _, resp := range rec.responses {
-			if !resp.Omit {
-				// status 0 is the "default" response: it names no code, so it
-				// is a coverage expectation nothing can satisfy. SpecStatuses
-				// keeps it as the "any code allowed" marker instead.
-				if resp.Status == 0 && !withDefaults {
-					continue
-				}
-				codes[resp.Status] = true
-			} else {
+			if resp.Omit {
 				omitted[resp.Status] = true
 				delete(codes, resp.Status)
+				continue
 			}
+			// a range key (4XX) is 100 codes at once: the spec allows the
+			// whole range, and nothing per-code is declared for it, so the
+			// coverage check requires nothing from it. Status names one
+			// concrete code of the range when the caller sets it.
+			if lo, hi, ok := rangeOf(resp.Key); ok {
+				if resp.Status != 0 {
+					// the caller named one code of the range for coverage
+					codes[resp.Status] = true
+				}
+				if withDefaults {
+					for c := lo; c <= hi; c++ {
+						codes[c] = true
+					}
+				}
+				continue
+			}
+			// status 0 is the "default" response: it names no code, so it is
+			// a coverage expectation nothing can satisfy. SpecStatuses keeps
+			// it as the "any code allowed" marker instead.
+			if resp.Status == 0 && !withDefaults {
+				continue
+			}
+			codes[resp.Status] = true
 		}
 		// global defaults, exactly as responsesFor stamps them
 		if withDefaults && reflect.TypeOf(d.cfg.ErrorType) != nil {
@@ -358,15 +475,17 @@ func (d *Generator) statusMap(withDefaults bool) (map[RouteKey]map[int]bool, err
 // global DefaultErrors stamped with the ErrorType shape.
 func (d *Generator) responsesFor(rec *routeRecord, sr *schemaRegistry) *obj {
 	out := newObj()
-	ordered := []int{}
-	statuses := map[int]*obj{}
-	omitted := map[int]bool{}
+	// keyed by the emitted response key, not the status: {Status: 0, Key:
+	// "4XX"} and {Status: 0, Key: "5XX"} are two entries with one status.
+	ordered := []string{}
+	statuses := map[string]*obj{}
+	omitted := map[string]bool{}
 
-	add := func(code int, body *obj) {
-		if _, ok := statuses[code]; !ok {
-			ordered = append(ordered, code)
+	add := func(key string, body *obj) {
+		if _, ok := statuses[key]; !ok {
+			ordered = append(ordered, key)
 		}
-		statuses[code] = body
+		statuses[key] = body
 	}
 
 	// default from Res
@@ -380,20 +499,21 @@ func (d *Generator) responsesFor(rec *routeRecord, sr *schemaRegistry) *obj {
 			}
 		}
 		if !hasExplicit {
-			add(204, newObj().set("description", "No content"))
+			add(responseKey(204, ""), newObj().set("description", "No content"))
 		}
 	} else {
 		// schemaFor inlines a scalar or a map of scalars (real specs write the
 		// object body out) and $refs everything else; the description matches
 		// the old refResponse exactly, so no diff for named struct responses.
-		add(200, contentResponse(200, rec.res, sr))
+		add(responseKey(200, ""), contentResponse(200, rec.res, sr))
 	}
 	for _, resp := range rec.responses {
+		key := responseKey(resp.Status, resp.Key)
 		if resp.Omit {
-			omitted[resp.Status] = true
-			delete(statuses, resp.Status)
+			omitted[key] = true
+			delete(statuses, key)
 			for i, c := range ordered {
-				if c == resp.Status {
+				if c == key {
 					ordered = append(ordered[:i], ordered[i+1:]...)
 					break
 				}
@@ -405,6 +525,12 @@ func (d *Generator) responsesFor(rec *routeRecord, sr *schemaRegistry) *obj {
 			t = reflect.TypeOf(resp.Type)
 		}
 		body := contentResponse(resp.Status, t, sr)
+		if resp.Status == 0 && resp.Key != "" && resp.Key != "default" {
+			// a range has no status text of its own; published documents
+			// carry their own wording in Raw. OpenAPI requires the field,
+			// so a placeholder beats an empty string.
+			body.set("description", resp.Key+" response")
+		}
 		if resp.ContentType != "" {
 			ct := resp.ContentType
 			if ct == "binary" {
@@ -412,6 +538,19 @@ func (d *Generator) responsesFor(rec *routeRecord, sr *schemaRegistry) *obj {
 			}
 			body.set("content", newObj().set(ct,
 				newObj().set("schema", binarySchema())))
+		}
+		if len(resp.ContentTypes) > 0 {
+			// one body under several media types: published documents write
+			// the same shape as JSON and XML. The schema is the same one
+			// contentResponse would use.
+			if t == nil || isEmptyStruct(t) {
+				panic("specout: Response.ContentTypes needs a response type (the Res parameter or Response.Type)")
+			}
+			content := newObj()
+			for _, ct := range resp.ContentTypes {
+				content.set(ct, newObj().set("schema", schemaFor(t, sr)))
+			}
+			body.set("content", content)
 		}
 		if len(resp.Headers) > 0 {
 			hdrs := newObj()
@@ -423,42 +562,62 @@ func (d *Generator) responsesFor(rec *routeRecord, sr *schemaRegistry) *obj {
 		if len(resp.Raw) > 0 {
 			body = mergeRaw(body, resp.Raw)
 		}
-		add(resp.Status, body)
+		add(key, body)
 	}
 	// global defaults: only for codes not already declared per-route
 	errType := reflect.TypeOf(d.cfg.ErrorType)
 	for _, code := range d.cfg.DefaultErrors {
-		if _, ok := statuses[code]; ok {
+		key := responseKey(code, "")
+		if _, ok := statuses[key]; ok {
 			continue
 		}
-		if omitted[code] {
+		if omitted[key] {
 			continue
 		}
 		if errType != nil {
-			add(code, contentResponse(code, errType, sr))
+			add(key, contentResponse(code, errType, sr))
 		}
 	}
-	for _, code := range ordered {
-		if _, ok := statuses[code]; ok {
-			out.set(statusKey(code), statuses[code])
+	for _, key := range ordered {
+		if body, ok := statuses[key]; ok {
+			out.set(key, body)
 		}
 	}
 	return out
 }
 
-// statusKey names a response object key. Status 0 means the OpenAPI
-// "default" response: real published specs (petstore, MS Graph, GitHub)
-// carry one on most operations, and OpenAPI 3.1 requires a numeric code or
-// "default" — "0" is neither, so it validates against nothing. Any other
-// code outside 100-599 is a typo, not a status.
-func statusKey(code int) string {
-	switch {
-	case code == 0:
+// responseKey names a response object key: Key when the caller set one
+// (default or an NXX range), else the status number. Status 0 means the
+// OpenAPI "default" response: real published specs (petstore, MS Graph,
+// GitHub) carry one on most operations, and OpenAPI 3.1 requires a numeric
+// code or "default" — "0" is neither, so it validates against nothing. Any
+// other code outside 100-599 is a typo, not a status.
+func responseKey(code int, key string) string {
+	if key != "" {
+		if key == "default" {
+			return key
+		}
+		if _, _, ok := rangeOf(key); !ok {
+			panic("specout: Response.Key must be default or a range like 4XX, got " + key)
+		}
+		return key
+	}
+	if code == 0 {
 		return "default"
-	case code < 100 || code > 599:
+	}
+	if code < 100 || code > 599 {
 		panic("specout: response status must be 0 (default) or 100-599, got " + strconv.Itoa(code))
 	}
 	return strconv.Itoa(code)
+}
+
+// rangeOf parses a range response key ("4XX") into its bounds.
+func rangeOf(key string) (lo, hi int, ok bool) {
+	if len(key) != 3 || key[1] != 'X' || key[2] != 'X' || key[0] < '1' || key[0] > '5' {
+		return 0, 0, false
+	}
+	lo = int(key[0]-'0') * 100
+	return lo, lo + 99, true
 }
 
 // mergeRaw splices arbitrary OpenAPI fragments into a response object.

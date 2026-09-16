@@ -3,6 +3,7 @@ package specout
 import (
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/invopop/jsonschema"
@@ -66,6 +67,7 @@ func taggedParams(req reflect.Type, sr *schemaRegistry) []any {
 			set("in", loc).
 			set("required", !strings.Contains(qt, ",omitempty") && !strings.Contains(f.Tag.Get("json"), "omitempty") && tagValue(f.Tag.Get("jsonschema"), "default") == "").
 			set("schema", fs)
+		applyParamStyle(p, f)
 		if desc := tagValue(f.Tag.Get("jsonschema"), "description"); desc != "" {
 			fs.Description = ""
 			p.set("description", desc)
@@ -73,6 +75,29 @@ func taggedParams(req reflect.Type, sr *schemaRegistry) []any {
 		params = append(params, p)
 	}
 	return params
+}
+
+// applyParamStyle copies style= and explode= onto the parameter object. They
+// are parameter serialization keywords, not schema keywords, and the
+// jsonschema tag is the one tag specout already reads on a parameter field.
+// ponytail: query/header/cookie only; a path parameter's style is fixed by
+// the router pattern.
+func applyParamStyle(p *obj, f reflect.StructField) {
+	tag := f.Tag.Get("jsonschema")
+	switch st := tagValue(tag, "style"); st {
+	case "":
+	case "matrix", "label", "form", "simple", "spaceDelimited", "pipeDelimited", "deepObject":
+		p.set("style", st)
+	default:
+		panic("specout: field " + f.Name + " has style=" + st + ", must be matrix, label, form, simple, spaceDelimited, pipeDelimited or deepObject")
+	}
+	if ex := tagValue(tag, "explode"); ex != "" {
+		b, err := strconv.ParseBool(ex)
+		if err != nil {
+			panic("specout: field " + f.Name + " has explode=" + ex + ", must be true or false")
+		}
+		p.set("explode", b)
+	}
 }
 
 // paramTag returns the parameter location and tag value of a Req field:

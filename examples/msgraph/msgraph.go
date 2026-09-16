@@ -154,9 +154,29 @@ type (
 
 // ---- responses: the published descriptions ----
 
-// ok overrides the description of the Res-derived 200 response.
-func ok(description string) specout.Response {
-	return specout.Response{Status: 200, Raw: map[string]any{"description": description}}
+// ok is one operation's published responses: the document keys every success
+// 2XX, so the body the Res type derives is dropped from 200 and re-keyed, and
+// every failure carries the document's own 4XX and 5XX range keys.
+func ok(description string) []specout.Response {
+	return append([]specout.Response{
+		{Status: 200, Omit: true},
+		{Status: 200, Key: "2XX", Raw: map[string]any{"description": description}},
+	}, errs()...)
+}
+
+// noContent is the published 204: the concrete code Graph keeps for the
+// operations that return no body, plus the two failure ranges.
+func noContent() []specout.Response {
+	return append([]specout.Response{desc(204, "Success")}, errs()...)
+}
+
+// errs is the published failure pair: components.responses.error, described
+// "error", reached through the 4XX and 5XX range keys the document uses.
+func errs() []specout.Response {
+	return []specout.Response{
+		{Key: "4XX", Type: ODataError{}, Raw: map[string]any{"description": "error"}},
+		{Key: "5XX", Type: ODataError{}, Raw: map[string]any{"description": "error"}},
+	}
 }
 
 // desc is a description-only response.
@@ -215,7 +235,11 @@ func getMe(s *store) specout.Handler[getMeReq, User] {
 		Description: "Retrieve the properties and relationships of user object.",
 		OperationID: "me.user.GetUser",
 		Tags:        []string{"me.user"},
-		Responses:   []specout.Response{ok("Retrieved entity")},
+		ExternalDocs: &specout.ExternalDocs{
+			Description: "Find more info here",
+			URL:         "https://learn.microsoft.com/graph/api/user-get?view=graph-rest-1.0",
+		},
+		Responses: ok("Retrieved entity"),
 	}
 }
 
@@ -242,7 +266,11 @@ func listUsers(s *store) specout.Handler[listUsersReq, UserCollectionResponse] {
 		Description: "Retrieve a list of user objects.",
 		OperationID: "users.user.ListUser",
 		Tags:        []string{"users.user"},
-		Responses:   []specout.Response{ok("Retrieved collection")},
+		ExternalDocs: &specout.ExternalDocs{
+			Description: "Find more info here",
+			URL:         "https://learn.microsoft.com/graph/api/user-list?view=graph-rest-1.0",
+		},
+		Responses: ok("Retrieved collection"),
 	}
 }
 
@@ -269,7 +297,11 @@ func createUser(s *store) specout.Handler[User, User] {
 		Description: "Create a new user.",
 		OperationID: "users.user.CreateUser",
 		Tags:        []string{"users.user"},
-		Responses:   []specout.Response{ok("Created entity")},
+		ExternalDocs: &specout.ExternalDocs{
+			Description: "Find more info here",
+			URL:         "https://learn.microsoft.com/graph/api/user-post-users?view=graph-rest-1.0",
+		},
+		Responses: ok("Created entity"),
 	}
 }
 
@@ -289,7 +321,11 @@ func getUser(s *store) specout.Handler[getUserReq, User] {
 		Description: "Retrieve the properties and relationships of user object.",
 		OperationID: "users.user.GetUser",
 		Tags:        []string{"users.user"},
-		Responses:   []specout.Response{ok("Retrieved entity")},
+		ExternalDocs: &specout.ExternalDocs{
+			Description: "Find more info here",
+			URL:         "https://learn.microsoft.com/graph/api/user-get?view=graph-rest-1.0",
+		},
+		Responses: ok("Retrieved entity"),
 	}
 }
 
@@ -329,7 +365,11 @@ func patchUser(s *store) specout.Handler[User, User] {
 		Description: "Update the properties of a user object.",
 		OperationID: "users.user.UpdateUser",
 		Tags:        []string{"users.user"},
-		Responses:   []specout.Response{ok("Success")},
+		ExternalDocs: &specout.ExternalDocs{
+			Description: "Find more info here",
+			URL:         "https://learn.microsoft.com/graph/api/user-update?view=graph-rest-1.0",
+		},
+		Responses: ok("Success"),
 	}
 }
 
@@ -352,7 +392,11 @@ func deleteUser(s *store) specout.Handler[deleteUserReq, specout.NoContent] {
 		Description: "Delete a user object.",
 		OperationID: "users.user.DeleteUser",
 		Tags:        []string{"users.user"},
-		Responses:   []specout.Response{desc(204, "Success")},
+		ExternalDocs: &specout.ExternalDocs{
+			Description: "Find more info here",
+			URL:         "https://learn.microsoft.com/graph/api/user-delete?view=graph-rest-1.0",
+		},
+		Responses: noContent(),
 	}
 }
 
@@ -376,11 +420,14 @@ func getPhoto(s *store) specout.Handler[mediaReq, struct{}] {
 		Description: "The user's profile photo. Read-only.",
 		OperationID: "users.GetPhotoContent",
 		Tags:        []string{"users.profilePhoto"},
-		Responses: []specout.Response{{
+		// struct{} Res declares no default of its own, so the 2XX binary body
+		// is the whole success; the failure ranges follow it.
+		Responses: append([]specout.Response{{
 			Status:      200,
+			Key:         "2XX",
 			ContentType: "application/octet-stream",
 			Raw:         map[string]any{"description": "Retrieved media content"},
-		}},
+		}}, errs()...),
 	}
 }
 
@@ -408,7 +455,11 @@ func sendMail(s *store) specout.Handler[sendMailReq, specout.NoContent] {
 		Description: "Send the message specified in the request body using either JSON or MIME format.",
 		OperationID: "users.user.sendMail",
 		Tags:        []string{"users.user.Actions"},
-		Responses:   []specout.Response{desc(204, "Success")},
+		ExternalDocs: &specout.ExternalDocs{
+			Description: "Find more info here",
+			URL:         "https://learn.microsoft.com/graph/api/user-sendmail?view=graph-rest-1.0",
+		},
+		Responses: noContent(),
 	}
 }
 
@@ -424,10 +475,6 @@ func New() (*specout.Generator, *mux.Router) {
 		Version:     "v1.0",
 		Description: graphDescription,
 		Servers:     []specout.Server{{URL: "https://graph.microsoft.com/v1.0"}},
-		ErrorType:   ODataError{},
-		// the published document keys its failures by range (4XX, 5XX);
-		// specout names the codes those ranges cover.
-		DefaultErrors: []int{400, 401, 403, 404, 429, 500},
 		Tags: []specout.Tag{
 			{Name: "me.user"},
 			{Name: "users.user"},

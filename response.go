@@ -13,6 +13,15 @@ type Response struct {
 	Headers     []Header
 	Raw         map[string]any
 	Omit        bool
+	// ContentTypes emits this response body under more than one media type
+	// with the one schema (["application/json", "application/xml"]). Use
+	// ContentType for a single binary body instead.
+	ContentTypes []string
+	// Key names the response entry instead of the status number: "default"
+	// (same as Status 0) or a range, "4XX". Published documents key one
+	// response for a whole range (MS Graph does it 17870 times); Status then
+	// stays 0 or names one concrete code for coverage.
+	Key string
 }
 
 // Header declares one response header. Type carries the header's schema:

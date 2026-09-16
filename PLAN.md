@@ -188,3 +188,33 @@ The minimal path from factory to served spec:
   served.
 - recorder.New takes skip rules (specout.Skip). A spec endpoint or /healthz on
   the app router used to read as an undocumented operation and fail Verify.
+
+## Ledger: published-document gaps
+
+The shapes the four scanned documents use most, added until only the
+deliberate omissions are left (examples/README.md holds the table).
+
+- Response.Key carries "default" or an NXX range, and is separate from
+  Status. A range is one emitted entry, never a fan-out into 100 codes;
+  Status beside a Key names the one code inside the range that tests must
+  produce (Graph keeps a literal 204 on its deletes). DeclaredStatuses
+  requires nothing from a bare range; SpecStatuses expands the whole range,
+  so any 4xx a handler writes stays inside the document.
+- A range entry does not replace the global envelope: DefaultErrors codes
+  are still stamped beside it. A document that ranges its failures declares
+  no DefaultErrors, which is what the msgraph example now does.
+- Handler.RequestContentTypes and Response.ContentTypes put one shape under
+  several media types, which is how published documents write JSON + XML
+  and form bodies. The XML form used to be dropped.
+- specout.OAuth2(name, flows) emits an oauth2 scheme. The flow name picks
+  the URLs OpenAPI requires, and a missing one panics rather than emitting
+  a document the validator rejects. Flows and scopes are sorted on emit: a
+  Go map has no order and the golden bytes must not move.
+- info.contact, info.license, info.termsOfService, operation and tag
+  externalDocs, operation-level x- extensions (Handler.Raw), property
+  deprecated, and parameter style/explode. All doc fields, no runtime
+  behavior. ExternalDocs needs a URL, so its absence panics.
+- Inline examples on a property already worked: repeated example= tags
+  emit an examples list. Undocumented, and now tested.
+- Skipped on purpose: xml on a schema, $ref reuse of shared components
+  (inlining is the design), anyOf/allOf, webhooks, content on a parameter.

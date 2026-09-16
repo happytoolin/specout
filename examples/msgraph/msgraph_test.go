@@ -136,15 +136,19 @@ func TestSpecKeepsPublishedShapes(t *testing.T) {
 		t.Error("the published document has no securitySchemes")
 	}
 
-	// every operation carries the ODataError envelope, keyed by code
+	// every operation carries the ODataError envelope under the document's own
+	// range keys: 4XX and 5XX, described "error", not a fan-out per code
 	for path, methods := range publishedGraph {
 		for _, m := range methods {
 			responses := graphOp(t, doc, path, m)["responses"].(map[string]any)
-			for _, code := range []string{"400", "401", "403", "404", "429", "500"} {
-				resp, ok := responses[code].(map[string]any)
-				if !ok {
+			for _, code := range []string{"4XX", "5XX"} {
+				resp, found := responses[code].(map[string]any)
+				if !found {
 					t.Errorf("%s %s: missing %s", m, path, code)
 					continue
+				}
+				if resp["description"] != "error" {
+					t.Errorf("%s %s %s description = %v", m, path, code, resp["description"])
 				}
 				media := resp["content"].(map[string]any)["application/json"].(map[string]any)
 				schema := media["schema"].(map[string]any)
@@ -152,7 +156,23 @@ func TestSpecKeepsPublishedShapes(t *testing.T) {
 					t.Errorf("%s %s %s schema = %v", m, path, code, schema)
 				}
 			}
+			// the successes the document ranges are keyed 2XX; the operations
+			// that answer 204 keep the concrete code
+			if _, ok := responses["2XX"]; !ok {
+				if _, is204 := responses["204"]; !is204 {
+					t.Errorf("%s %s: neither a 2XX nor a 204 response", m, path)
+				}
+			}
+			if _, fanned := responses["404"]; fanned {
+				t.Errorf("%s %s: a range must not fan out into per-code entries", m, path)
+			}
 		}
+	}
+
+	// operation externalDocs: the published learn.microsoft.com link
+	me := graphOp(t, doc, "/me", "get")
+	if url := me["externalDocs"].(map[string]any)["url"]; url != "https://learn.microsoft.com/graph/api/user-get?view=graph-rest-1.0" {
+		t.Errorf("me externalDocs = %v", url)
 	}
 
 	// the envelope, including the hyphenated innerError property names
@@ -206,8 +226,8 @@ func TestSpecKeepsPublishedShapes(t *testing.T) {
 
 	// media response: application/octet-stream, binary
 	photo := graphOp(t, doc, "/users/{user-id}/photo/$value", "get")
-	photo200 := photo["responses"].(map[string]any)["200"].(map[string]any)
-	content := photo200["content"].(map[string]any)
+	photoOK := photo["responses"].(map[string]any)["2XX"].(map[string]any)
+	content := photoOK["content"].(map[string]any)
 	if _, ok := content["application/octet-stream"]; !ok {
 		t.Fatalf("photo content = %v", content)
 	}

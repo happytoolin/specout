@@ -77,8 +77,16 @@ Everything the spec needs is visible in the source you already write:
 | enums, bounds, patterns, formats | `jsonschema:` tag |
 | oneOf unions with discriminator | `d.Register[T]("name")` + `oneof_type` tag |
 | readOnly / writeOnly | `jsonschema:` tag |
-| auth schemes | `Config.Auth` (Bearer, API key header/cookie); `Public: true` opts out |
+| auth schemes | `Config.Auth` (Bearer, API key, `OAuth2`, openIdConnect); `Public: true` opts out |
 | operationId | derived from method+path, or set `OperationID` |
+| status ranges | `{Key: "4XX"}` — one entry for a whole range; a concrete `Status` beside it is the code tests must produce |
+| several content types | `RequestContentTypes` on the handler, `ContentTypes` on a response |
+| parameter serialization | `jsonschema:"style=deepObject,explode=true"` |
+| deprecated property | `jsonschema:"deprecated"` |
+| `x-` extensions | `jsonschema_extras` on a field, `Raw` on a handler |
+| `examples` (plural) | repeat `example=` in the tag |
+| contact, license, terms | `Config.Contact` / `License` / `TermsOfService` |
+| externalDocs | `ExternalDocs` on `Config`, a handler, or a tag |
 
 Two types with the same name panic at build time, with the fix in the message:
 
@@ -91,9 +99,11 @@ panic: specout: duplicate component name Widget (pa.Widget vs pb.Widget), call S
 ```go
 Responses: []specout.Response{
 	{Status: 200, ContentType: "application/pdf"}, // binary download
+	{Status: 200, ContentTypes: []string{"application/json", "application/xml"}},
 	{Status: 201, Headers: []specout.Header{{Name: "Location"}}},
 	{Status: 409, Type: SyncConflict{}},       // per-route error shape
 	{Status: 401, Omit: true},                 // drop one default error code
+	{Key: "4XX", Type: Problem{}},              // one entry for a whole range
 }
 ```
 

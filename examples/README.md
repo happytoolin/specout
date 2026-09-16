@@ -34,19 +34,11 @@ GitHub `api.github.com.json`, Microsoft Graph v1.0.
 
 | Published shape | In the real documents | In specout |
 |---|---|---|
-| `4XX` / `5XX` / `2XX` range response keys | Graph 17870 / 17870 / 14456 | Status keys are integers. `Config.DefaultErrors []int` names the codes a range covers instead - 400, 401, 403, 404, 429, 500 in the msgraph example. |
-| Two content types on one response | petstore 11, GitHub 5, Graph 14 | One `Response` is one content type. The JSON form is carried, the XML form is dropped. |
-| `application/x-www-form-urlencoded` and XML bodies | petstore 5 and 5, Stripe 593 | `application/json`, `multipart/form-data` (a `File` field) and `application/octet-stream` (a bare `File`) only. |
-| `xml` on a schema | petstore 9 | No. |
-| `oauth2` schemes, flows and scopes | petstore `petstore_auth`, implicit | `specout.Bearer`, `specout.APIKey` and `openIdConnect` only. An `oauth2` AuthScheme panics. The petstore example declares the published `api_key` scheme and notes the one it cannot. |
+| `xml` on a schema | petstore 9 | No. A body can still be XML - that is a media type, `RequestContentTypes`, not a schema keyword. |
 | `$ref` to `components.parameters` / `responses` / `requestBodies` / `examples` / `headers` | GitHub 3175 + 2058, Graph 17219 + 40179 | Every parameter, response and body is inlined at its operation. The document is longer, and self-contained. |
-| `style` and `explode` on a parameter | Stripe 354 `deepObject`, 608 `form`, 440 `simple`; Graph 14788 `form` | Not emitted. An object-valued query parameter renders as a JSON object, with no way to ask for `deepObject`. |
 | `content` on a parameter | Graph and GitHub use it | No. Query parameters are tags on the Req type. |
-| `externalDocs` on an operation or a tag | GitHub 1239, Graph 3633, petstore 2 tags | `Config.ExternalDocs` only, so document level. |
-| `info.contact`, `info.license`, `info.termsOfService` | all four | No. `Config` has title, version, description, servers, auth, tags and externalDocs. |
-| `components.examples`, and `examples` on a schema | GitHub 535, Graph 3034 | The `example=` tag gives one example on a property or a parameter. |
-| `deprecated` on a schema property | GitHub 32, Stripe 2 | `Handler.Deprecated` is operation level only. |
-| `x-` vendor extensions on schemas and path items | Graph 3486, Stripe 2669, GitHub 53 | `Response.Raw` splices arbitrary keys into a response object. Nothing reaches a schema or a path item. |
+| named examples in `components.examples` | GitHub 535, Graph 3034 | Inline `examples` on a property come from repeated `example=` tags - one shared, `$ref`'d example has no form. |
+| `x-` vendor extensions on a path item | Graph 3486, Stripe 2669, GitHub 53 | Those counts are schema- and operation-level, and both now work. A path item itself has no hook. |
 | `anyOf`, and `allOf` inheritance | Stripe 2051, Graph 3976 and 3742, GitHub 35 and 78 | `Register[T]` plus a `oneof_type` field gives `oneOf` with a discriminator - the shape Graph (277) and GitHub (5) use. `anyOf` and `allOf` have no form: inheritance is flattened into one Go struct, as `User` in the msgraph example shows. |
 | `webhooks`, `components.pathItems` | 3.1 features, absent from these four | No. |
 
@@ -72,11 +64,21 @@ Checked by the tests, not by eye:
 - query, header and cookie parameters; array query parameters; an object query
   parameter as `additionalProperties`;
 - parameter metadata: `format`, `enum`, `default`,
-  `minimum`, `example`;
+  `minimum`, `example`, and the serialization pair `style` / `explode`;
 - response headers, binary responses, body-less 204s, `default`
   responses;
+- range response keys - `2XX`, `4XX`, `5XX` as one entry each, with a concrete
+  code named beside a range when the document keeps one (the Graph `204`);
+- one body shape under several media types: two content types on a response,
+  JSON + XML + form-urlencoded on a request;
 - one global error envelope (`ErrorType`) declared per operation by code,
   and the per-operation `security: []` opt-out;
+- an `oauth2` scheme with its flows and scopes next to an API key;
+  `info.contact`, `info.license` and `info.termsOfService`; `externalDocs`
+  on an operation and on a tag;
+- a deprecated property (`jsonschema:"deprecated"`), a property `x-` extension
+  (`jsonschema_extras`), an operation `x-` extension (`Handler.Raw`), and
+  repeated `example=` tags emitting an `examples` list;
 - multipart file upload, and a `Req` that mixes path parameters with a
   body that is split into its own component (Graph `sendMail`);
 - hyphenated and `@`-prefixed JSON property names, inlined maps, enums,
@@ -84,10 +86,11 @@ Checked by the tests, not by eye:
 
 ## Deliberate deviations
 
-- Descriptions are the published first sentences. `specout.Raw` carries
+- Descriptions are the published first sentences. `Response.Raw` carries
   the ones the generator's own wording would overwrite.
-- Microsoft Graph keys its failures by range; the example lists the codes.
-  Graph also declares no `securitySchemes`, so the example declares none.
+- Microsoft Graph keys its failures by range, so the example publishes the
+  `4XX` and `5XX` entries the document has. Graph declares no
+  `securitySchemes`, so the example declares none.
 - Stripe, GitHub and Microsoft Graph use `$ref` for parameters,
   responses and examples; these examples inline, which is what specout emits.
 - `allOf` inheritance (Graph `user` extends `directoryObject`)

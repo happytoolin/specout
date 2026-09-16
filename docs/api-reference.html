@@ -494,10 +494,15 @@ specout.Gorilla(d, api).Get("/items", handlers.HandleListItems(deps))</code></pr
   <span class="sig"><b>type</b> Handler[Req, Res <b>any</b>] <b>struct</b> {
     http.HandlerFunc        <span style="color:var(--text-dim)">// embedded — still a plain http.Handler</span>
     Responses  []Response   <span style="color:var(--text-dim)">// any code beyond the Res default: 2xx adds success variants, 4xx/5xx override the global error shape (§05)</span>
+    RequestContentTypes []string <span style="color:var(--text-dim)">// request body media types: one shape, several types (JSON + XML + form)</span>
     Tags       []string     <span style="color:var(--text-dim)">// operation tags, for grouping in the spec</span>
     Summary    string
+    Description string
+    ExternalDocs *ExternalDocs <span style="color:var(--text-dim)">// operation-level link</span>
     OperationID string      <span style="color:var(--text-dim)">// optional; derived from method+path when empty</span>
+    Raw        map[string]any <span style="color:var(--text-dim)">// arbitrary OpenAPI merged into this operation (§14)</span>
     Deprecated <b>bool</b>
+    Public     <b>bool</b>    <span style="color:var(--text-dim)">// opt this operation out of the global auth requirement</span>
 }</span>
   <span class="sig"><b>func</b> (h Handler[Req, Res]) Types() (req, res reflect.Type)</span>
   <span class="sig"><b>type</b> Documented <b>interface</b> { Types() (req, res reflect.Type) }</span>
@@ -520,6 +525,8 @@ specout.Gorilla(d, api).Get("/items", handlers.HandleListItems(deps))</code></pr
       <tr><td>Validation body</td><td><code>{Status: 422, Type: ValidationError{}}</code></td><td><code>422 → $ref ValidationError</code></td></tr>
       <tr><td>Error, different shape</td><td><code>{Status: 409, Type: SyncConflict{}}</code></td><td><code>409 → $ref SyncConflict</code> — replaces the global <code>Problem</code> for this route</td></tr>
       <tr><td>Standard errors</td><td>nothing — global</td><td>400/401/403/404/409/500 <code>→ $ref Problem</code></td></tr>
+      <tr><td>Any code in a range</td><td><code>{Key: "4XX", Type: Problem{}}</code></td><td><code>4XX → $ref Problem</code> — one entry for all 100 codes, exactly as published documents write it</td></tr>
+      <tr><td>One body, two media types</td><td><code>{Status: 200, ContentTypes: []string{"application/json", "application/xml"}}</code></td><td>200 content under both, one schema</td></tr>
       <tr><td>Response header</td><td><code>{Status: 201, Raw: map[string]any{"headers": …}}</code></td><td>header declared on that response</td></tr>
     </tbody>
   </table>
@@ -659,6 +666,8 @@ func HandleSyncOnboarding(deps *dependencies.Dependencies) specout.Handler[SyncR
     <span class="label">Merge rules</span>
     <p>A code not mentioned in <code>Responses</code> keeps the global envelope. An entry with status ≥ 400 replaces the global shape for that code on <em>this route only</em> — nothing global changes. <code>Omit: true</code> removes a global code from this route entirely, and the recorder test (§13) fails if that code ever fires anyway. Distinct types still dedupe into <code>components</code>: <code>SyncConflict</code> is emitted once and <code>$ref</code>'d wherever it appears.</p>
   </div>
+
+  <p>A range entry (<code>{Key: "4XX"}</code>) is one entry under that key, and it does not replace the global codes: if <code>DefaultErrors</code> lists 400 and 404, those two keys are stamped beside the <code>4XX</code>. A document that ranges its failures declares no <code>DefaultErrors</code>, as the msgraph example shows. When the published document keeps one concrete code inside a range — Graph keeps a literal <code>204</code> — set <code>Status</code> beside the <code>Key</code>: the range stays one entry, and that code becomes the one your tests must produce.</p>
 
   <h3>Typed errors — custom shapes through the one error exit</h3>
   <p>You shouldn't have to special-case <code>api.JSON</code> at every call site just to get a custom shape. Let the domain error carry its own wire format — errors implementing this interface bypass the generic mapper entirely:</p>
@@ -861,6 +870,7 @@ type UpsertOnboardingRequest struct {
       <tr><td><code>readOnly</code> / <code>writeOnly</code></td><td>tag</td><td>see shared types, §08</td></tr>
       <tr><td><code>additionalProperties: false</code></td><td>config <code>ClosedSchemas: true</code></td><td>clients love closed schemas</td></tr>
       <tr><td>query vs body location</td><td><code>query</code> tag</td><td>fields become operation parameters</td></tr>
+      <tr><td>parameter <code>style</code>, <code>explode</code></td><td><code>jsonschema:"style=deepObject,explode=true"</code></td><td>query, header and cookie parameters; a path parameter's style is fixed by the pattern</td></tr>
       <tr><td>path parameter type</td><td><code>path</code> tag</td><td><code>path:"petId"</code> types the <code>{petId}</code> placeholder (int64, not string); the tag name must match the pattern or the build fails. <code>path:"-"</code> opts a field out</td></tr>
       <tr><td>cookie parameter</td><td><code>cookie</code> tag</td><td><code>in: cookie</code> operation parameter</td></tr>
       <tr><td>header parameter</td><td><code>header</code> tag</td><td><code>in: header</code> operation parameter (e.g. X-Trace-Id)</td></tr>
@@ -966,14 +976,27 @@ type WebhookConfig struct {
 	Title:       "Onboarding API",
 	Version:     "1.0.0",
 	Description: "Internal onboarding service.",
+	TermsOfService: "https://api.internal/terms",
+	Contact:     &specout.Contact{Name: "API team", Email: "api@internal"},
+	License:     &specout.License{Name: "Apache 2.0", URL: "https://www.apache.org/licenses/LICENSE-2.0.html"},
 	Servers: []specout.Server{
 		{URL: "https://api.internal", Description: "production"},
 		{URL: "http://localhost:8080", Description: "development"},
 	},
-	Auth: []specout.AuthScheme{specout.Bearer}, // wired next to your auth middleware
+	Auth: []specout.AuthScheme{
+		specout.Bearer, // wired next to your auth middleware
+		// oauth2: the flows the publisher uses, each with its own scopes
+		specout.OAuth2("petstore_auth", map[string]specout.OAuth2Flow{
+			"implicit": {
+				AuthorizationURL: "https://auth.internal/authorize",
+				Scopes:           map[string]string{"read:pets": "read your pets"},
+			},
+		}),
+	},
 	Tags: []specout.Tag{
 		{Name: "onboarding", Description: "Onboarding lifecycle"},
-		{Name: "webhooks", Description: "Outbound notifications"},
+		{Name: "webhooks", Description: "Outbound notifications",
+			ExternalDocs: &specout.ExternalDocs{URL: "https://internal/webhooks"}},
 	},
 	ErrorType:     api.Problem{},
 	DefaultErrors: []int{400, 401, 403, 404, 409, 500},
@@ -1029,6 +1052,7 @@ $ git diff --exit-code openapi.json   # spec changes must be reviewed, like code
   <div class="callout note">
     <span class="label">Two declaration views</span>
     <p><code>d.DeclaredStatuses()</code> is what each route declares for itself — the codes your tests must produce. <code>d.SpecStatuses()</code> adds the global <code>DefaultErrors</code> envelope, so it is exactly what the emitted spec lists per route. <code>Verify</code> uses both: a route's own codes must each be exercised, while a handler returning a declared default (say a 404) is not drift. A code removed with <code>Omit: true</code> is in neither view, so it fires as drift if it appears.</p>
+    <p>A range key declares nothing per code — the spec allows the whole <code>4XX</code>, and no test can be expected to produce all 100 — so <code>Verify</code> requires no code from it. Name a <code>Status</code> beside the <code>Key</code> (<code>{Status: 404, Key: "4XX"}</code>) when one code inside the range must be produced, and <code>SpecStatuses</code> carries the whole range, so any 4xx a handler writes is inside the document.</p>
   </div>
 
   <h3>Completeness — every route is documented</h3>
@@ -1096,6 +1120,19 @@ func (Money) JSONSchema() *jsonschema.Schema {
 	},
 }</code></pre>
   </figure>
+
+  <p><code>Handler.Raw</code> does the same one level up: any key merged into the operation object, which is where <code>x-</code> vendor extensions live. On a struct field the same idea is <code>jsonschema_extras</code>, for <code>x-</code> keys inside a schema.</p>
+
+  <figure class="code" data-lang="go">
+    <figcaption><span>operation-level extensions</span><button class="copy">copy</button></figcaption>
+    <pre><code>specout.Handler[ListRequest, Page]{
+	Summary: "List onboarding records",
+	Raw: map[string]any{
+		"x-rate-limit":  100,
+		"x-ms-pageable": map[string]any{"nextLinkName": "@odata.nextLink"},
+	},
+}</code></pre>
+  </figure>
 </section>
 
 <!-- ============================================================ -->
@@ -1106,7 +1143,7 @@ func (Money) JSONSchema() *jsonschema.Schema {
   <div class="recipes">
     <div class="recipe">
       <h4>Add an endpoint in 60 seconds</h4>
-      <p>1. Define <code>Req</code>/<code>Res</code> structs with tags. 2. Factory returns <code>specout.Handler[Req, Res]</code>. 3. Register with <code>d.Method</code>. 4. Let the recorder test complain about unexercised branches.</p>
+      <p>1. Define <code>Req</code>/<code>Res</code> structs with tags. 2. Factory returns <code>specout.Handler[Req, Res]</code>. 3. Register with the binder (<code>specout.Chi(d, r).Get(&hellip;)</code>). 4. Let the recorder test complain about unexercised branches.</p>
       <p>No comments, no separate spec file, no client regen step you forget to run.</p>
     </div>
 
@@ -1223,7 +1260,7 @@ api.JSON(w, http.StatusUnprocessableEntity, ValidationError{Problems: problems})
         <figcaption><span>per handler, or once per factory file</span><button class="copy">copy</button></figcaption>
         <pre><code>Tags: []string{"onboarding"}</code></pre>
       </figure>
-      <p>Swagger UI groups by tag; declare descriptions once with <code>specout.Tag(name, desc)</code>.</p>
+      <p>Swagger UI groups by tag; declare descriptions once in <code>Config.Tags</code>.</p>
     </div>
 
     <div class="recipe">
@@ -1256,7 +1293,7 @@ api.JSON(w, http.StatusUnprocessableEntity, ValidationError{Problems: problems})
       <h4>Keep a route out of the spec</h4>
       <figure class="code" data-lang="go">
         <figcaption><span>register plain, allowlist the skip</span><button class="copy">copy</button></figcaption>
-        <pre><code>r.Get("/debug/vars", expvar.Handler()) // plain chi, no d.Method
+        <pre><code>r.Get("/debug/vars", expvar.Handler()) // plain chi, no specout registration
 
 // completeness test allows it explicitly:
 specout.Chi(d, r).RequireDocumented(t, specout.Skip("/debug/*"))</code></pre>
@@ -1326,7 +1363,7 @@ specout.Chi(d, r).RequireDocumented(t, specout.Skip("/debug/*"))</code></pre>
 
   <details>
     <summary>What if I need something the tags can't express?</summary>
-    <p><code>JSONSchema()</code> on the type for full schema control, <code>specout.Raw</code> for arbitrary OpenAPI fragments anywhere in the tree. The answer is never "sorry".</p>
+    <p><code>JSONSchema()</code> on the type for full schema control, <code>Response.Raw</code> and <code>Handler.Raw</code> for arbitrary OpenAPI fragments at those two levels, <code>jsonschema_extras</code> for one inside a schema. The answer is never "sorry".</p>
   </details>
 </section>
 
@@ -1335,22 +1372,25 @@ specout.Chi(d, r).RequireDocumented(t, specout.Skip("/debug/*"))</code></pre>
   <h2><span class="num">17</span>API index</h2>
   <h3>doc</h3>
   <span class="sig"><b>func</b> New(cfg Config) *Generator
-<b>type</b> Config <b>struct</b> { Title, Version, Description <b>string</b>; Servers []Server; Auth []AuthScheme; Tags []Tag; ErrorType <b>any</b>; DefaultErrors []<b>int</b>; ClosedSchemas <b>bool</b>; ExternalDocs *ExternalDocs; JSONDialect Dialect }
+
+<b>type</b> Config <b>struct</b> { Title, Version, Description, TermsOfService <b>string</b>; Contact *Contact; License *License; Servers []Server; Auth []AuthScheme; Tags []Tag; ExternalDocs *ExternalDocs; ErrorType <b>any</b>; DefaultErrors []<b>int</b>; ClosedSchemas <b>bool</b>; JSONDialect Dialect }
+<b>type</b> Contact <b>struct</b> { Name, URL, Email <b>string</b> }
+<b>type</b> License <b>struct</b> { Name, URL <b>string</b> }
 <b>type</b> ExternalDocs <b>struct</b> { URL, Description <b>string</b> }
-<b>type</b> AuthScheme <b>struct</b> { Name, Type, Key, In, URL <b>string</b> }
+<b>type</b> Tag <b>struct</b> { Name, Description <b>string</b>; ExternalDocs *ExternalDocs }
+<b>type</b> AuthScheme <b>struct</b> { Name, Type, Key, In, URL <b>string</b>; Flows map[<b>string</b>]OAuth2Flow }
+<b>type</b> OAuth2Flow <b>struct</b> { AuthorizationURL, TokenURL, RefreshURL <b>string</b>; Scopes map[<b>string</b>]<b>string</b> }
 <b>var</b> Bearer = AuthScheme{Type: "httpBearer"}
 <b>func</b> APIKey(scheme, key, in <b>string</b>) AuthScheme
+<b>func</b> OAuth2(scheme <b>string</b>, flows map[<b>string</b>]OAuth2Flow) AuthScheme
 <b>const</b> InHeader, InQuery, InCookie = "header", "query", "cookie"
 
-<b>func</b> (d *Generator) Get[Req, Res <b>any</b>](r chi.Router, pattern <b>string</b>, h Handler[Req, Res])
-<span style="color:var(--text-dim)">// Head/Post/Put/Patch/Delete/Options/Trace identical — the chi verb set</span>
-<b>func</b> (d *Generator) Handle[Req, Res <b>any</b>](mux *http.ServeMux, pattern <b>string</b>, h Handler[Req, Res])
-<b>func</b> (d *Generator) Adopt(r chi.Router) error
 <b>func</b> (d *Generator) ServeHTTP(w http.ResponseWriter, r *http.Request) <span style="color:var(--text-dim)">// http.Handler — serves the spec</span>
-<b>func</b> (d *Generator) WriteJSON(w io.Writer) error</span>
-
+<b>func</b> (d *Generator) WriteJSON(w io.Writer) error
+<b>func</b> (d *Generator) DeclaredStatuses() (map[RouteKey]map[<b>int</b>]<b>bool</b>, <b>error</b>)
+<b>func</b> (d *Generator) SpecStatuses() (map[RouteKey]map[<b>int</b>]<b>bool</b>, <b>error</b>)</span>
   <h3>specout — handlers &amp; responses</h3>
-  <span class="sig"><b>type</b> Handler[Req, Res <b>any</b>] <b>struct</b> { http.HandlerFunc; Responses []Response; Tags []string; Summary string; Description string; Deprecated <b>bool</b>; Public <b>bool</b> }
+  <span class="sig"><b>type</b> Handler[Req, Res <b>any</b>] <b>struct</b> { http.HandlerFunc; Responses []Response; RequestContentTypes []<b>string</b>; Tags []string; Summary string; Description string; ExternalDocs *ExternalDocs; Raw map[<b>string</b>]<b>any</b>; Deprecated <b>bool</b>; Public <b>bool</b> }
 <b>func</b> (h Handler[Req, Res]) Types() (req, res reflect.Type)
 
 <b>type</b> Documented <b>interface</b> { Types() (req, res reflect.Type) }
@@ -1359,6 +1399,8 @@ specout.Chi(d, r).RequireDocumented(t, specout.Skip("/debug/*"))</code></pre>
 	Status      <b>int</b>          <span style="color:var(--text-dim)">// required</span>
 	Type        <b>any</b>          <span style="color:var(--text-dim)">// omitted = reuse Res's type at this code</span>
 	ContentType <b>string</b>       <span style="color:var(--text-dim)">// binary body: "application/pdf" etc. — content entry with format: binary</span>
+	ContentTypes []<b>string</b>    <span style="color:var(--text-dim)">// one schema, several media types: ["application/json", "application/xml"]</span>
+	Key         <b>string</b>       <span style="color:var(--text-dim)">// response entry name instead of the number: "default", or a range "4XX" — Status beside it names the code tests must produce</span>
 	Headers     []Header       <span style="color:var(--text-dim)">// response headers for this code</span>
 	Raw         map[string]any <span style="color:var(--text-dim)">// arbitrary OpenAPI merged into this response (incl. headers)</span>
 	Omit        <b>bool</b>          <span style="color:var(--text-dim)">// remove this global default code from the route</span>

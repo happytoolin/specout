@@ -16,8 +16,18 @@ type Handler[Req, Res any] struct {
 	Summary     string
 	OperationID string
 	Description string
-	Deprecated  bool
-	Public      bool // exclude this operation from the global auth requirement
+	// ExternalDocs links this operation to outside documentation.
+	ExternalDocs *ExternalDocs
+	// RequestContentTypes overrides the request body media types
+	// (application/x-www-form-urlencoded, application/xml, ...). The schema
+	// still comes from Req; only the media type changes. One entry per media
+	// type: two entries publish one shape under both.
+	RequestContentTypes []string
+	// Raw splices arbitrary keys into this operation object: x- extensions,
+	// or any other OpenAPI operation field specout does not model.
+	Raw        map[string]any
+	Deprecated bool
+	Public     bool // exclude this operation from the global auth requirement
 }
 
 // Types reifies the type parameters, making them visible to reflection at

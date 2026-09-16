@@ -24,20 +24,23 @@ type routeSource interface {
 // patterns (chi groups) resolve to full at build time; absolute sources set
 // full at registration and are never touched by a walk.
 type routeRecord struct {
-	method      string
-	pattern     string // as passed at registration
-	full        string // resolved canonical path; absolute sources set it here
-	absolute    bool   // std mux, gorilla, Document: full is final
-	omit        bool   // catch-all: excluded from paths, kept for drift
-	req, res    reflect.Type
-	responses   []Response
-	tags        []string
-	summary     string
-	operationID string
-	description string
-	deprecated  bool
-	public      bool
-	fn          http.HandlerFunc
+	method          string
+	pattern         string // as passed at registration
+	full            string // resolved canonical path; absolute sources set it here
+	absolute        bool   // std mux, gorilla, Document: full is final
+	omit            bool   // catch-all: excluded from paths, kept for drift
+	req, res        reflect.Type
+	responses       []Response
+	tags            []string
+	summary         string
+	operationID     string
+	description     string
+	externalDocs    *ExternalDocs
+	reqContentTypes []string
+	raw             map[string]any
+	deprecated      bool
+	public          bool
+	fn              http.HandlerFunc
 }
 
 func (d *Generator) register(rec routeRecord) {

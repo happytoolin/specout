@@ -122,8 +122,21 @@ type (
 
 // ok overrides the description of the Res-derived 200 response.
 func ok(description string) specout.Response {
+	return specout.Response{Status: 200, ContentTypes: jsonOrXML,
+		Raw: map[string]any{"description": description}}
+}
+
+// okJSON is the published 200 for the four operations that answer JSON only.
+func okJSON(description string) specout.Response {
 	return specout.Response{Status: 200, Raw: map[string]any{"description": description}}
 }
+
+// jsonOrXML is the published pair on a pet, order or user body.
+var jsonOrXML = []string{"application/json", "application/xml"}
+
+// jsonXMLForm is the published request body of the operations that take a
+// pet, order or user as JSON, XML or form fields.
+var jsonXMLForm = []string{"application/json", "application/xml", "application/x-www-form-urlencoded"}
 
 // desc is a description-only response: the published document declares its
 // errors and its few body-less 200s this way.
@@ -189,6 +202,7 @@ func updatePet(s *store) specout.Handler[Pet, Pet] {
 			ok("Successful operation"), desc(400, "Invalid ID supplied"),
 			desc(404, "Pet not found"), desc(422, "Validation exception"), def("Unexpected error"),
 		},
+		RequestContentTypes: jsonXMLForm,
 	}
 }
 
@@ -214,6 +228,7 @@ func addPet(s *store) specout.Handler[Pet, Pet] {
 			ok("Successful operation"), desc(400, "Invalid input"),
 			desc(422, "Validation exception"), def("Unexpected error"),
 		},
+		RequestContentTypes: jsonXMLForm,
 	}
 }
 
@@ -366,7 +381,7 @@ func uploadFile(s *store) specout.Handler[uploadImageReq, ApiResponse] {
 		OperationID: "uploadFile",
 		Tags:        []string{"pet"},
 		Responses: []specout.Response{
-			ok("successful operation"), desc(400, "No file uploaded"),
+			okJSON("successful operation"), desc(400, "No file uploaded"),
 			desc(404, "Pet not found"), def("Unexpected error"),
 		},
 	}
@@ -388,7 +403,7 @@ func getInventory(s *store) specout.Handler[struct{}, map[string]int32] {
 		OperationID: "getInventory",
 		Tags:        []string{"store"},
 		Responses: []specout.Response{
-			ok("successful operation"), def("Unexpected error"),
+			okJSON("successful operation"), def("Unexpected error"),
 		},
 	}
 }
@@ -413,9 +428,10 @@ func placeOrder(s *store) specout.Handler[Order, Order] {
 		Tags:        []string{"store"},
 		Public:      true,
 		Responses: []specout.Response{
-			ok("successful operation"), desc(400, "Invalid input"),
+			okJSON("successful operation"), desc(400, "Invalid input"),
 			desc(422, "Validation exception"), def("Unexpected error"),
 		},
+		RequestContentTypes: jsonXMLForm,
 	}
 }
 
@@ -491,6 +507,7 @@ func createUser(s *store) specout.Handler[User, User] {
 		Responses: []specout.Response{
 			ok("successful operation"), def("Unexpected error"),
 		},
+		RequestContentTypes: jsonXMLForm,
 	}
 }
 
@@ -545,7 +562,7 @@ func loginUser(s *store) specout.Handler[loginUserReq, string] {
 		Tags:        []string{"user"},
 		Public:      true,
 		Responses: []specout.Response{
-			{Status: 200, Raw: map[string]any{"description": "successful operation"}, Headers: []specout.Header{
+			{Status: 200, ContentTypes: jsonOrXML, Raw: map[string]any{"description": "successful operation"}, Headers: []specout.Header{
 				{Name: "X-Rate-Limit", Type: int32(0)},
 				{Name: "X-Expires-After", Type: time.Time{}},
 			}},
@@ -619,9 +636,10 @@ func updateUser(s *store) specout.Handler[User, struct{}] {
 		Tags:        []string{"user"},
 		Public:      true,
 		Responses: []specout.Response{
-			ok("successful operation"), desc(400, "bad request"),
+			desc(200, "successful operation"), desc(400, "bad request"),
 			desc(404, "user not found"), def("Unexpected error"),
 		},
+		RequestContentTypes: jsonXMLForm,
 	}
 }
 
@@ -666,13 +684,32 @@ func New() (*specout.Generator, http.Handler) {
 		Version:     "1.0.27",
 		Description: petstoreDescription,
 		Servers:     []specout.Server{{URL: "/api/v3"}},
-		// the published document also declares petstore_auth (oauth2 implicit
-		// with write:pets / read:pets scopes): specout has no oauth2 scheme.
-		Auth:         []specout.AuthScheme{specout.APIKey("api_key", "api_key", specout.InHeader)},
-		ExternalDocs: &specout.ExternalDocs{URL: "https://swagger.io", Description: "Find out more about Swagger"},
+		// the published pair: an api key in the header, and the petstore's
+		// own oauth2 scheme with its two pet scopes.
+		Auth: []specout.AuthScheme{
+			specout.APIKey("api_key", "api_key", specout.InHeader),
+			specout.OAuth2("petstore_auth", map[string]specout.OAuth2Flow{
+				"implicit": {
+					AuthorizationURL: "https://petstore3.swagger.io/oauth/authorize",
+					Scopes: map[string]string{
+						"write:pets": "modify pets in your account",
+						"read:pets":  "read your pets",
+					},
+				},
+			}),
+		},
+		ExternalDocs:   &specout.ExternalDocs{URL: "https://swagger.io", Description: "Find out more about Swagger"},
+		TermsOfService: "https://swagger.io/terms/",
+		Contact:        &specout.Contact{Email: "apiteam@swagger.io"},
+		License: &specout.License{
+			Name: "Apache 2.0",
+			URL:  "https://www.apache.org/licenses/LICENSE-2.0.html",
+		},
 		Tags: []specout.Tag{
-			{Name: "pet", Description: "Everything about your Pets"},
-			{Name: "store", Description: "Access to Petstore orders"},
+			{Name: "pet", Description: "Everything about your Pets",
+				ExternalDocs: &specout.ExternalDocs{URL: "https://swagger.io", Description: "Find out more"}},
+			{Name: "store", Description: "Access to Petstore orders",
+				ExternalDocs: &specout.ExternalDocs{URL: "https://swagger.io", Description: "Find out more about our store"}},
 			{Name: "user", Description: "Operations about user"},
 		},
 	})
