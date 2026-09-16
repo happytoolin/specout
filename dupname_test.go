@@ -21,7 +21,7 @@ func TestDuplicateComponentNamePanics(t *testing.T) {
 	d.SchemaName[dupA]("Clash")
 	d.SchemaName[dupB]("Clash")
 	r := chi.NewRouter()
-	d.Get(r, "/a", specout.Handler[struct{}, dupA]{HandlerFunc: func(http.ResponseWriter, *http.Request) {}})
-	d.Get(r, "/b", specout.Handler[struct{}, dupB]{HandlerFunc: func(http.ResponseWriter, *http.Request) {}})
+	specout.Chi(d, r).Get("/a", specout.Handler[struct{}, dupA]{HandlerFunc: func(http.ResponseWriter, *http.Request) {}})
+	specout.Chi(d, r).Get("/b", specout.Handler[struct{}, dupB]{HandlerFunc: func(http.ResponseWriter, *http.Request) {}})
 	serveDoc(t, d, r)
 }

@@ -399,6 +399,13 @@ func applyFieldTags(t reflect.Type, s *jsonschema.Schema) {
 		if !ok || p == nil {
 			continue
 		}
+		if form := f.Tag.Get("form"); form != "" {
+			if fn := parts0(form); fn != "-" && fn != name {
+				s.Properties.Set(fn, p)
+				s.Properties.Delete(name)
+			}
+		}
+
 		if ft := f.Type; ft == reflect.TypeOf(File{}) || (ft.Kind() == reflect.Slice && ft.Elem() == reflect.TypeOf(File{})) {
 			p.Type = "string"
 			p.Format = "binary"

@@ -13,6 +13,9 @@ import (
 
 func serveDoc(t *testing.T, d *specout.Generator, r chi.Router) map[string]any {
 	t.Helper()
+	if err := specout.Chi(d, r).Adopt(); err != nil {
+		t.Fatalf("adopt: %v", err)
+	}
 	r.Mount("/openapi.json", d)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
@@ -45,8 +48,8 @@ func TestNestedDefsKeepFixups(t *testing.T) {
 
 	d := specout.New(specout.Config{Title: "t", Version: "1"})
 	r := chi.NewRouter()
-	d.Get(r, "/issues", specout.Handler[struct{}, Page]{HandlerFunc: noop2})
-	d.Post(r, "/issues", specout.Handler[struct {
+	specout.Chi(d, r).Get("/issues", specout.Handler[struct{}, Page]{HandlerFunc: noop2})
+	specout.Chi(d, r).Post("/issues", specout.Handler[struct {
 		Title string `json:"title"`
 	}, Issue]{HandlerFunc: noop2})
 
@@ -79,7 +82,7 @@ func TestParamKeywords(t *testing.T) {
 	}
 	d := specout.New(specout.Config{Title: "t", Version: "1"})
 	r := chi.NewRouter()
-	d.Get(r, "/items", specout.Handler[ListReq, specout.NoContent]{HandlerFunc: noop2})
+	specout.Chi(d, r).Get("/items", specout.Handler[ListReq, specout.NoContent]{HandlerFunc: noop2})
 	doc := serveDoc(t, d, r)
 	op := doc["paths"].(map[string]any)["/items"].(map[string]any)["get"].(map[string]any)
 
@@ -104,10 +107,10 @@ func TestParamKeywords(t *testing.T) {
 func TestAnonymousComponentNames(t *testing.T) {
 	d := specout.New(specout.Config{Title: "t", Version: "1"})
 	r := chi.NewRouter()
-	d.Post(r, "/a", specout.Handler[struct {
+	specout.Chi(d, r).Post("/a", specout.Handler[struct {
 		A string `json:"a"`
 	}, specout.NoContent]{HandlerFunc: noop2})
-	d.Post(r, "/b", specout.Handler[struct {
+	specout.Chi(d, r).Post("/b", specout.Handler[struct {
 		B string `json:"b"`
 	}, specout.NoContent]{HandlerFunc: noop2})
 	doc := serveDoc(t, d, r)

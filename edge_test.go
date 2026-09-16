@@ -16,6 +16,9 @@ func dump(t *testing.T, name string, d *specout.Generator, r chi.Router) map[str
 	t.Helper()
 	w := httptest.NewRecorder()
 	if r != nil {
+		if err := specout.Chi(d, r).Adopt(); err != nil {
+			t.Fatalf("%s: adopt: %v", name, err)
+		}
 		r.ServeHTTP(w, httptest.NewRequest("GET", "/openapi.json", nil))
 	} else {
 		d.WriteJSON(&strings.Builder{})
@@ -74,7 +77,7 @@ func TestEdgeCases(t *testing.T) {
 	t.Run("recursive", func(t *testing.T) {
 		d := specout.New(specout.Config{Title: "t", Version: "1"})
 		r := chi.NewRouter()
-		d.Get(r, "/tree", specout.Handler[struct{}, Node]{HandlerFunc: noop})
+		specout.Chi(d, r).Get("/tree", specout.Handler[struct{}, Node]{HandlerFunc: noop})
 		r.Mount("/openapi.json", d)
 		doc := dump(t, "recursive", d, r)
 		_ = doc
@@ -82,15 +85,15 @@ func TestEdgeCases(t *testing.T) {
 	t.Run("maps", func(t *testing.T) {
 		d := specout.New(specout.Config{Title: "t", Version: "1"})
 		r := chi.NewRouter()
-		d.Get(r, "/m", specout.Handler[struct{}, MapWrap]{HandlerFunc: noop})
+		specout.Chi(d, r).Get("/m", specout.Handler[struct{}, MapWrap]{HandlerFunc: noop})
 		r.Mount("/openapi.json", d)
 		dump(t, "maps", d, r)
 	})
 	t.Run("generic collision", func(t *testing.T) {
 		d := specout.New(specout.Config{Title: "t", Version: "1"})
 		r := chi.NewRouter()
-		d.Get(r, "/a", specout.Handler[struct{}, Page[Alpha]]{HandlerFunc: noop})
-		d.Get(r, "/b", specout.Handler[struct{}, Page[Beta]]{HandlerFunc: noop})
+		specout.Chi(d, r).Get("/a", specout.Handler[struct{}, Page[Alpha]]{HandlerFunc: noop})
+		specout.Chi(d, r).Get("/b", specout.Handler[struct{}, Page[Beta]]{HandlerFunc: noop})
 		r.Mount("/openapi.json", d)
 		doc := dump(t, "generic-collision", d, r)
 		comps := doc["components"].(map[string]any)["schemas"].(map[string]any)
@@ -99,21 +102,21 @@ func TestEdgeCases(t *testing.T) {
 	t.Run("slice query params", func(t *testing.T) {
 		d := specout.New(specout.Config{Title: "t", Version: "1"})
 		r := chi.NewRouter()
-		d.Get(r, "/q", specout.Handler[SliceQueryReq, struct{}]{HandlerFunc: noop})
+		specout.Chi(d, r).Get("/q", specout.Handler[SliceQueryReq, struct{}]{HandlerFunc: noop})
 		r.Mount("/openapi.json", d)
 		dump(t, "slice-query", d, r)
 	})
 	t.Run("struct query param", func(t *testing.T) {
 		d := specout.New(specout.Config{Title: "t", Version: "1"})
 		r := chi.NewRouter()
-		d.Get(r, "/q", specout.Handler[StructQueryReq, struct{}]{HandlerFunc: noop})
+		specout.Chi(d, r).Get("/q", specout.Handler[StructQueryReq, struct{}]{HandlerFunc: noop})
 		r.Mount("/openapi.json", d)
 		dump(t, "struct-query", d, r)
 	})
 	t.Run("query+json both", func(t *testing.T) {
 		d := specout.New(specout.Config{Title: "t", Version: "1"})
 		r := chi.NewRouter()
-		d.Post(r, "/q", specout.Handler[BothTagReq, struct{}]{HandlerFunc: noop})
+		specout.Chi(d, r).Post("/q", specout.Handler[BothTagReq, struct{}]{HandlerFunc: noop})
 		r.Mount("/openapi.json", d)
 		dump(t, "both-tags", d, r)
 	})
@@ -125,21 +128,21 @@ func TestEdgeCases(t *testing.T) {
 		}()
 		d := specout.New(specout.Config{Title: "t", Version: "1"})
 		r := chi.NewRouter()
-		d.Post(r, "/u", specout.Handler[UnregisteredUnionReq, struct{}]{HandlerFunc: noop})
+		specout.Chi(d, r).Post("/u", specout.Handler[UnregisteredUnionReq, struct{}]{HandlerFunc: noop})
 		r.Mount("/openapi.json", d)
 		dump(t, "unregistered-union", d, r)
 	})
 	t.Run("public without auth", func(t *testing.T) {
 		d := specout.New(specout.Config{Title: "t", Version: "1"})
 		r := chi.NewRouter()
-		d.Get(r, "/p", specout.Handler[struct{}, Alpha]{HandlerFunc: noop, Public: true})
+		specout.Chi(d, r).Get("/p", specout.Handler[struct{}, Alpha]{HandlerFunc: noop, Public: true})
 		r.Mount("/openapi.json", d)
 		dump(t, "public-no-auth", d, r)
 	})
 	t.Run("weird statuses", func(t *testing.T) {
 		d := specout.New(specout.Config{Title: "t", Version: "1"})
 		r := chi.NewRouter()
-		d.Get(r, "/s", specout.Handler[struct{}, Alpha]{
+		specout.Chi(d, r).Get("/s", specout.Handler[struct{}, Alpha]{
 			HandlerFunc: noop,
 			Responses: []specout.Response{
 				{Status: 304},
@@ -153,7 +156,7 @@ func TestEdgeCases(t *testing.T) {
 	t.Run("path wildcard param", func(t *testing.T) {
 		d := specout.New(specout.Config{Title: "t", Version: "1"})
 		r := chi.NewRouter()
-		d.Get(r, "/files/{path...}", specout.Handler[WildcardReq, struct{}]{HandlerFunc: noop})
+		specout.Chi(d, r).Get("/files/{path...}", specout.Handler[WildcardReq, struct{}]{HandlerFunc: noop})
 		r.Mount("/openapi.json", d)
 		dump(t, "wildcard", d, r)
 	})
@@ -163,7 +166,7 @@ func TestEdgeCases(t *testing.T) {
 		}
 		d := specout.New(specout.Config{Title: "t", Version: "1"})
 		r := chi.NewRouter()
-		d.Get(r, "/things/{id}", specout.Handler[DupReq, struct{}]{HandlerFunc: noop})
+		specout.Chi(d, r).Get("/things/{id}", specout.Handler[DupReq, struct{}]{HandlerFunc: noop})
 		r.Mount("/openapi.json", d)
 		doc := dump(t, "dup-param", d, r)
 		get := doc["paths"].(map[string]any)["/things/{id}"].(map[string]any)["get"].(map[string]any)

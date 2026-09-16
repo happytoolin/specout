@@ -1,7 +1,6 @@
 package specout
 
 import (
-	"fmt"
 	"net/http"
 	"reflect"
 	"strings"
@@ -9,39 +8,77 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// registerChi mounts the raw handler on r and records its metadata. Pattern
-// may be relative (groups/subrouters); the build-time walk resolves full paths.
-func (d *Generator) registerChi(r chi.Router, method, pattern string, rec routeRecord) {
-	known := false
-	for _, x := range d.chiRoots {
-		if x == r {
-			known = true
-			break
-		}
-	}
-	// interface comparison of chi.Router values; pointer equality underneath
-	if !known {
-		d.chiRoots = append(d.chiRoots, r)
-		linkRouter(r, d)
-	}
-	r.Method(method, pattern, http.HandlerFunc(rec.fn))
-	d.register(rec)
+// Chi returns the chi binder for d on r: verb methods register handlers and
+// metadata in one step; Adopt and RequireDocumented cover existing routers.
+func Chi(d *Generator, r chi.Router) *ChiRouter {
+	return &ChiRouter{d: d, r: r}
 }
 
-// Adopt walks an already-built chi router: routes whose handler specout does
-// not know (plain r.Get strays) are reported as errors; on success the router
-// becomes a walk root, so Route/Mount prefixes compose into full paths at
-// build time.
-func (d *Generator) Adopt(r chi.Router) error {
+// ChiRouter registers specout handlers on a chi.Router. Relative patterns
+// (Route/Mount groups) resolve at build time from a walk of the live router.
+type ChiRouter struct {
+	d *Generator
+	r chi.Router
+}
+
+// source makes the generator walk this router at build time.
+func (c *ChiRouter) source() { c.d.addSource(chiWalkSource{c.r}) }
+
+func (c *ChiRouter) register(method, pattern string, rec routeRecord) {
+	rec.method, rec.pattern = method, pattern
+	c.r.Method(method, pattern, http.HandlerFunc(rec.fn))
+	c.d.register(rec)
+}
+
+func (c *ChiRouter) Get[Req, Res any](pattern string, h Handler[Req, Res]) {
+	c.register(http.MethodGet, pattern, recOf(h))
+}
+
+func (c *ChiRouter) Head[Req, Res any](pattern string, h Handler[Req, Res]) {
+	c.register(http.MethodHead, pattern, recOf(h))
+}
+
+func (c *ChiRouter) Post[Req, Res any](pattern string, h Handler[Req, Res]) {
+	c.register(http.MethodPost, pattern, recOf(h))
+}
+
+func (c *ChiRouter) Put[Req, Res any](pattern string, h Handler[Req, Res]) {
+	c.register(http.MethodPut, pattern, recOf(h))
+}
+
+func (c *ChiRouter) Patch[Req, Res any](pattern string, h Handler[Req, Res]) {
+	c.register(http.MethodPatch, pattern, recOf(h))
+}
+
+func (c *ChiRouter) Delete[Req, Res any](pattern string, h Handler[Req, Res]) {
+	c.register(http.MethodDelete, pattern, recOf(h))
+}
+
+func (c *ChiRouter) Options[Req, Res any](pattern string, h Handler[Req, Res]) {
+	c.register(http.MethodOptions, pattern, recOf(h))
+}
+
+func (c *ChiRouter) Trace[Req, Res any](pattern string, h Handler[Req, Res]) {
+	c.register(http.MethodTrace, pattern, recOf(h))
+}
+
+// Adopt walks an already-built chi router: routes whose handler specout
+// does not know (plain r.Get strays) are reported as errors; skips use
+// SkipRule patterns like /healthz or /debug/*.
+func (c *ChiRouter) Adopt(skips ...SkipRule) error {
 	var unknown []string
-	err := chi.Walk(r, func(method, route string, handler http.Handler, _ ...func(http.Handler) http.Handler) error {
-		// skip our own /openapi.json mount: chi wraps it, so match the
-		// ServeHTTP method pointer instead of the type
-		if handler == http.Handler(d) {
+	err := chi.Walk(c.r, func(method, route string, handler http.Handler, _ ...func(http.Handler) http.Handler) error {
+		for _, s := range skips {
+			if matchSkip(s.pattern, route) {
+				return nil
+			}
+		}
+		if handler == http.Handler(c.d) {
 			return nil
 		}
 		ptr := reflect.ValueOf(handler).Pointer()
-		if _, ok := d.lookup(ptr); !ok {
+		known, _ := c.d.lookup(ptr)
+		if !known {
 			unknown = append(unknown, method+" "+route)
 		}
 		return nil
@@ -50,93 +87,54 @@ func (d *Generator) Adopt(r chi.Router) error {
 		return err
 	}
 	if len(unknown) > 0 {
-		return fmt.Errorf("specout: routes without specout handlers: %s", strings.Join(unknown, ", "))
+		return &StrayError{Routes: unknown}
 	}
-	for _, x := range d.chiRoots {
-		if x == r {
-			return nil
-		}
-	}
-	d.chiRoots = append(d.chiRoots, r)
+	c.source()
 	return nil
 }
 
-// Get registers h on r for GET and records its metadata.
-func (d *Generator) Get[Req, Res any](r chi.Router, pattern string, h Handler[Req, Res]) {
-	d.registerChi(r, http.MethodGet, pattern, routeRecord{
-		method: http.MethodGet, pattern: pattern,
-		req: reflect.TypeFor[Req](), res: reflect.TypeFor[Res](),
-		responses: h.Responses, tags: h.Tags, summary: h.Summary, operationID: h.OperationID,
-		description: h.Description, deprecated: h.Deprecated, public: h.Public, fn: h.HandlerFunc,
+// RequireDocumented fails the test when the chi router holds endpoint
+// routes specout never registered.
+func (c *ChiRouter) RequireDocumented(t TestingT, skips ...SkipRule) {
+	t.Helper()
+	if err := c.Adopt(skips...); err != nil {
+		t.Errorf("%v", err)
+	}
+}
+
+// chiWalkSource adapts chi.Router to routeSource. chi.Walk reports
+// composed full patterns; catch-alls keep their trailing wildcard.
+type chiWalkSource struct{ r chi.Router }
+
+func (s chiWalkSource) walk(fn func(method, pattern string, h http.Handler)) {
+	_ = chi.Walk(s.r, func(method, route string, handler http.Handler, _ ...func(http.Handler) http.Handler) error {
+		fn(method, chiCanonical(route), handler)
+		return nil
 	})
 }
 
-// Head registers h on r for HEAD and records its metadata.
-func (d *Generator) Head[Req, Res any](r chi.Router, pattern string, h Handler[Req, Res]) {
-	d.registerChi(r, http.MethodHead, pattern, routeRecord{
-		method: http.MethodHead, pattern: pattern,
-		req: reflect.TypeFor[Req](), res: reflect.TypeFor[Res](),
-		responses: h.Responses, tags: h.Tags, summary: h.Summary, operationID: h.OperationID,
-		description: h.Description, deprecated: h.Deprecated, public: h.Public, fn: h.HandlerFunc,
-	})
+// chiCanonical collapses empty segments (Route groups emit "//"); trailing
+// slashes are significant: chi walks /a and /a/ as distinct routes.
+func chiCanonical(p string) string {
+	for strings.Contains(p, "//") {
+		p = strings.ReplaceAll(p, "//", "/")
+	}
+	return p
 }
 
-// Post registers h on r for POST and records its metadata.
-func (d *Generator) Post[Req, Res any](r chi.Router, pattern string, h Handler[Req, Res]) {
-	d.registerChi(r, http.MethodPost, pattern, routeRecord{
-		method: http.MethodPost, pattern: pattern,
+// recOf pulls the metadata fields off a Handler into a routeRecord.
+func recOf[Req, Res any](h Handler[Req, Res]) routeRecord {
+	return routeRecord{
 		req: reflect.TypeFor[Req](), res: reflect.TypeFor[Res](),
-		responses: h.Responses, tags: h.Tags, summary: h.Summary, operationID: h.OperationID,
-		description: h.Description, deprecated: h.Deprecated, public: h.Public, fn: h.HandlerFunc,
-	})
+		responses: h.Responses, tags: h.Tags, summary: h.Summary,
+		operationID: h.OperationID, description: h.Description,
+		deprecated: h.Deprecated, public: h.Public, fn: h.HandlerFunc,
+	}
 }
 
-// Put registers h on r for PUT and records its metadata.
-func (d *Generator) Put[Req, Res any](r chi.Router, pattern string, h Handler[Req, Res]) {
-	d.registerChi(r, http.MethodPut, pattern, routeRecord{
-		method: http.MethodPut, pattern: pattern,
-		req: reflect.TypeFor[Req](), res: reflect.TypeFor[Res](),
-		responses: h.Responses, tags: h.Tags, summary: h.Summary, operationID: h.OperationID,
-		description: h.Description, deprecated: h.Deprecated, public: h.Public, fn: h.HandlerFunc,
-	})
-}
+// StrayError names routes registered without specout metadata.
+type StrayError struct{ Routes []string }
 
-// Patch registers h on r for PATCH and records its metadata.
-func (d *Generator) Patch[Req, Res any](r chi.Router, pattern string, h Handler[Req, Res]) {
-	d.registerChi(r, http.MethodPatch, pattern, routeRecord{
-		method: http.MethodPatch, pattern: pattern,
-		req: reflect.TypeFor[Req](), res: reflect.TypeFor[Res](),
-		responses: h.Responses, tags: h.Tags, summary: h.Summary, operationID: h.OperationID,
-		description: h.Description, deprecated: h.Deprecated, public: h.Public, fn: h.HandlerFunc,
-	})
-}
-
-// Delete registers h on r for DELETE and records its metadata.
-func (d *Generator) Delete[Req, Res any](r chi.Router, pattern string, h Handler[Req, Res]) {
-	d.registerChi(r, http.MethodDelete, pattern, routeRecord{
-		method: http.MethodDelete, pattern: pattern,
-		req: reflect.TypeFor[Req](), res: reflect.TypeFor[Res](),
-		responses: h.Responses, tags: h.Tags, summary: h.Summary, operationID: h.OperationID,
-		description: h.Description, deprecated: h.Deprecated, public: h.Public, fn: h.HandlerFunc,
-	})
-}
-
-// Options registers h on r for OPTIONS and records its metadata.
-func (d *Generator) Options[Req, Res any](r chi.Router, pattern string, h Handler[Req, Res]) {
-	d.registerChi(r, http.MethodOptions, pattern, routeRecord{
-		method: http.MethodOptions, pattern: pattern,
-		req: reflect.TypeFor[Req](), res: reflect.TypeFor[Res](),
-		responses: h.Responses, tags: h.Tags, summary: h.Summary, operationID: h.OperationID,
-		description: h.Description, deprecated: h.Deprecated, public: h.Public, fn: h.HandlerFunc,
-	})
-}
-
-// Trace registers h on r for TRACE and records its metadata.
-func (d *Generator) Trace[Req, Res any](r chi.Router, pattern string, h Handler[Req, Res]) {
-	d.registerChi(r, http.MethodTrace, pattern, routeRecord{
-		method: http.MethodTrace, pattern: pattern,
-		req: reflect.TypeFor[Req](), res: reflect.TypeFor[Res](),
-		responses: h.Responses, tags: h.Tags, summary: h.Summary, operationID: h.OperationID,
-		description: h.Description, deprecated: h.Deprecated, public: h.Public, fn: h.HandlerFunc,
-	})
+func (e *StrayError) Error() string {
+	return "specout: routes not documented: " + strings.Join(e.Routes, ", ")
 }

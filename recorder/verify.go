@@ -1,6 +1,10 @@
 package recorder
 
-import "github.com/happytoolin/specout"
+import (
+	"net/http"
+
+	"github.com/happytoolin/specout"
+)
 
 // TestingT is the subset of *testing.T Verify needs.
 type TestingT interface {
@@ -9,11 +13,16 @@ type TestingT interface {
 	Fatalf(format string, args ...any)
 }
 
-// Verify fails the test when declared and observed status codes disagree in
-// either direction, naming the route and code.
+// Verify fails the test when declared and observed status codes disagree
+// in either direction, naming the route and code. Resolution failures in
+// the generator are reported, not swallowed.
 func Verify(t TestingT, d *specout.Generator, rec *Recorder) {
 	t.Helper()
-	declared := d.DeclaredStatuses()
+	declared, err := d.DeclaredStatuses()
+	if err != nil {
+		t.Errorf("%v", err)
+		return
+	}
 	rec.mu.Lock()
 	observed := make(map[specout.RouteKey]map[int]bool, len(rec.codes))
 	for k, v := range rec.codes {
@@ -22,7 +31,7 @@ func Verify(t TestingT, d *specout.Generator, rec *Recorder) {
 	rec.mu.Unlock()
 
 	for key, codes := range declared {
-		seen := observed[key]
+		seen := lookupKey(observed, key)
 		for code := range codes {
 			if !seen[code] {
 				t.Errorf("declared %s %s %d never produced by any test", key.Method, key.Path, code)
@@ -30,11 +39,26 @@ func Verify(t TestingT, d *specout.Generator, rec *Recorder) {
 		}
 	}
 	for key, codes := range observed {
-		want := declared[key]
+		want := lookupKey(declared, key)
 		for code := range codes {
 			if !want[code] {
 				t.Errorf("handler wrote %s %s %d but spec does not declare it", key.Method, key.Path, code)
 			}
 		}
 	}
+}
+
+// lookupKey accepts HEAD and GET as the same route: net/http serves HEAD
+// through the GET handler, so either observation satisfies the other.
+func lookupKey(m map[specout.RouteKey]map[int]bool, k specout.RouteKey) map[int]bool {
+	if v := m[k]; v != nil {
+		return v
+	}
+	switch k.Method {
+	case http.MethodHead:
+		return m[specout.RouteKey{Method: http.MethodGet, Path: k.Path}]
+	case http.MethodGet:
+		return m[specout.RouteKey{Method: http.MethodHead, Path: k.Path}]
+	}
+	return nil
 }

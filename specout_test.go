@@ -47,12 +47,15 @@ func TestQuickStartFlow(t *testing.T) {
 	})
 
 	r := chi.NewRouter()
-	d.Delete(r, "/onboarding/{id}", specout.Handler[EmptyReq, struct{}]{HandlerFunc: noContent})
-	d.Put(r, "/onboarding/{id}", specout.Handler[UpsertRequest, Onboarding]{
+	specout.Chi(d, r).Delete("/onboarding/{id}", specout.Handler[EmptyReq, struct{}]{HandlerFunc: noContent})
+	specout.Chi(d, r).Put("/onboarding/{id}", specout.Handler[UpsertRequest, Onboarding]{
 		HandlerFunc: okJSON,
 		Responses:   []specout.Response{{Status: http.StatusCreated}},
 	})
-	d.Get(r, "/onboarding", specout.Handler[EmptyReq, []Onboarding]{HandlerFunc: okJSON, Summary: "List onboarding"})
+	specout.Chi(d, r).Get("/onboarding", specout.Handler[EmptyReq, []Onboarding]{HandlerFunc: okJSON, Summary: "List onboarding"})
+	if err := specout.Chi(d, r).Adopt(); err != nil {
+		t.Fatal(err)
+	}
 	r.Mount("/openapi.json", d)
 
 	srv := httptest.NewServer(r)
@@ -132,7 +135,7 @@ func TestQuickStartFlow(t *testing.T) {
 				t.Error("expected panic on post-freeze registration")
 			}
 		}()
-		d.Get(r, "/late", specout.Handler[EmptyReq, Onboarding]{HandlerFunc: okJSON})
+		specout.Chi(d, r).Get("/late", specout.Handler[EmptyReq, Onboarding]{HandlerFunc: okJSON})
 	}()
 }
 
@@ -142,9 +145,9 @@ func TestGroupsAndMountsResolve(t *testing.T) {
 	d := specout.New(specout.Config{Title: "T", Version: "1"})
 	r := chi.NewRouter()
 	r.Route("/onboarding", func(r chi.Router) {
-		d.Get(r, "/", specout.Handler[EmptyReq, Onboarding]{HandlerFunc: okJSON})
+		specout.Chi(d, r).Get("/", specout.Handler[EmptyReq, Onboarding]{HandlerFunc: okJSON})
 	})
-	if err := d.Adopt(r); err != nil {
+	if err := specout.Chi(d, r).Adopt(); err != nil {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
@@ -154,7 +157,7 @@ func TestGroupsAndMountsResolve(t *testing.T) {
 	var doc map[string]any
 	json.Unmarshal(buf.Bytes(), &doc)
 	paths := doc["paths"].(map[string]any)
-	if _, ok := paths["/onboarding"]; !ok {
+	if _, ok := paths["/onboarding/"]; !ok {
 		t.Errorf("group route not resolved to full path; have %v", paths)
 	}
 }
@@ -164,9 +167,9 @@ func TestGroupsAndMountsResolve(t *testing.T) {
 func TestAdoptRejectsStrays(t *testing.T) {
 	d := specout.New(specout.Config{Title: "T", Version: "1"})
 	r := chi.NewRouter()
-	d.Get(r, "/known", specout.Handler[EmptyReq, Onboarding]{HandlerFunc: okJSON})
+	specout.Chi(d, r).Get("/known", specout.Handler[EmptyReq, Onboarding]{HandlerFunc: okJSON})
 	r.Get("/stray", func(w http.ResponseWriter, _ *http.Request) {})
-	err := d.Adopt(r)
+	err := specout.Chi(d, r).Adopt()
 	if err == nil || !strings.Contains(err.Error(), "/stray") {
 		t.Fatalf("expected stray-route error, got %v", err)
 	}
@@ -175,7 +178,11 @@ func TestAdoptRejectsStrays(t *testing.T) {
 func TestServeOnlyGet(t *testing.T) {
 	d := specout.New(specout.Config{Title: "T", Version: "1"})
 	r := chi.NewRouter()
-	d.Get(r, "/x", specout.Handler[EmptyReq, Onboarding]{HandlerFunc: okJSON})
+	rc := specout.Chi(d, r)
+	rc.Get("/x", specout.Handler[EmptyReq, Onboarding]{HandlerFunc: okJSON})
+	if err := rc.Adopt(); err != nil {
+		t.Fatal(err)
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/openapi.json", nil)
 	rec := httptest.NewRecorder()
@@ -198,8 +205,8 @@ func TestServeOnlyGet(t *testing.T) {
 func TestStdMuxHandle(t *testing.T) {
 	d := specout.New(specout.Config{Title: "T", Version: "1"})
 	mux := http.NewServeMux()
-	d.Handle(mux, "DELETE /onboarding/{id}", specout.Handler[EmptyReq, struct{}]{HandlerFunc: noContent})
-	d.Handle(mux, "GET /onboarding", specout.Handler[EmptyReq, []Onboarding]{HandlerFunc: okJSON})
+	specout.Std(d, mux).Handle("DELETE /onboarding/{id}", specout.Handler[EmptyReq, struct{}]{HandlerFunc: noContent})
+	specout.Std(d, mux).Handle("GET /onboarding", specout.Handler[EmptyReq, []Onboarding]{HandlerFunc: okJSON})
 
 	var buf bytes.Buffer
 	if err := d.WriteJSON(&buf); err != nil {

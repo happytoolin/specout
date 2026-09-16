@@ -17,15 +17,17 @@ type Generator struct {
 
 	mu     sync.Mutex
 	frozen bool
-	// routes holds registration records keyed by handler func code pointer.
-	// Closures from the same literal share a code pointer, sharing one key.
-	routes map[uintptr][]*routeRecord
-	// chiRoots: every distinct chi router registrations were made on.
-	chiRoots []chiRouter
-	// union variant registrations and component-name overrides
+
+	// records, in registration order. Identity is the record itself, not
+	// the handler func pointer: one func on two routes is two records.
+	records []*routeRecord
+	// sources: every router the generator saw, walked once at build time.
+	sources []routeSource
+	// known handlers: func code pointer -> true, for stray detection.
+	known map[uintptr]bool
+
 	variants      map[string]reflect.Type
 	nameOverrides map[reflect.Type]string
-	resolved      bool
 
 	specJSON []byte
 }
@@ -33,7 +35,7 @@ type Generator struct {
 func New(cfg Config) *Generator {
 	return &Generator{
 		cfg:           cfg,
-		routes:        make(map[uintptr][]*routeRecord),
+		known:         make(map[uintptr]bool),
 		variants:      make(map[string]reflect.Type),
 		nameOverrides: make(map[reflect.Type]string),
 	}

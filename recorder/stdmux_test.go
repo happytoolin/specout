@@ -16,7 +16,7 @@ func TestStdMuxPatternCaptured(t *testing.T) {
 	mux := http.NewServeMux()
 	d := specout.New(specout.Config{Title: "t", Version: "1"})
 	ok := func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }
-	d.Handle(mux, "GET /items/{id}", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: ok})
+	specout.Std(d, mux).Handle("GET /items/{id}", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: ok})
 	rec := recorder.New(mux)
 	rec.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/items/9", nil))
 	ft := &failT{}

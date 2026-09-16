@@ -360,9 +360,10 @@
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 
-	d.Delete(r, "/onboarding/{id}", handlers.HandleDeleteOnboarding(deps))
-	d.Put(r, "/onboarding/{id}", handlers.HandleUpsertOnboarding(deps))
-	d.Get(r, "/onboarding", handlers.HandleListOnboarding(deps))
+	rc.Delete("/onboarding/{id}", handlers.HandleDeleteOnboarding(deps))
+	rc.Put("/onboarding/{id}", handlers.HandleUpsertOnboarding(deps))
+	rc := specout.Chi(d, r)
+	rc.Get("/onboarding", handlers.HandleListOnboarding(deps))
 
 	r.Mount("/openapi.json", d) // *Generator implements http.Handler
 
@@ -400,16 +401,17 @@ func HandleDeleteOnboarding(deps *dependencies.Dependencies) specout.Handler[Del
 <!-- ============================================================ -->
 <section id="register">
   <h2><span class="num">02</span>Registration</h2>
-  <p>As native as Go permits: grouping, middleware scoping, and mounting are pure chi/stdlib, untouched. The one custom thing is the per-route verb call, relocated from <code>r</code> to <code>d</code> so it can carry your types at compile time. <code>d.Adopt(r)</code> is the fallback for routers you don't register yourself.</p>
+  <p>As native as Go permits: grouping, middleware scoping, and mounting are pure chi/stdlib, untouched. The one custom thing is the per-router binder (<code>specout.Chi(d, r)</code>) that carries your types at compile time so it can carry your types at compile time. <code>d.Adopt(r)</code> is the fallback for routers you don't register yourself.</p>
 
   <h3>Verb methods — chi's interface, one subject over</h3>
   <p>One method per HTTP verb, same names and argument order as chi. Go 1.27's generic methods let them take <code>Handler[Req, Res]</code> directly, so passing a plain <code>http.HandlerFunc</code> is a <em>compile error</em> instead of a silently undocumented route:</p>
 
   <figure class="code" data-lang="go">
     <figcaption><span>type arguments are inferred from the handler</span><button class="copy">copy</button></figcaption>
-    <pre><code>d.Get(r, "/onboarding", handlers.HandleListOnboarding(deps))
-d.Put(r, "/onboarding/{id}", handlers.HandleUpsertOnboarding(deps))
-d.Delete(r, "/onboarding/{id}", handlers.HandleDeleteOnboarding(deps))
+    <pre><code>rc := specout.Chi(d, r)
+rc.Get("/onboarding", handlers.HandleListOnboarding(deps))
+rc.Put("/onboarding/{id}", handlers.HandleUpsertOnboarding(deps))
+rc.Delete("/onboarding/{id}", handlers.HandleDeleteOnboarding(deps))
 
 // func (d *Generator) Get[Req, Res any](r chi.Router, pattern string, h Handler[Req, Res])
 // — Head/Post/Put/Patch/Delete/Options/Trace identical, the full chi verb set
@@ -429,13 +431,15 @@ d.Delete(r, "/onboarding/{id}", handlers.HandleDeleteOnboarding(deps))
     <pre><code>r.Route("/onboarding", func(r chi.Router) {
 	r.Use(middleware.Logger)
 
-	d.Get(r, "/", handlers.HandleListOnboarding(deps))
-	d.Post(r, "/", handlers.HandleCreateOnboarding(deps))
+	rc := specout.Chi(d, r)
+	rc.Get("/", handlers.HandleListOnboarding(deps))
+	rc.Post("/", handlers.HandleCreateOnboarding(deps))
 
 	r.Route("/{id}", func(r chi.Router) {
 		r.Use(OnboardingAuth)
-		d.Get(r, "/", handlers.HandleGetOnboarding(deps))
-		d.Delete(r, "/", handlers.HandleDeleteOnboarding(deps))
+		rid := specout.Chi(d, r)
+		rid.Get("/", handlers.HandleGetOnboarding(deps))
+		rid.Delete("/", handlers.HandleDeleteOnboarding(deps))
 	})
 })
 
@@ -448,8 +452,9 @@ r.Mount("/api", onboarding.Router(d, deps)) // relative patterns inside come out
   <h3>std http.ServeMux</h3>
   <figure class="code" data-lang="go">
     <figcaption><span>method + wildcard patterns, mapped 1:1 to OpenAPI</span><button class="copy">copy</button></figcaption>
-    <pre><code>d.Handle(mux, "DELETE /onboarding/{id}", handlers.HandleDeleteOnboarding(deps))
-d.Handle(mux, "GET /onboarding", handlers.HandleListOnboarding(deps))</code></pre>
+    <pre><code>sm := specout.Std(d, mux)
+sm.Handle("DELETE /onboarding/{id}", handlers.HandleDeleteOnboarding(deps))
+sm.Handle("GET /onboarding", handlers.HandleListOnboarding(deps))</code></pre>
   </figure>
 
   <div class="callout warn">
@@ -460,7 +465,7 @@ d.Handle(mux, "GET /onboarding", handlers.HandleListOnboarding(deps))</code></pr
   <h3>Adopting an existing chi router</h3>
   <figure class="code" data-lang="go">
     <figcaption><span>fallback: walk an already-built router</span><button class="copy">copy</button></figcaption>
-    <pre><code>if err := d.Adopt(r); err != nil {
+    <pre><code>if err := rc.Adopt(); err != nil {
 	log.Fatal(err) // lists routes whose handler isn't a specout.Handler
 }</code></pre>
   </figure>
@@ -1009,7 +1014,7 @@ $ git diff --exit-code openapi.json   # spec changes must be reviewed, like code
   <figure class="code" data-lang="go">
     <figcaption><span>routes_test.go</span><button class="copy">copy</button></figcaption>
     <pre><code>func TestEveryRouteIsDocumented(t *testing.T) {
-	specout.RequireDocumented(t, router(testDeps), specout.Skip("/debug/*"))
+	specout.Chi(d, r).RequireDocumented(t, specout.Skip("/debug/*"))
 }</code></pre>
   </figure>
 
@@ -1231,7 +1236,7 @@ api.JSON(w, http.StatusUnprocessableEntity, ValidationError{Problems: problems})
         <pre><code>r.Get("/debug/vars", expvar.Handler()) // plain chi, no d.Method
 
 // completeness test allows it explicitly:
-specout.RequireDocumented(t, r, specout.Skip("/debug/*"))</code></pre>
+specout.Chi(d, r).RequireDocumented(t, specout.Skip("/debug/*"))</code></pre>
       </figure>
     </div>
 

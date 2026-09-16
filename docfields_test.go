@@ -33,15 +33,18 @@ func TestDocFields(t *testing.T) {
 		ExternalDocs: &specout.ExternalDocs{URL: "https://x.example"},
 	})
 	r := chi.NewRouter()
-	d.Post(r, "/things", specout.Handler[docReq, docRes]{
+	specout.Chi(d, r).Post("/things", specout.Handler[docReq, docRes]{
 		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {},
 		Summary:     "s",
 		Description: "longer description",
 	})
-	d.Get(r, "/ping", specout.Handler[struct{}, docRes]{
+	specout.Chi(d, r).Get("/ping", specout.Handler[struct{}, docRes]{
 		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {},
 		Public:      true,
 	})
+	if err := specout.Chi(d, r).Adopt(); err != nil {
+		t.Fatal(err)
+	}
 	r.Mount("/openapi.json", d)
 
 	w := httptest.NewRecorder()

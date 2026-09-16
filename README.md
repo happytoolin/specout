@@ -17,7 +17,9 @@ func HandleList(deps Deps) specout.Handler[ListRequest, Page] {
 	}
 }
 
-d.Get(r, "/onboarding", HandleList(deps))
+rc := specout.Chi(d, r)
+rc.Get("/onboarding", HandleList(deps))
+if err := rc.Adopt(); err != nil { panic(err) }
 r.Mount("/openapi.json", d)
 ```
 
@@ -100,7 +102,7 @@ Responses: []specout.Response{
 Two tests keep the doc honest — every route documented, every declared status actually produced:
 
 ```go
-func TestEveryRouteIsDocumented(t *testing.T) { specout.RequireDocumented(t, r) }
+func TestEveryRouteIsDocumented(t *testing.T) { specout.Chi(d, r).RequireDocumented(t) }
 
 func TestSpecMatchesReality(t *testing.T) {
 	d, r := router.New()
@@ -141,7 +143,7 @@ Swagger UI at http://localhost:8080/, Scalar at /scalar, Redoc at /redoc, the sp
 
 - **Lazy build, freeze on first serve.** Registering after the spec is served panics.
 - **No package globals.** One generator per service; deterministic output by construction.
-- **chi and std mux both work.** `d.Get(r, ...)` / `d.Handle(mux, "GET /path", ...)`.
+- **chi, gorilla and std mux all work.** `specout.Chi(d, r).Get(...)` / `specout.Gorilla(d, gm).Get(...)` / `specout.Std(d, mux).Handle("GET /path", ...)`. Other routers record through `specout.Document`.
 - **No comment parsing, ever.** Types are the single source of truth.
 
 ## Docs

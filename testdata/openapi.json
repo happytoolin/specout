@@ -492,7 +492,7 @@
           {
             "name": "limit",
             "in": "query",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "integer",
               "maximum": 100,
@@ -512,7 +512,7 @@
           {
             "name": "sort",
             "in": "query",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "string",
               "enum": [
@@ -734,7 +734,7 @@
           {
             "name": "visibility",
             "in": "query",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "string",
               "enum": [
@@ -748,7 +748,7 @@
           {
             "name": "minPriority",
             "in": "query",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "integer",
               "maximum": 5,
@@ -759,7 +759,7 @@
           {
             "name": "limit",
             "in": "query",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "integer",
               "maximum": 50,
@@ -1533,12 +1533,12 @@
       },
       "ImportRequest": {
         "properties": {
-          "File": {
+          "file": {
             "type": "string",
             "format": "binary",
             "description": "CSV of onboarding records"
           },
-          "Mode": {
+          "mode": {
             "type": "string",
             "enum": [
               "merge",

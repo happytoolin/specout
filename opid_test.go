@@ -11,11 +11,11 @@ import (
 func TestOperationIDOverride(t *testing.T) {
 	d := specout.New(specout.Config{Title: "t", Version: "1"})
 	r := chi.NewRouter()
-	d.Get(r, "/users/{id}/profile", specout.Handler[struct{}, struct{ V int }]{
+	specout.Chi(d, r).Get("/users/{id}/profile", specout.Handler[struct{}, struct{ V int }]{
 		HandlerFunc: func(http.ResponseWriter, *http.Request) {},
 		OperationID: "getUserProfile",
 	})
-	d.Get(r, "/users/{id}/settings", specout.Handler[struct{}, struct{ V int }]{
+	specout.Chi(d, r).Get("/users/{id}/settings", specout.Handler[struct{}, struct{ V int }]{
 		HandlerFunc: func(http.ResponseWriter, *http.Request) {},
 	})
 	doc := serveDoc(t, d, r)

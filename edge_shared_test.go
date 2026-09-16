@@ -20,9 +20,12 @@ func TestSharedHandlerTwoGroups(t *testing.T) {
 	d := specout.New(specout.Config{Title: "t", Version: "1"})
 	r := chi.NewRouter()
 	h := specout.Handler[struct{}, S1]{HandlerFunc: noop3, Summary: "shared"}
-	r.Route("/a", func(r chi.Router) { d.Get(r, "/x", h) })
-	r.Route("/b", func(r chi.Router) { d.Get(r, "/x", h) })
-	if err := d.Adopt(r); err != nil {
+	r.Route("/a", func(r chi.Router) { specout.Chi(d, r).Get("/x", h) })
+	r.Route("/b", func(r chi.Router) { specout.Chi(d, r).Get("/x", h) })
+	if err := specout.Chi(d, r).Adopt(); err != nil {
+		t.Fatal(err)
+	}
+	if err := specout.Chi(d, r).Adopt(); err != nil {
 		t.Fatal(err)
 	}
 	r.Mount("/openapi.json", d)

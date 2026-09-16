@@ -141,3 +141,26 @@ The minimal path from factory to served spec:
 5. `RequireDocumented` fails on a plain `r.Get` stray (chi).
 6. Two `GO_SPEC_ONLY` runs produce identical bytes.
 7. No chi import outside `register_chi.go`, `routes.go`, `recorder/`.
+
+## Ledger: router adapters refactor
+
+- Registration moved to per-router binders: specout.Chi / specout.Gorilla /
+  specout.Std; Generator verbs and Generator.Handle removed. The core no
+  longer carries router state, and the package-global router-to-generator
+  map is gone.
+- Document[Req,Res] is the escape hatch for routers without an in-repo
+  adapter (echo, fiber, gin): absolute patterns only.
+- chi binders do not auto-add walk sources; Adopt registers the source.
+  Without a source, build fails naming the unresolved pattern, so a
+  missing adopt can never silently produce wrong prefixes.
+- Doc path and drift key are separate values. Doc paths keep their exact
+  form (/a and /a/ are distinct chi routes - walk reports both; only the
+  recorder drift key collapses, mirroring RoutePattern).
+- Catch-alls (paths containing *) are omitted from paths but keep their
+  drift key so the recorder still checks them.
+- gorilla method-less routes fail Adopt loudly: they are all-methods
+  endpoints, not mounts; silent skipping would hide undocumented routes.
+- Duplicate operationId across distinct paths is a build error; empty {}
+  segments return no derived id rather than panicking.
+- Multipart property names honour form tags; a query param with a default
+  is not required.

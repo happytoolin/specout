@@ -62,7 +62,7 @@ func taggedParams(req reflect.Type, sr *schemaRegistry) ([]any, bool) {
 		p := newObj().
 			set("name", name).
 			set("in", loc).
-			set("required", !strings.Contains(qt, ",omitempty") && !strings.Contains(f.Tag.Get("json"), "omitempty")).
+			set("required", !strings.Contains(qt, ",omitempty") && !strings.Contains(f.Tag.Get("json"), "omitempty") && tagValue(f.Tag.Get("jsonschema"), "default") == "").
 			set("schema", fs)
 		if desc := tagValue(f.Tag.Get("jsonschema"), "description"); desc != "" {
 			fs.Description = ""

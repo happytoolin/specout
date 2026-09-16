@@ -55,34 +55,35 @@ func New() (*specout.Generator, http.Handler) {
 	}
 
 	r := chi.NewRouter()
+	rc := specout.Chi(d, r)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	// enforcement is app code; the spec only declares the schemes
 	r.Group(func(r chi.Router) {
 		r.Use(auth.Require)
-		d.Post(r, "/onboarding", handlers.HandleCreate(deps))
-		d.Put(r, "/onboarding/{id}", handlers.HandleUpsert(deps))
-		d.Delete(r, "/onboarding/{id}", handlers.HandleDelete(deps))
-		d.Post(r, "/onboarding/{id}/sync", handlers.HandleSync(deps))
-		d.Post(r, "/files/import", handlers.HandleImport(deps))
-		d.Post(r, "/webhooks", handlers.HandleRegisterWebhook(deps))
-		d.Post(r, "/things", handlers.HandleCreateThing())
-		d.Post(r, "/channels", handlers.HandleConfigureChannel())
+		rc.Post("/onboarding", handlers.HandleCreate(deps))
+		rc.Put("/onboarding/{id}", handlers.HandleUpsert(deps))
+		rc.Delete("/onboarding/{id}", handlers.HandleDelete(deps))
+		rc.Post("/onboarding/{id}/sync", handlers.HandleSync(deps))
+		rc.Post("/files/import", handlers.HandleImport(deps))
+		rc.Post("/webhooks", handlers.HandleRegisterWebhook(deps))
+		rc.Post("/things", handlers.HandleCreateThing())
+		rc.Post("/channels", handlers.HandleConfigureChannel())
 	})
 
 	// public: no credentials needed
 	r.Group(func(r chi.Router) {
-		d.Get(r, "/onboarding", handlers.HandleList(deps))
-		d.Get(r, "/onboarding/{id}", handlers.HandleGet(deps))
-		d.Get(r, "/files/report", handlers.HandleReport(deps))
-		d.Get(r, "/legacy", handlers.HandleLegacyGet(deps))
-		d.Get(r, "/things", handlers.HandleSearchThings())
+		rc.Get("/onboarding", handlers.HandleList(deps))
+		rc.Get("/onboarding/{id}", handlers.HandleGet(deps))
+		rc.Get("/files/report", handlers.HandleReport(deps))
+		rc.Get("/legacy", handlers.HandleLegacyGet(deps))
+		rc.Get("/things", handlers.HandleSearchThings())
 	})
 
 	r.Mount("/openapi.json", d)
 
 	// Adopt the root: Route/Mount prefixes compose into full paths at build.
-	if err := d.Adopt(r); err != nil {
+	if err := rc.Adopt(); err != nil {
 		panic(err)
 	}
 	return d, r

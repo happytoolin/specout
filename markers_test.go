@@ -23,15 +23,18 @@ type item struct {
 func TestMarkerTypes(t *testing.T) {
 	d := specout.New(specout.Config{Title: "t", Version: "1"})
 	r := chi.NewRouter()
-	d.Post(r, "/files", specout.Handler[uploadReq, specout.NoContent]{
+	specout.Chi(d, r).Post("/files", specout.Handler[uploadReq, specout.NoContent]{
 		HandlerFunc: func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) },
 	})
-	d.Post(r, "/items", specout.Handler[emptyMarker, item]{
+	specout.Chi(d, r).Post("/items", specout.Handler[emptyMarker, item]{
 		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {},
 		Responses: []specout.Response{
 			{Status: 201, Headers: []specout.Header{{Name: "Location"}}},
 		},
 	})
+	if err := specout.Chi(d, r).Adopt(); err != nil {
+		t.Fatal(err)
+	}
 	r.Mount("/openapi.json", d)
 
 	w := httptest.NewRecorder()

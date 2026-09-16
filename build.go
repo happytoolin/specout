@@ -1,6 +1,7 @@
 package specout
 
 import (
+	"fmt"
 	"net/http"
 	"reflect"
 	"sort"
@@ -11,8 +12,18 @@ import (
 // build assembles the OpenAPI document: resolve chi paths via a single walk,
 // merge std patterns, reflect schemas, emit operations in path order.
 func (d *Generator) build() (*obj, error) {
-	d.resolvePathsLocked()
+	if err := d.resolveLocked(); err != nil {
+		return nil, err
+	}
 	records := d.flatRecords()
+	if err := checkOperationIDs(records); err != nil {
+		return nil, err
+	}
+	for _, rec := range records {
+		if isCatchAll(rec.full) {
+			rec.omit = true
+		}
+	}
 
 	spec := newObj()
 	info := newObj().set("title", d.cfg.Title).set("version", d.cfg.Version)
@@ -78,11 +89,13 @@ func (d *Generator) build() (*obj, error) {
 				set("content", newObj().set(ct, media)))
 		}
 		op.set("responses", d.responsesFor(rec, sr))
-		norm := NormalizePath(rec.full)
-		pathItem, _ := paths.get(norm)
+		if rec.omit {
+			continue
+		}
+		pathItem, _ := paths.get(rec.full)
 		if pathItem == nil {
 			pathItem = newObj()
-			paths.set(NormalizePath(rec.full), pathItem)
+			paths.set(rec.full, pathItem)
 		}
 		pathItem.(*obj).set(strings.ToLower(rec.method), op)
 	}
@@ -149,10 +162,36 @@ func operationID(method, path string) string {
 		if seg == "" {
 			continue
 		}
+		if seg == "{}" {
+			return ""
+		}
 		seg = strings.Trim(seg, "{}")
 		b.WriteString(strings.ToUpper(seg[:1]) + seg[1:])
 	}
 	return b.String()
+}
+
+// checkOperationIDs fails loud when two operations would share an id:
+// client codegen assumes uniqueness.
+func checkOperationIDs(records []*routeRecord) error {
+	seen := make(map[string]string)
+	for _, rec := range records {
+		if rec.omit {
+			continue
+		}
+		id := rec.operationID
+		if id == "" {
+			id = operationID(rec.method, rec.full)
+		}
+		if id == "" {
+			continue
+		}
+		if first, dup := seen[id]; dup {
+			return fmt.Errorf("specout: duplicate operationId %s (%s and %s %s)", id, first, rec.method, rec.full)
+		}
+		seen[id] = rec.method + " " + rec.full
+	}
+	return nil
 }
 
 // securitySchemeObj builds the named scheme entry from the doc-only
@@ -173,15 +212,8 @@ func securitySchemeObj(a AuthScheme) *obj {
 }
 
 func (d *Generator) flatRecords() []*routeRecord {
-	keys := make([]uintptr, 0, len(d.routes))
-	for k := range d.routes {
-		keys = append(keys, k)
-	}
-	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
-	var out []*routeRecord
-	for _, k := range keys {
-		out = append(out, d.routes[k]...)
-	}
+	out := make([]*routeRecord, len(d.records))
+	copy(out, d.records)
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].method != out[j].method {
 			return out[i].method < out[j].method
@@ -190,68 +222,41 @@ func (d *Generator) flatRecords() []*routeRecord {
 	})
 	return out
 }
-
 func isEmptyStruct(t reflect.Type) bool {
 	return t != nil && t.Kind() == reflect.Struct && t.NumField() == 0
 }
 
-// NormalizePath canonicalizes route patterns for comparison: chi walks emit
-// a trailing slash for "/" patterns inside Route groups, while RoutePattern
-// at serve time does not. One shape everywhere.
-func NormalizePath(p string) string {
+// driftKey canonicalizes a served pattern for the recorder drift check.
+// chi RoutePattern collapses trailing slashes (both /a and /a/ report
+// "/a"), so served-side keys trim one trailing slash to match. Registered
+// doc paths keep their exact form: /a and /a/ are distinct OpenAPI paths.
+func driftKey(p string) string {
 	if len(p) > 1 {
 		return strings.TrimSuffix(p, "/")
 	}
 	return p
 }
 
-// resolvePathsLocked stitches full paths via chi walks. Caller holds d.mu.
-// A handler registered on several routes gets one walked path per
-// registration; dedupe is per handler+method key, longest path first so
-// full paths (through the serving root) beat relative inner-group paths.
-func (d *Generator) resolvePathsLocked() {
-	if d.resolved {
-		return
-	}
-	hits, err := d.walkAll()
-	if err != nil {
-		return
-	}
-	claimed := map[rkey]map[string]bool{}
-	for _, recs := range d.routes {
-		for _, rec := range recs {
-			k := rkey{reflect.ValueOf(rec.fn).Pointer(), rec.method}
-			paths := hits[k]
-			sort.Slice(paths, func(i, j int) bool { return len(paths[i]) > len(paths[j]) })
-			for _, p := range paths {
-				if claimed[k][p] {
-					continue
-				}
-				rec.full = p
-				if claimed[k] == nil {
-					claimed[k] = map[string]bool{}
-				}
-				claimed[k][p] = true
-				break
-			}
-		}
-	}
-	d.resolved = true
+// isCatchAll reports patterns OpenAPI cannot express: trailing wildcards.
+func isCatchAll(p string) bool {
+	return strings.Contains(p, "*")
 }
 
 // DeclaredStatuses exposes the declared method+path -> codes map, for the
 // recorder's drift check.
-func (d *Generator) DeclaredStatuses() map[RouteKey]map[int]bool {
+func (d *Generator) DeclaredStatuses() (map[RouteKey]map[int]bool, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.resolvePathsLocked()
+	if err := d.resolveLocked(); err != nil {
+		return nil, err
+	}
 	records := d.flatRecords()
 	out := make(map[RouteKey]map[int]bool)
 	for _, rec := range records {
 		if rec.full == "" {
 			continue
 		}
-		key := RouteKey{Method: rec.method, Path: NormalizePath(rec.full)}
+		key := RouteKey{Method: rec.method, Path: driftKey(rec.full)}
 		codes := out[key]
 		if codes == nil {
 			codes = make(map[int]bool)
@@ -280,7 +285,7 @@ func (d *Generator) DeclaredStatuses() map[RouteKey]map[int]bool {
 			}
 		}
 	}
-	return out
+	return out, nil
 }
 
 // responsesFor assembles the responses object for one operation: the Res
