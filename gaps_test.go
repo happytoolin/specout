@@ -313,6 +313,37 @@ func TestGapRangeCode(t *testing.T) {
 	}
 }
 
+// TestGapNoBodyStatuses: a bare 204 or 304 carries no body. HTTP forbids
+// content there, and inheriting Res would leak the handler's schema into it.
+func TestGapNoBodyStatuses(t *testing.T) {
+	d := specout.New(specout.Config{Title: "t", Version: "1"})
+	r := chi.NewRouter()
+	specout.Chi(d, r).Get("/gone", specout.Handler[struct{}, gapRes]{
+		HandlerFunc: func(w http.ResponseWriter, req *http.Request) { w.WriteHeader(204) },
+		Responses: []specout.Response{
+			{Status: 204},
+			{Status: 304},
+		},
+	})
+	doc := gapsDocOn(t, d, r)
+	responses := gapsOp(t, doc, "/gone", "get")["responses"].(map[string]any)
+	for _, code := range []string{"204", "304"} {
+		resp, ok := responses[code].(map[string]any)
+		if !ok {
+			t.Fatalf("missing %s: %v", code, responses)
+		}
+		if _, has := resp["content"]; has {
+			t.Errorf("%s must carry no content: %v", code, resp)
+		}
+		if resp["description"] == "" {
+			t.Errorf("%s needs a description: %v", code, resp)
+		}
+	}
+	if _, has := responses["200"]; !has {
+		t.Errorf("the Res default 200 stays: %v", responses)
+	}
+}
+
 // TestGapExternalDocsNeedsURL: url is required by OpenAPI, and an empty one
 // used to emit an object the validator rejects.
 func TestGapExternalDocsNeedsURL(t *testing.T) {

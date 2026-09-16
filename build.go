@@ -524,6 +524,11 @@ func (d *Generator) responsesFor(rec *routeRecord, sr *schemaRegistry) *obj {
 		if resp.Type != nil {
 			t = reflect.TypeOf(resp.Type)
 		}
+		// 204 and 304 carry no body: inheriting Res would emit content the
+		// HTTP spec forbids. An explicit Type still wins.
+		if resp.Type == nil && (key == "204" || key == "304") {
+			t = nil
+		}
 		body := contentResponse(resp.Status, t, sr)
 		if resp.Status == 0 && resp.Key != "" && resp.Key != "default" {
 			// a range has no status text of its own; published documents
