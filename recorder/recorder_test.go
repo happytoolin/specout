@@ -35,21 +35,25 @@ func TestVerifyPassesOnFullCoverage(t *testing.T) {
 		rec.ServeHTTP(httptest.NewRecorder(), req)
 	}
 
-	hit(http.MethodGet, "/onboarding", "")                                                          // list 200
-	hit(http.MethodPost, "/onboarding", `{"owner":"new@example.com","stage":"draft"}`)              // create 201
-	hit(http.MethodPost, "/onboarding?existing=1", `{"owner":"again@example.com","stage":"draft"}`) // idempotent 200
-	hit(http.MethodGet, "/onboarding/onb_4f9x", "")                                                 // get 200
-	hit(http.MethodPut, "/onboarding/onb_4f9x", `{"owner":"up@example.com","stage":"active"}`)      // update 200
-	hit(http.MethodPut, "/onboarding/onb_new1", `{"owner":"x@example.com","stage":"draft"}`)        // create 201
-	hit(http.MethodPut, "/onboarding/onb_4f9x", `{"owner":"not-an-email","stage":"draft"}`)         // 422
-	hit(http.MethodDelete, "/onboarding/onb_new1", "")                                              // 204
-	hit(http.MethodPost, "/onboarding/onb_4f9x/sync", `{"expected":0}`)                             // 200 (version 0)
-	hit(http.MethodPost, "/onboarding/onb_4f9x/sync", `{"expected":999}`)                           // 409
-	hit(http.MethodPost, "/onboarding/onb_4f9x/sync", `{"expected":-1}`)                            // 422 (negative)
-	hit(http.MethodPost, "/files/import", "")                                                       // 204
-	hit(http.MethodGet, "/files/report", "")                                                        // 200 binary
-	hit(http.MethodPost, "/webhooks", `{"kind":"email","data":{"address":"ops@example.com"}}`)      // 200
-	hit(http.MethodGet, "/legacy", "")                                                              // 200
+	hit(http.MethodGet, "/onboarding", "")                                                                                                                                // list 200
+	hit(http.MethodPost, "/onboarding", `{"owner":"new@example.com","stage":"draft"}`)                                                                                    // create 201
+	hit(http.MethodPost, "/onboarding?existing=1", `{"owner":"again@example.com","stage":"draft"}`)                                                                       // idempotent 200
+	hit(http.MethodGet, "/onboarding/onb_4f9x", "")                                                                                                                       // get 200
+	hit(http.MethodPut, "/onboarding/onb_4f9x", `{"owner":"up@example.com","stage":"active"}`)                                                                            // update 200
+	hit(http.MethodPut, "/onboarding/onb_new1", `{"owner":"x@example.com","stage":"draft"}`)                                                                              // create 201
+	hit(http.MethodPut, "/onboarding/onb_4f9x", `{"owner":"not-an-email","stage":"draft"}`)                                                                               // 422
+	hit(http.MethodDelete, "/onboarding/onb_new1", "")                                                                                                                    // 204
+	hit(http.MethodPost, "/onboarding/onb_4f9x/sync", `{"expected":0}`)                                                                                                   // 200 (version 0)
+	hit(http.MethodPost, "/onboarding/onb_4f9x/sync", `{"expected":999}`)                                                                                                 // 409
+	hit(http.MethodPost, "/onboarding/onb_4f9x/sync", `{"expected":-1}`)                                                                                                  // 422 (negative)
+	hit(http.MethodPost, "/files/import", "")                                                                                                                             // 204
+	hit(http.MethodGet, "/files/report", "")                                                                                                                              // 200 binary
+	hit(http.MethodPost, "/webhooks", `{"kind":"email","data":{"address":"ops@example.com"}}`)                                                                            // 200
+	hit(http.MethodGet, "/legacy", "")                                                                                                                                    // 200
+	hit(http.MethodGet, "/things", "")                                                                                                                                    // 200 search
+	hit(http.MethodPost, "/things", `{"slug":"acme-thing","displayName":"Acme","email":"ops@example.com","priority":3,"stock":10,"tags":["core"],"visibility":"public"}`) // 201
+	hit(http.MethodPost, "/things", `{"slug":"AB"}`)                                                                                                                      // 422 (pattern fail)
+	hit(http.MethodPost, "/channels", `{"kind":"notify_email","data":{"address":"ops@example.com"}}`)                                                                     // 204
 
 	ft := &failT{}
 	recorder.Verify(ft, d, rec)

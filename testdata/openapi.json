@@ -712,6 +712,328 @@
         }
       }
     },
+    "/things": {
+      "get": {
+        "summary": "Search things (query-param constraints)",
+        "operationId": "getThings",
+        "tags": [
+          "validators"
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 100,
+              "minLength": 1
+            },
+            "description": "Full-text query"
+          },
+          {
+            "name": "visibility",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "public",
+                "internal",
+                "private"
+              ],
+              "default": "public"
+            }
+          },
+          {
+            "name": "minPriority",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "maximum": 5,
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "default": 20
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThingList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a thing (all constraint keywords)",
+        "operationId": "postThings",
+        "tags": [
+          "validators"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateThingRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Thing"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels": {
+      "post": {
+        "summary": "Configure a notification channel (oneOf + discriminator)",
+        "operationId": "postChannels",
+        "tags": [
+          "validators"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChannelConfig"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/files/import": {
       "post": {
         "summary": "Bulk import from CSV",
@@ -1111,6 +1433,82 @@
           "items"
         ]
       },
+      "ThingList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Thing"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ]
+      },
+      "EmailChannel": {
+        "properties": {
+          "address": {
+            "type": "string",
+            "format": "email"
+          }
+        },
+        "type": "object",
+        "required": [
+          "address"
+        ]
+      },
+      "SlackChannel": {
+        "properties": {
+          "webhook": {
+            "type": "string",
+            "format": "uri"
+          },
+          "channel": {
+            "type": "string"
+          }
+        },
+        "type": "object",
+        "required": [
+          "webhook",
+          "channel"
+        ]
+      },
+      "ChannelConfig": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "notify_email",
+              "notify_slack"
+            ],
+            "description": "Discriminator"
+          },
+          "data": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EmailChannel"
+              },
+              {
+                "$ref": "#/components/schemas/SlackChannel"
+              }
+            ],
+            "discriminator": {
+              "mapping": {
+                "notify_email": "EmailChannel",
+                "notify_slack": "SlackChannel"
+              },
+              "propertyName": "kind"
+            }
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "data"
+        ]
+      },
       "ImportRequest": {
         "properties": {
           "File": {
@@ -1219,6 +1617,181 @@
         "type": "object",
         "required": [
           "problems"
+        ]
+      },
+      "CreateThingRequest": {
+        "properties": {
+          "slug": {
+            "type": "string",
+            "maxLength": 40,
+            "minLength": 3,
+            "pattern": "^[a-z][a-z0-9-]*$",
+            "examples": [
+              "acme-thing"
+            ]
+          },
+          "displayName": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "examples": [
+              "ops@example.com"
+            ]
+          },
+          "site": {
+            "type": "string",
+            "format": "uri"
+          },
+          "priority": {
+            "type": "integer",
+            "maximum": 5,
+            "minimum": 1,
+            "default": 3
+          },
+          "weight": {
+            "type": "number",
+            "multipleOf": 0.5,
+            "maximum": 1000,
+            "minimum": 0
+          },
+          "stock": {
+            "type": "integer",
+            "maximum": 1000000,
+            "minimum": 0
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 10,
+            "minItems": 1,
+            "uniqueItems": true,
+            "description": "Free-form labels"
+          },
+          "scores": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "maxItems": 5,
+            "minItems": 1,
+            "description": "Judges scores 0-10"
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "public",
+              "internal",
+              "private"
+            ],
+            "default": "public"
+          },
+          "expiresAt": {
+            "format": "date-time",
+            "description": "Null or omit for never",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "metadata": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "description": "Arbitrary string labels"
+          },
+          "limits": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "description": "Per-region limits"
+          }
+        },
+        "type": "object",
+        "required": [
+          "slug",
+          "displayName",
+          "email",
+          "priority",
+          "stock",
+          "tags",
+          "visibility"
+        ]
+      },
+      "Thing": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "readOnly": true,
+            "examples": [
+              "thg_01HX"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "readOnly": true
+          },
+          "slug": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]*$"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "priority": {
+            "type": "integer",
+            "maximum": 5,
+            "minimum": 1
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 10,
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "public",
+              "internal",
+              "private"
+            ]
+          },
+          "expiresAt": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "metadata": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "createdAt",
+          "slug",
+          "email",
+          "priority",
+          "tags",
+          "visibility"
         ]
       },
       "EmailConfig": {

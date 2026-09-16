@@ -13,6 +13,7 @@ import (
 	"github.com/happytoolin/specout/internal/demo/auth"
 	"github.com/happytoolin/specout/internal/demo/handlers"
 	"github.com/happytoolin/specout/internal/demo/onboarding"
+	"github.com/happytoolin/specout/internal/demo/validators"
 	"github.com/happytoolin/specout/internal/demo/webhooks"
 )
 
@@ -38,12 +39,15 @@ func New() (*specout.Generator, http.Handler) {
 			{Name: "sync", Description: "Version sync"},
 			{Name: "files", Description: "Import and export"},
 			{Name: "webhooks", Description: "Outbound notifications"},
+			{Name: "validators", Description: "Constraint keyword showcase"},
 		},
 	})
 
 	// union variants — reflection can't discover interface implementations
 	d.Register[webhooks.EmailConfig]("email")
 	d.Register[webhooks.SlackConfig]("slack")
+	d.Register[validators.EmailChannel]("notify_email")
+	d.Register[validators.SlackChannel]("notify_slack")
 
 	deps := handlers.Deps{
 		Store:  onboarding.NewStore(),
@@ -62,6 +66,8 @@ func New() (*specout.Generator, http.Handler) {
 		d.Post(r, "/onboarding/{id}/sync", handlers.HandleSync(deps))
 		d.Post(r, "/files/import", handlers.HandleImport(deps))
 		d.Post(r, "/webhooks", handlers.HandleRegisterWebhook(deps))
+		d.Post(r, "/things", handlers.HandleCreateThing())
+		d.Post(r, "/channels", handlers.HandleConfigureChannel())
 	})
 
 	// public: no credentials needed
@@ -70,6 +76,7 @@ func New() (*specout.Generator, http.Handler) {
 		d.Get(r, "/onboarding/{id}", handlers.HandleGet(deps))
 		d.Get(r, "/files/report", handlers.HandleReport(deps))
 		d.Get(r, "/legacy", handlers.HandleLegacyGet(deps))
+		d.Get(r, "/things", handlers.HandleSearchThings())
 	})
 
 	r.Mount("/openapi.json", d)
