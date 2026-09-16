@@ -80,14 +80,17 @@ func (d *Generator) build() (*obj, error) {
 		}
 		// path params from the resolved pattern, query params from Req tags
 		var parameters []any
-		parameters = append(parameters, pathParamObjs(rec.full)...)
-		qp, hasBody := taggedParams(rec.req, sr)
-		parameters = append(parameters, qp...)
+		parameters = append(parameters, pathParamObjs(rec.full, rec.req)...)
+		parameters = append(parameters, taggedParams(rec.req, sr)...)
 		if len(parameters) > 0 {
 			op.set("parameters", parameters)
 		}
-		if hasBody && rec.req != nil && !isEmptyStruct(rec.req) {
-			ct, media := requestBodyFor(rec.req, sr)
+		// the body is Req minus its parameter fields; nil means no body
+		if bt, name := sr.bodyType(rec.req); bt != nil {
+			if name != "" {
+				sr.overrideName(bt, name)
+			}
+			ct, media := requestBodyFor(bt, sr)
 			op.set("requestBody", newObj().
 				set("required", true).
 				set("content", newObj().set(ct, media)))
@@ -201,18 +204,35 @@ func checkOperationIDs(records []*routeRecord) error {
 }
 
 // securitySchemeObj builds the named scheme entry from the doc-only
-// AuthScheme declaration.
+// AuthScheme declaration. A typo in Type, Key, In or URL would emit a
+// securityScheme object the OpenAPI validator rejects (type must be one of
+// apiKey/http/mutualTLS/oauth2/openIdConnect; apiKey needs a real in), so
+// the declaration is checked here rather than shipped broken.
 func securitySchemeObj(a AuthScheme) *obj {
+	if a.Name == "" {
+		panic("specout: AuthScheme.Name must not be empty (it is the securitySchemes key)")
+	}
 	o := newObj()
 	switch a.Type {
 	case "httpBearer":
 		o.set("type", "http").set("scheme", "bearer")
 	case "apiKey":
+		if a.Key == "" {
+			panic("specout: AuthScheme " + a.Name + " is apiKey but has no Key (the parameter name)")
+		}
+		switch a.In {
+		case InHeader, InQuery, InCookie:
+		default:
+			panic("specout: AuthScheme " + a.Name + " has in=" + a.In + ", must be header, query or cookie")
+		}
 		o.set("type", "apiKey").set("name", a.Key).set("in", a.In)
 	case "openIdConnect":
+		if a.URL == "" {
+			panic("specout: AuthScheme " + a.Name + " is openIdConnect but has no URL")
+		}
 		o.set("type", "openIdConnect").set("openIdConnectUrl", a.URL)
 	default:
-		o.set("type", a.Type)
+		panic("specout: AuthScheme " + a.Name + " has type " + a.Type + ", must be httpBearer, apiKey or openIdConnect")
 	}
 	return o
 }
@@ -220,12 +240,9 @@ func securitySchemeObj(a AuthScheme) *obj {
 func (d *Generator) flatRecords() []*routeRecord {
 	out := make([]*routeRecord, len(d.records))
 	copy(out, d.records)
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].method != out[j].method {
-			return out[i].method < out[j].method
-		}
-		return out[i].pattern < out[j].pattern
-	})
+	// Registration order: paths come out in the order the code declares them,
+	// so the document reads like the router. Sorting here put every DELETE
+	// first and scattered one resource across the paths object.
 	return out
 }
 func isEmptyStruct(t reflect.Type) bool {
@@ -311,6 +328,12 @@ func (d *Generator) statusMap(withDefaults bool) (map[RouteKey]map[int]bool, err
 		omitted := map[int]bool{}
 		for _, resp := range rec.responses {
 			if !resp.Omit {
+				// status 0 is the "default" response: it names no code, so it
+				// is a coverage expectation nothing can satisfy. SpecStatuses
+				// keeps it as the "any code allowed" marker instead.
+				if resp.Status == 0 && !withDefaults {
+					continue
+				}
 				codes[resp.Status] = true
 			} else {
 				omitted[resp.Status] = true
@@ -360,8 +383,10 @@ func (d *Generator) responsesFor(rec *routeRecord, sr *schemaRegistry) *obj {
 			add(204, newObj().set("description", "No content"))
 		}
 	} else {
-		ref := sr.refFor(rec.res)
-		add(200, refResponse("OK", ref))
+		// schemaFor inlines a scalar or a map of scalars (real specs write the
+		// object body out) and $refs everything else; the description matches
+		// the old refResponse exactly, so no diff for named struct responses.
+		add(200, contentResponse(200, rec.res, sr))
 	}
 	for _, resp := range rec.responses {
 		if resp.Omit {
@@ -386,7 +411,7 @@ func (d *Generator) responsesFor(rec *routeRecord, sr *schemaRegistry) *obj {
 				ct = "application/octet-stream"
 			}
 			body.set("content", newObj().set(ct,
-				newObj().set("schema", newObj().set("type", "string").set("format", "binary"))))
+				newObj().set("schema", binarySchema())))
 		}
 		if len(resp.Headers) > 0 {
 			hdrs := newObj()
@@ -415,10 +440,25 @@ func (d *Generator) responsesFor(rec *routeRecord, sr *schemaRegistry) *obj {
 	}
 	for _, code := range ordered {
 		if _, ok := statuses[code]; ok {
-			out.set(strconv.Itoa(code), statuses[code])
+			out.set(statusKey(code), statuses[code])
 		}
 	}
 	return out
+}
+
+// statusKey names a response object key. Status 0 means the OpenAPI
+// "default" response: real published specs (petstore, MS Graph, GitHub)
+// carry one on most operations, and OpenAPI 3.1 requires a numeric code or
+// "default" — "0" is neither, so it validates against nothing. Any other
+// code outside 100-599 is a typo, not a status.
+func statusKey(code int) string {
+	switch {
+	case code == 0:
+		return "default"
+	case code < 100 || code > 599:
+		panic("specout: response status must be 0 (default) or 100-599, got " + strconv.Itoa(code))
+	}
+	return strconv.Itoa(code)
 }
 
 // mergeRaw splices arbitrary OpenAPI fragments into a response object.
@@ -438,14 +478,9 @@ func contentResponse(code int, t reflect.Type, sr *schemaRegistry) *obj {
 	if t == nil || isEmptyStruct(t) {
 		return newObj().set("description", http.StatusText(code))
 	}
-	ref := sr.refFor(t)
-	return refResponse(http.StatusText(code), ref)
-}
-
-func refResponse(desc, ref string) *obj {
-	return newObj().set("description", desc).set("content",
-		newObj().set("application/json",
-			newObj().set("schema", newObj().set("$ref", ref))))
+	return newObj().set("description", http.StatusText(code)).
+		set("content", newObj().set("application/json",
+			newObj().set("schema", schemaFor(t, sr))))
 }
 
 // headerObj builds one OpenAPI header object: bare Name = string schema;
@@ -454,7 +489,7 @@ func headerObj(hd Header, sr *schemaRegistry) *obj {
 	if hd.Type == nil {
 		return newObj().set("schema", newObj().set("type", "string"))
 	}
-	return newObj().set("schema", newObj().set("$ref", sr.refFor(reflect.TypeOf(hd.Type))))
+	return newObj().set("schema", schemaFor(reflect.TypeOf(hd.Type), sr))
 }
 
 func toAny[T any](s []T) []any {

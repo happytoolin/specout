@@ -49,6 +49,11 @@ func Verify(t TestingT, d *specout.Generator, rec *Recorder) {
 	}
 	for key, codes := range observed {
 		want := lookupKey(allowed, key)
+		// a declared "default" response (status 0) means any code is in the
+		// spec for that route, so nothing the handler writes is drift.
+		if want[0] {
+			continue
+		}
 		for code := range codes {
 			if !want[code] {
 				t.Errorf("handler wrote %s %s %d but spec does not declare it", key.Method, key.Path, code)

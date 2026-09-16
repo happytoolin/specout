@@ -64,11 +64,17 @@ func (rec *Recorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rw := &observingWriter{ResponseWriter: w}
 	rec.next.ServeHTTP(rw, r)
 
-	// std populates r.Pattern during dispatch; read after.
+	// std populates r.Pattern during dispatch; read after. A pattern ending
+	// in "/" is a subtree mount ("/api/v3/" in front of the app router), not
+	// one operation: a request the app router did not match must not be
+	// keyed under the mount, or every 404 and 405 reads as drift.
 	if pattern == "" && r.Pattern != "" {
-		pattern = r.Pattern
-		if _, path, ok := strings.Cut(pattern, " "); ok {
-			pattern = path
+		p := r.Pattern
+		if _, path, ok := strings.Cut(p, " "); ok {
+			p = path
+		}
+		if !strings.HasSuffix(p, "/") {
+			pattern = p
 		}
 	}
 

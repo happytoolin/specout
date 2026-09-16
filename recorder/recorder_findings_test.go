@@ -173,3 +173,29 @@ func TestSpecEndpointSkipped(t *testing.T) {
 		}
 	}
 }
+
+// An outer http.ServeMux subtree mount ("/api/v3/") is not an operation. A
+// request the app router does not match (404, or chi's 405 on a HEAD probe)
+// carries that mount as r.Pattern; keying it would report drift against a
+// path that is not a route.
+func TestSubtreeMountNotKeyed(t *testing.T) {
+	d := specout.New(specout.Config{Title: "t", Version: "1"})
+	r := chi.NewRouter()
+	rc := specout.Chi(d, r)
+	rc.Get("/x", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: hit204})
+	if err := rc.Adopt(); err != nil {
+		t.Fatal(err)
+	}
+	rec := recorder.New(r)
+	outer := http.NewServeMux()
+	outer.Handle("/api/v3/", http.StripPrefix("/api/v3", rec))
+	outer.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/api/v3/nope", nil))
+	outer.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("HEAD", "/api/v3/x", nil))
+	ft := &failT{}
+	recorder.Verify(ft, d, rec)
+	for _, e := range ft.errs {
+		if strings.Contains(e, "api/v3") {
+			t.Errorf("mount keyed as drift: %s", e)
+		}
+	}
+}

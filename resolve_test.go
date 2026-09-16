@@ -589,3 +589,45 @@ func TestDuplicatePathParamEmittedOnce(t *testing.T) {
 		t.Errorf("param name = %v, want id", got)
 	}
 }
+
+// A path:"name" tag with no {name} in the pattern is a typo: the field leaves
+// the body and the placeholder stays a plain string, so the document would be
+// quietly wrong. The mismatched name is the case a build must reject.
+type strayPathReq struct {
+	ID string `path:"Id"`
+}
+
+func TestStrayPathFieldFails(t *testing.T) {
+	d := specout.New(specout.Config{Title: "t", Version: "1"})
+	specout.Document(d, http.MethodGet, "/x/{id}", specout.Handler[strayPathReq, specout.NoContent]{HandlerFunc: okBody})
+	var buf bytes.Buffer
+	err := d.WriteJSON(&buf)
+	if err == nil || !strings.Contains(err.Error(), `path:"Id"`) {
+		t.Fatalf("want a stray path field error, got %v", err)
+	}
+}
+
+// The same tag on the matching pattern builds, and a path:"-" opt-out is not
+// a stray.
+func TestPathFieldMatchesPattern(t *testing.T) {
+	type req struct {
+		ID   string `path:"id" json:"-"`
+		Skip string `path:"-" json:"skip"`
+	}
+	d := specout.New(specout.Config{Title: "t", Version: "1"})
+	specout.Document(d, http.MethodGet, "/x/{id}", specout.Handler[req, specout.NoContent]{HandlerFunc: okBody})
+	if _, err := docPathsErr(t, d); err != nil {
+		t.Fatalf("build: %v", err)
+	}
+}
+
+func docPathsErr(t *testing.T, d *specout.Generator) (map[string]any, error) {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := d.WriteJSON(&buf); err != nil {
+		return nil, err
+	}
+	var doc map[string]any
+	json.Unmarshal(buf.Bytes(), &doc)
+	return doc["paths"].(map[string]any), nil
+}

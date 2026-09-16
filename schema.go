@@ -2,8 +2,10 @@ package specout
 
 import (
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/invopop/jsonschema"
 )
@@ -15,10 +17,11 @@ type schemaRegistry struct {
 	order     []reflect.Type
 	byName    map[string]*jsonschema.Schema // hoisted $defs with no Go type
 	nameOrder []string
-	overrides map[reflect.Type]string // SchemaName[T] component-name overrides
-	variants  map[string]reflect.Type // Register[T] union variants, by name
-	anon      int                     // anonymous struct component counter
-	owned     map[string]reflect.Type // component name -> owning Go type
+	overrides map[reflect.Type]string   // SchemaName[T] component-name overrides
+	variants  map[string]reflect.Type   // Register[T] union variants, by name
+	anon      int                       // anonymous struct component counter
+	owned     map[string]reflect.Type   // component name -> owning Go type
+	bodyViews map[reflect.Type]bodyView // Req type -> request-body-only view
 	closed    bool
 	dialect   Dialect
 }
@@ -35,6 +38,7 @@ func newSchemaRegistry(cfg Config) *schemaRegistry {
 		overrides: make(map[reflect.Type]string),
 		variants:  make(map[string]reflect.Type),
 		owned:     make(map[string]reflect.Type),
+		bodyViews: make(map[reflect.Type]bodyView),
 		closed:    cfg.ClosedSchemas,
 		dialect:   cfg.JSONDialect,
 	}
@@ -63,6 +67,15 @@ func (sr *schemaRegistry) refFor(t reflect.Type) string {
 		Anonymous:                 true,
 		DoNotReference:            false,
 		AllowAdditionalProperties: !sr.closed,
+		// The File marker is a raw payload, not an object: map it to the
+		// binary string schema before invopop turns it into a $ref and an
+		// empty "File" component.
+		Mapper: func(t reflect.Type) *jsonschema.Schema {
+			if t == reflect.TypeFor[File]() {
+				return &jsonschema.Schema{Type: "string", Format: "binary"}
+			}
+			return nil
+		},
 	}
 	s := r.Reflect(reflect.New(t).Interface())
 	s.Version = ""
@@ -87,6 +100,44 @@ func (sr *schemaRegistry) refFor(t reflect.Type) string {
 	return "#/components/schemas/" + e.name
 }
 
+// isBuiltin reports whether t's schema is small enough to inline: predeclared
+// scalars and containers of them. A component named after a Go type string
+// ("int", "string") is junk in components.schemas, and real specs inline
+// scalars (response headers, simple bodies) instead of ref-ing them.
+func isBuiltin(t reflect.Type) bool {
+	// time.Time reflects to {type: string, format: date-time} — a scalar in
+	// every published spec. Without this it becomes a $ref to a component
+	// named "Time" when it is a bare body or a header type, while the same
+	// type used as a struct field inlines. One type, one shape.
+	if t == reflect.TypeFor[time.Time]() {
+		return true
+	}
+	switch t.Kind() {
+	case reflect.Slice, reflect.Array, reflect.Map:
+		return isBuiltin(t.Elem())
+	case reflect.Bool, reflect.String,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		// PkgPath is empty for the predeclared types only: a named alias
+		// (type Password string) keeps its own component.
+		return t.PkgPath() == ""
+	}
+	return false
+}
+
+// schemaFor returns the inline schema for a builtin type and a component
+// $ref for everything else.
+func schemaFor(t reflect.Type, sr *schemaRegistry) any {
+	if !isBuiltin(t) {
+		return newObj().set("$ref", sr.refFor(t))
+	}
+	if s := propSchema(t, ""); s != nil {
+		return s
+	}
+	return newObj().set("$ref", sr.refFor(t))
+}
+
 // nameFor picks a component name: override > generic-aware > simple.
 func (sr *schemaRegistry) nameFor(t reflect.Type) string {
 	if n, ok := sr.overrides[t]; ok {
@@ -101,8 +152,18 @@ func (sr *schemaRegistry) nameFor(t reflect.Type) string {
 
 func sanitizeName(t reflect.Type) string {
 	n := t.String()
-	if t.Kind() == reflect.Slice || t.Kind() == reflect.Array {
+	switch t.Kind() {
+	case reflect.Slice, reflect.Array:
 		return sanitizeName(t.Elem()) + "List"
+	case reflect.Map:
+		// map[K]V carries no Go name; t.String() is "map[string]Foo", which is
+		// not a legal component name. Name it after the value type.
+		return sanitizeName(t.Elem()) + "Map"
+	case reflect.Interface:
+		// any / interface{}: "interface {}" is not a legal component name.
+		if t.NumMethod() == 0 {
+			return "Any"
+		}
 	}
 	// pkg.Page[pkg.T] → PageT
 	if idx := strings.Index(n, "["); idx >= 0 {
@@ -126,15 +187,26 @@ func (sr *schemaRegistry) unwrapDefs(t reflect.Type, s *jsonschema.Schema) *json
 	if s.Ref != "" && strings.HasSuffix(s.Ref, "/"+name) {
 		body = s.Definitions[name]
 	}
-	for defName, def := range s.Definitions {
-		if defName == name {
-			continue
+	// $defs is a map; registration order feeds component order, so walk the
+	// names sorted to keep the output byte-deterministic.
+	defNames := make([]string, 0, len(s.Definitions))
+	for defName := range s.Definitions {
+		if defName != name {
+			defNames = append(defNames, defName)
 		}
+	}
+	slices.Sort(defNames)
+	for _, defName := range defNames {
 		if sr.defByName(defName) == nil {
-			sr.addDef(defName, def)
+			sr.addDef(defName, s.Definitions[defName])
 		}
 	}
 	remapDefs(body)
+	if body == s {
+		// Every $def here was hoisted into components.schemas; a second copy
+		// of the whole tree inside the body is dead weight.
+		s.Definitions = nil
+	}
 	return body
 }
 
@@ -245,11 +317,19 @@ func normalizeOneOf(s *jsonschema.Schema, sr *schemaRegistry) {
 					for _, sub := range p.OneOf {
 						if sub.Ref != "" {
 							name := strings.TrimPrefix(sub.Ref, "#/components/schemas/")
-							// variant name = registered key; match by type name
+							// variant name = registered key; match by type name.
+							// sr.variants is a map, so collect the matches and
+							// sort them: mapping key order must not vary
+							// between processes.
+							var vns []string
 							for vn, vt := range sr.variants {
 								if sanitizeName(vt) == name {
-									mapping.set(vn, name)
+									vns = append(vns, vn)
 								}
+							}
+							slices.Sort(vns)
+							for _, vn := range vns {
+								mapping.set(vn, name)
 							}
 						}
 					}
@@ -403,15 +483,16 @@ func applyFieldTags(t reflect.Type, s *jsonschema.Schema) {
 			if fn := parts0(form); fn != "-" && fn != name {
 				s.Properties.Set(fn, p)
 				s.Properties.Delete(name)
+				// required names the wire property too: leaving the Go field
+				// name here would require a property that does not exist.
+				for i, r := range s.Required {
+					if r == name {
+						s.Required[i] = fn
+					}
+				}
 			}
 		}
-
-		if ft := f.Type; ft == reflect.TypeOf(File{}) || (ft.Kind() == reflect.Slice && ft.Elem() == reflect.TypeOf(File{})) {
-			p.Type = "string"
-			p.Format = "binary"
-			p.Ref = ""
-			p.Properties = nil
-		}
+		applyFormatTag(p, f.Tag)
 		for _, part := range strings.Split(f.Tag.Get("jsonschema"), ",") {
 			switch part {
 			case "readonly", "readOnly=true":

@@ -861,6 +861,7 @@ type UpsertOnboardingRequest struct {
       <tr><td><code>readOnly</code> / <code>writeOnly</code></td><td>tag</td><td>see shared types, §08</td></tr>
       <tr><td><code>additionalProperties: false</code></td><td>config <code>ClosedSchemas: true</code></td><td>clients love closed schemas</td></tr>
       <tr><td>query vs body location</td><td><code>query</code> tag</td><td>fields become operation parameters</td></tr>
+      <tr><td>path parameter type</td><td><code>path</code> tag</td><td><code>path:"petId"</code> types the <code>{petId}</code> placeholder (int64, not string); the tag name must match the pattern or the build fails. <code>path:"-"</code> opts a field out</td></tr>
       <tr><td>cookie parameter</td><td><code>cookie</code> tag</td><td><code>in: cookie</code> operation parameter</td></tr>
       <tr><td>header parameter</td><td><code>header</code> tag</td><td><code>in: header</code> operation parameter (e.g. X-Trace-Id)</td></tr>
     </tbody>

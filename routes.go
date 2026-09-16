@@ -157,6 +157,22 @@ func (d *Generator) resolveLocked() error {
 		}
 	}
 
+	// an empty parameter name (/{} ) is not a legal OpenAPI path template.
+	// chi accepts the route, so fail here instead of emitting a broken path.
+	for _, rec := range d.records {
+		if strings.Contains(docPath(rec.full), "{}") {
+			return fmt.Errorf("specout: %s %q has an empty path parameter {}; give it a name", rec.method, rec.pattern)
+		}
+	}
+
+	// a Req field tagged path:"name" with no {name} in the pattern is a typo:
+	// the field leaves the body and the placeholder stays a plain string.
+	for _, rec := range d.records {
+		if name, ok := strayPathField(rec.req, rec.full); ok {
+			return fmt.Errorf("specout: %s %q has a Req field tagged path:%q, but the pattern has no {%s}", rec.method, rec.pattern, name, name)
+		}
+	}
+
 	// duplicate canonical (path, method) from two registrations fails loud.
 	// Keyed on the documented path: /x/{id:[0-9]+} and /x/{id:[a-z]+} are two
 	// distinct route patterns but one OpenAPI path, and the later one would
