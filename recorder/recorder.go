@@ -2,6 +2,7 @@ package recorder
 
 import (
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/go-chi/chi/v5"
@@ -37,6 +38,14 @@ func (rec *Recorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	rw := &observingWriter{ResponseWriter: w}
 	rec.next.ServeHTTP(rw, r)
+
+	// std ServeMux sets r.Pattern during ServeHTTP; read it after.
+	if pattern == "" {
+		pattern = r.Pattern
+		if _, path, ok := strings.Cut(pattern, " "); ok {
+			pattern = path
+		}
+	}
 
 	key := specout.RouteKey{Method: r.Method, Path: specout.NormalizePath(pattern)}
 	rec.mu.Lock()

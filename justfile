@@ -22,7 +22,7 @@ build:
 test:
     go test ./...
 
-# vet + gofmt + staticcheck (skips staticcheck if not installed)
+# vet + gofmt (add staticcheck once a go1.27 build is available)
 lint:
     go vet ./...
     @! {{gofmt}} -l . | grep -q .

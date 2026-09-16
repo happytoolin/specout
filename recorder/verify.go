@@ -1,13 +1,6 @@
 package recorder
 
-import (
-	"fmt"
-	"net/http"
-	"sort"
-	"strings"
-
-	"github.com/happytoolin/specout"
-)
+import "github.com/happytoolin/specout"
 
 // TestingT is the subset of *testing.T Verify needs.
 type TestingT interface {
@@ -44,9 +37,4 @@ func Verify(t TestingT, d *specout.Generator, rec *Recorder) {
 			}
 		}
 	}
-	_ = sort.Strings
-	_ = fmt.Sprintf
-	_ = strings.Join
 }
-
-var _ = http.StatusOK

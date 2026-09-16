@@ -949,7 +949,7 @@ type WebhookConfig struct {
 		{URL: "https://api.internal", Description: "production"},
 		{URL: "http://localhost:8080", Description: "development"},
 	},
-	Auth: specout.Bearer, // wired next to your auth middleware
+	Auth: []specout.AuthScheme{specout.Bearer}, // wired next to your auth middleware
 	Tags: []specout.Tag{
 		{Name: "onboarding", Description: "Onboarding lifecycle"},
 		{Name: "webhooks", Description: "Outbound notifications"},

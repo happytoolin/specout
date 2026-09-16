@@ -1,10 +1,8 @@
 package specout
 
 import (
-	"bytes"
 	"io"
 	"net/http"
-	"reflect"
 
 	"encoding/json/jsontext"
 	json "encoding/json/v2"
@@ -36,16 +34,6 @@ func (d *Generator) WriteJSON(w io.Writer) error {
 	return err
 }
 
-// isSelf reports whether handler is (wrapped) d — used to skip the spec's
-// own mount when adopting a router.
-func isSelf(d *Generator, handler http.Handler) bool {
-	if g, ok := handler.(*Generator); ok {
-		return g == d
-	}
-	// chi wraps mounts in a closure; compare the endpoint func pointer
-	return reflect.ValueOf(handler).Pointer() == reflect.ValueOf(d.ServeHTTP).Pointer()
-}
-
 // bytes returns the frozen spec bytes, building lazily on first call.
 func (d *Generator) bytes() ([]byte, error) {
 	d.mu.Lock()
@@ -57,28 +45,12 @@ func (d *Generator) bytes() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	// ponytail: json/v2 sorts map keys, giving byte-deterministic output
-	// without an ordered-map type; swap in one if key order ever matters.
-	b, err := json.Marshal(spec)
+	// obj carries insertion order; jsontext preserves it. Indent directly.
+	b, err := json.Marshal(spec, jsontext.WithIndent("  "))
 	if err != nil {
 		return nil, err
 	}
-	var buf bytes.Buffer
-	dec := jsontext.NewDecoder(bytes.NewReader(b))
-	enc := jsontext.NewEncoder(&buf, jsontext.WithIndent("  "))
-	for {
-		val, err := dec.ReadValue()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-		if err := enc.WriteValue(val); err != nil {
-			return nil, err
-		}
-	}
 	d.frozen = true
-	d.specJSON = buf.Bytes()
+	d.specJSON = append(b, '\n') // trailing newline, like a text file
 	return d.specJSON, nil
 }

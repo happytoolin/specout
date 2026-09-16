@@ -1312,6 +1312,28 @@
       }
     }
   },
+  "tags": [
+    {
+      "name": "onboarding",
+      "description": "Onboarding lifecycle"
+    },
+    {
+      "name": "sync",
+      "description": "Version sync"
+    },
+    {
+      "name": "files",
+      "description": "Import and export"
+    },
+    {
+      "name": "webhooks",
+      "description": "Outbound notifications"
+    },
+    {
+      "name": "validators",
+      "description": "Constraint keyword showcase"
+    }
+  ],
   "security": [
     {
       "bearerAuth": []

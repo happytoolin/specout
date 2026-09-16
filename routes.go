@@ -28,23 +28,6 @@ type routeRecord struct {
 	full        string           // resolved full path, set at build
 }
 
-// HandlerMeta is the operation-level metadata carried on a Handler.
-type HandlerMeta struct {
-	Responses   []Response
-	Tags        []string
-	Summary     string
-	OperationID string
-	Description string
-	Deprecated  bool
-	Public      bool
-}
-
-// metaer lets register pull HandlerMeta off any Handler instantiation
-// without reflection on unexported fields.
-type metaer interface{ handlerMeta() HandlerMeta }
-
-func (m HandlerMeta) handlerMeta() HandlerMeta { return m }
-
 // register records metadata keyed by the embedded HandlerFunc's func pointer.
 // Panics after the spec has frozen.
 func (d *Generator) register(rec routeRecord) {

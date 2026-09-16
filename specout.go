@@ -1,4 +1,7 @@
-// Package specout generates OpenAPI 3.1 specifications from plain
+// Package specout generates OpenAPI 3.1 specifications from plain Go
+// http.HandlerFunc factories: metadata rides the generic Handler type,
+// the spec builds from the live router, and the output is
+// byte-deterministic.
 package specout
 
 import (

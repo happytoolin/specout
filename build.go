@@ -24,7 +24,9 @@ func (d *Generator) build() (*obj, error) {
 		servers := make([]any, 0, len(d.cfg.Servers))
 		for _, s := range d.cfg.Servers {
 			e := newObj().set("url", s.URL)
-			e.set("description", s.Description) // empty description omitted by omitempty-free writer? keep simple
+			if s.Description != "" {
+				e.set("description", s.Description)
+			}
 			servers = append(servers, e)
 		}
 		spec.set("servers", servers)
@@ -86,6 +88,18 @@ func (d *Generator) build() (*obj, error) {
 	}
 	spec.set("paths", paths)
 
+	if len(d.cfg.Tags) > 0 {
+		tags := make([]any, 0, len(d.cfg.Tags))
+		for _, t := range d.cfg.Tags {
+			e := newObj().set("name", t.Name)
+			if t.Description != "" {
+				e.set("description", t.Description)
+			}
+			tags = append(tags, e)
+		}
+		spec.set("tags", tags)
+	}
+
 	// security: one named scheme, top-level requirement; per-op override
 	// on public routes (security: []).
 	components := newObj()
@@ -117,9 +131,11 @@ func (d *Generator) build() (*obj, error) {
 		spec.set("components", components)
 	}
 	if d.cfg.ExternalDocs != nil {
-		spec.set("externalDocs", newObj().
-			set("url", d.cfg.ExternalDocs.URL).
-			set("description", d.cfg.ExternalDocs.Description))
+		ed := newObj().set("url", d.cfg.ExternalDocs.URL)
+		if d.cfg.ExternalDocs.Description != "" {
+			ed.set("description", d.cfg.ExternalDocs.Description)
+		}
+		spec.set("externalDocs", ed)
 	}
 	return spec, nil
 }

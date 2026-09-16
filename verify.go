@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"reflect"
 	"strings"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -28,15 +29,22 @@ type RouteKey struct{ Method, Path string }
 // no generator param, so the link must live somewhere. Revisit if this
 // blocks multi-generator tests.
 var routerGenerators = map[any]*Generator{}
+var routerGeneratorsMu sync.Mutex
 
-func linkRouter(r chiRouter, d *Generator) { routerGenerators[r] = d }
+func linkRouter(r chiRouter, d *Generator) {
+	routerGeneratorsMu.Lock()
+	routerGenerators[r] = d
+	routerGeneratorsMu.Unlock()
+}
 
 // RequireDocumented fails the test when the chi router holds endpoint routes
 // specout never registered (stray plain handlers). Std-mux strays are
 // invisible — no enumeration API; convention plus review covers them.
 func RequireDocumented(t TestingT, r chi.Router, skips ...SkipRule) {
 	t.Helper()
+	routerGeneratorsMu.Lock()
 	d := routerGenerators[r]
+	routerGeneratorsMu.Unlock()
 	var missing []string
 	err := chi.Walk(r, func(method, route string, handler http.Handler, _ ...func(http.Handler) http.Handler) error {
 		for _, s := range skips {
