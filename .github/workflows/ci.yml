@@ -13,14 +13,13 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.27"
-      - run: go build ./...
-      - run: go vet ./...
-      - run: gofmt -l . | tee /dev/stderr | (! read) || false
-      - run: go test ./...
-      - name: Golden spec is committed
-        run: |
-          GO_SPEC_ONLY=1 go run ./cmd/demo > /tmp/openapi.json
-          cmp /tmp/openapi.json testdata/openapi.json || (echo "testdata/openapi.json is stale — regenerate with UPDATE_GOLDEN=1 go test" && exit 1)
+      # CI runs the same recipes a developer runs, so the lint and format
+      # settings have one definition: the justfile.
+      - uses: extractions/setup-just@v2
+      - run: just build
+      - run: just lint
+      - run: just test
+      - run: just check-golden
       - name: Spec validates against OpenAPI 3.1 schema
         run: |
           python3 -m venv /tmp/venv
