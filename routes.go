@@ -216,6 +216,16 @@ func (d *Generator) resolveLocked() error {
 	}
 	sort.SliceStable(pairs, func(i, j int) bool { return pairs[i].rec.pattern < pairs[j].rec.pattern })
 	claimed := make(map[candidate]bool)
+	// A record resolved by an earlier pass still owns its path. resolveLocked
+	// runs once per build and once per statusMap call, so a route registered
+	// between two resolves shares its handler's walk hits with the record that
+	// is already resolved; without this seed the surplus check below reports
+	// that sibling path as a second mount of the new route.
+	for _, rec := range d.records {
+		if rec.full != "" && !rec.absolute {
+			claimed[candidate{rec.key(), rec.full}] = true
+		}
+	}
 	for _, p := range pairs {
 		sort.Slice(p.cands, func(i, j int) bool {
 			if ei, ej := p.cands[i] == p.rec.pattern, p.cands[j] == p.rec.pattern; ei != ej {
