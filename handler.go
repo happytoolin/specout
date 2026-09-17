@@ -37,7 +37,6 @@ func (h Handler[Req, Res]) Types() (reflect.Type, reflect.Type) {
 	return reflect.TypeFor[Req](), reflect.TypeFor[Res]()
 }
 
-
 // With* methods are the fluent form of the metadata fields: each returns a
 // copy of h with the field set, so chains never mutate. Tags and Responses
 // append; the rest replace. Field assignment stays equally valid — one
