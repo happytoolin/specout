@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/happytoolin/specout"
+	"github.com/stretchr/testify/assert"
 )
 
 // recursive type
@@ -71,9 +72,7 @@ func TestEdgeCases(t *testing.T) {
 			check: func(t *testing.T, doc map[string]any) {
 				// two instantiations of one generic type are two components
 				for _, want := range []string{"PageAlpha", "PageBeta"} {
-					if _, ok := schemas(t, doc)[want]; !ok {
-						t.Errorf("missing component %s", want)
-					}
+					assert.Contains(t, schemas(t, doc), want, "missing component")
 				}
 			},
 		},
@@ -113,9 +112,7 @@ func TestEdgeCases(t *testing.T) {
 				// the path {id} and the query id are two parameters, not one,
 				// so count the raw array: paramsOf indexes by name.
 				raw, _ := opOf(t, doc, "/things/{id}", "get")["parameters"].([]any)
-				if len(raw) != 2 {
-					t.Errorf("parameters = %d, want 2: %v", len(raw), raw)
-				}
+				assert.Len(t, raw, 2, "parameters")
 			},
 		},
 	}

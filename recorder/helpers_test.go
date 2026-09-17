@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/happytoolin/specout"
 	"github.com/happytoolin/specout/recorder"
+	"github.com/stretchr/testify/require"
 )
 
 // failT collects failures instead of stopping the test, so a test can inspect
@@ -37,16 +38,21 @@ func serve(h http.Handler, method, target string) {
 func chiRoute(t *testing.T, d *specout.Generator, method, path string, h http.HandlerFunc) *recorder.Recorder {
 	t.Helper()
 	r := chi.NewRouter()
-	rc := specout.Chi(d, r)
+	b := specout.Chi(d, r)
 	if method == http.MethodHead {
-		rc.Head(path, nc(h))
+		b.Head(path, nc(h))
 	} else {
-		rc.Get(path, nc(h))
+		b.Get(path, nc(h))
 	}
-	if err := rc.Adopt(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, b.Adopt())
 	return recorder.New(r)
+}
+
+// verify collects the drift failures a recorder produces against d.
+func verify(d *specout.Generator, rec *recorder.Recorder) []string {
+	ft := &failT{}
+	recorder.Verify(ft, d, rec)
+	return ft.errs
 }
 
 // findErr returns the first failure containing want, or "" for none. An empty
@@ -64,9 +70,5 @@ func findErr(errs []string, want string) string {
 // means any failure is a bug.
 func wantNoErr(t *testing.T, d *specout.Generator, rec *recorder.Recorder, reject, label string) {
 	t.Helper()
-	ft := &failT{}
-	recorder.Verify(ft, d, rec)
-	if e := findErr(ft.errs, reject); e != "" {
-		t.Fatalf("%s: %s", label, e)
-	}
+	require.Empty(t, findErr(verify(d, rec), reject), label)
 }

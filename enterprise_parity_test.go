@@ -6,6 +6,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/happytoolin/specout"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // recA and recB recurse through each other; package-level because local type
@@ -48,15 +50,9 @@ func TestNestedDefsKeepFixups(t *testing.T) {
 		}, Issue]{HandlerFunc: noop})
 	})
 	p := props(t, doc, "Issue")
-	if enum, _ := p["state"].(map[string]any)["enum"].([]any); len(enum) != 2 || enum[0] != "open" || enum[1] != "closed" {
-		t.Fatalf("state enum = %v, want [open closed]", p["state"].(map[string]any)["enum"])
-	}
-	if p["id"].(map[string]any)["readOnly"] != true {
-		t.Error("id readOnly lost")
-	}
-	if !isNullable(p["due"].(map[string]any)) {
-		t.Errorf("due schema = %v, want [string null]", p["due"])
-	}
+	require.Equal(t, []any{"open", "closed"}, p["state"].(map[string]any)["enum"], "state enum")
+	assert.Equal(t, true, p["id"].(map[string]any)["readOnly"], "id readOnly lost")
+	assert.True(t, isNullable(p["due"].(map[string]any)), "due wants [string null]")
 }
 
 // Recursive types reach themselves through a $ref. The fixup walk must not
@@ -77,9 +73,7 @@ func TestRecursiveNestedDefsFixed(t *testing.T) {
 	for _, c := range []struct{ name, prop string }{
 		{"Node", "next"}, {"recA", "b"}, {"recA", "id"}, {"recB", "a"},
 	} {
-		if !isNullable(props(t, doc, c.name)[c.prop].(map[string]any)) {
-			t.Errorf("%s.%s has no null arm", c.name, c.prop)
-		}
+		assert.True(t, isNullable(props(t, doc, c.name)[c.prop].(map[string]any)), "%s.%s has no null arm", c.name, c.prop)
 	}
 }
 
@@ -100,15 +94,9 @@ func TestNestedOnlyDefsKeepFixups(t *testing.T) {
 	}
 
 	p := props(t, docOf(t, "GET", "/outer", specout.Handler[struct{}, Outer]{HandlerFunc: noop}), "Inner")
-	if p["id"].(map[string]any)["readOnly"] != true {
-		t.Errorf("nested readOnly lost: %v", p["id"])
-	}
-	if p["note"].(map[string]any)["deprecated"] != true {
-		t.Errorf("nested deprecated lost: %v", p["note"])
-	}
-	if !isNullable(p["due"].(map[string]any)) {
-		t.Errorf("nested nullable lost: %v", p["due"])
-	}
+	assert.Equal(t, true, p["id"].(map[string]any)["readOnly"], "nested readOnly lost")
+	assert.Equal(t, true, p["note"].(map[string]any)["deprecated"], "nested deprecated lost")
+	assert.True(t, isNullable(p["due"].(map[string]any)), "nested nullable lost")
 }
 
 // Regression: query params must carry jsonschema keywords from the field
@@ -122,12 +110,10 @@ func TestParamKeywords(t *testing.T) {
 	p := paramsOf(t, opOf(t, doc, "/items", "get"))
 
 	limit := p["limit"]["schema"].(map[string]any)
-	if limit["minimum"].(float64) != 1 || limit["maximum"].(float64) != 100 || limit["default"].(float64) != 20 {
-		t.Errorf("limit schema = %v", limit)
-	}
-	if enum, _ := p["sort"]["schema"].(map[string]any)["enum"].([]any); len(enum) != 2 || enum[0] != "created" || enum[1] != "updated" {
-		t.Errorf("sort schema = %v", p["sort"]["schema"])
-	}
+	assert.Equal(t, 1.0, limit["minimum"], "limit minimum")
+	assert.Equal(t, 100.0, limit["maximum"], "limit maximum")
+	assert.Equal(t, 20.0, limit["default"], "limit default")
+	assert.Equal(t, []any{"created", "updated"}, p["sort"]["schema"].(map[string]any)["enum"], "sort enum")
 }
 
 // Regression: anonymous Req/Res struct types must get clean deterministic
@@ -142,8 +128,6 @@ func TestAnonymousComponentNames(t *testing.T) {
 		}, specout.NoContent]{HandlerFunc: noop})
 	})
 	for name := range schemas(t, doc) {
-		if len(name) >= 6 && name[:6] == "struct" {
-			t.Errorf("raw struct literal leaked as component name: %s", name)
-		}
+		assert.NotRegexp(t, "^struct", name, "raw struct literal leaked as component name")
 	}
 }

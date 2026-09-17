@@ -5,6 +5,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/happytoolin/specout"
+	"github.com/stretchr/testify/assert"
 )
 
 type S1 struct{ V string }
@@ -24,8 +25,6 @@ func TestSharedHandlerTwoGroups(t *testing.T) {
 	doc := serve(t, d, r)
 	// both paths exist and carry the shared operation
 	for _, p := range []string{"/a/x", "/b/x"} {
-		if got := opOf(t, doc, p, "get")["summary"]; got != "shared" {
-			t.Errorf("%s summary = %v, want shared", p, got)
-		}
+		assert.Equal(t, "shared", opOf(t, doc, p, "get")["summary"], p)
 	}
 }

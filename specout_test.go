@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/happytoolin/specout"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type Problem struct {
@@ -56,59 +57,40 @@ func TestQuickStartFlow(t *testing.T) {
 	fetch := func() []byte {
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
-		if w.Code != 200 {
-			t.Fatalf("status = %d", w.Code)
-		}
+		require.Equal(t, 200, w.Code, "openapi.json status")
 		return w.Body.Bytes()
 	}
 	body := fetch()
 	var doc map[string]any
-	if err := json.Unmarshal(body, &doc); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, json.Unmarshal(body, &doc))
 
-	if doc["openapi"] != "3.1.0" {
-		t.Fatalf("openapi = %v", doc["openapi"])
-	}
+	require.Equal(t, "3.1.0", doc["openapi"])
 	paths := pathsObj(doc)
 	for _, p := range []string{"/onboarding", "/onboarding/{id}"} {
-		if _, ok := paths[p]; !ok {
-			t.Errorf("missing path %q; have %v", p, paths)
-		}
+		assert.Contains(t, paths, p, "missing path %q", p)
 	}
 
 	// 204 for NoContent, 200+201 refs for the upsert, global errors stamped
-	if _, ok := opOf(t, doc, "/onboarding/{id}", "delete")["responses"].(map[string]any)["204"]; !ok {
-		t.Error("delete missing 204")
-	}
+	assert.Contains(t, opOf(t, doc, "/onboarding/{id}", "delete")["responses"].(map[string]any), "204", "delete missing 204")
 	putResps := opOf(t, doc, "/onboarding/{id}", "put")["responses"].(map[string]any)
-	if _, ok := putResps["201"]; !ok {
-		t.Error("put missing 201")
-	}
+	assert.Contains(t, putResps, "201", "put missing 201")
 	for _, code := range []string{"400", "404", "500"} {
-		if _, ok := putResps[code]; !ok {
-			t.Errorf("put missing global default %s", code)
-		}
+		assert.Contains(t, putResps, code, "put missing global default")
 	}
 
 	// component dedupe: Onboarding emitted once, referenced at 200 and 201
-	if _, ok := schemas(t, doc)["Onboarding"]; !ok {
-		t.Error("missing Onboarding component")
-	}
+	assert.Contains(t, schemas(t, doc), "Onboarding", "missing Onboarding component")
 	ref := func(code string) any {
 		return putResps[code].(map[string]any)["content"].(map[string]any)["application/json"].(map[string]any)["schema"].(map[string]any)["$ref"]
 	}
-	if ref200, ref201 := ref("200"), ref("201"); ref200 != "#/components/schemas/Onboarding" || ref201 != ref200 {
-		t.Errorf("dedupe broken: 200=%v 201=%v", ref200, ref201)
-	}
+	assert.Equal(t, "#/components/schemas/Onboarding", ref("200"), "dedupe 200")
+	assert.Equal(t, ref("200"), ref("201"), "dedupe 201")
 
 	// determinism: second serve is byte-identical
-	if second := fetch(); !bytes.Equal(body, second) {
-		t.Error("spec not deterministic across serves")
-	}
+	assert.True(t, bytes.Equal(body, fetch()), "spec not deterministic across serves")
 
 	// post-freeze registration panics
-	panics(t, func() { rc.Get("/late", specout.Handler[EmptyReq, Onboarding]{HandlerFunc: noop}) })
+	require.Panics(t, func() { rc.Get("/late", specout.Handler[EmptyReq, Onboarding]{HandlerFunc: noop}) })
 }
 
 // TestGroupsAndMountsResolve: Route groups and Mount'd subrouters resolve to
@@ -117,9 +99,7 @@ func TestGroupsAndMountsResolve(t *testing.T) {
 	d, r := newGen(), chi.NewRouter()
 	r.Route("/onboarding", func(r chi.Router) { specout.Chi(d, r).Get("/", okGet) })
 	adopt(t, specout.Chi(d, r))
-	if _, ok := docPaths(t, d)["/onboarding/"]; !ok {
-		t.Errorf("group route not resolved to full path; have %v", docPaths(t, d))
-	}
+	assert.Contains(t, docPaths(t, d), "/onboarding/", "group route not resolved to full path")
 }
 
 // TestAdoptRejectsStrays: Adopt reports plain-handler routes the generator
@@ -128,7 +108,7 @@ func TestAdoptRejectsStrays(t *testing.T) {
 	d, r := newGen(), chi.NewRouter()
 	specout.Chi(d, r).Get("/known", okGet)
 	r.Get("/stray", func(http.ResponseWriter, *http.Request) {})
-	wantErr(t, specout.Chi(d, r).Adopt(), "/stray")
+	require.ErrorContains(t, specout.Chi(d, r).Adopt(), "/stray")
 }
 
 func TestServeOnlyGet(t *testing.T) {
@@ -138,18 +118,12 @@ func TestServeOnlyGet(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	d.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/openapi.json", nil))
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("POST = %d, want 405", rec.Code)
-	}
+	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code, "POST")
 
 	rec = httptest.NewRecorder()
 	d.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
-	if rec.Code != http.StatusOK {
-		t.Errorf("GET = %d, want 200", rec.Code)
-	}
-	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
-		t.Errorf("content-type = %q", ct)
-	}
+	assert.Equal(t, http.StatusOK, rec.Code, "GET")
+	assert.Contains(t, rec.Header().Get("Content-Type"), "application/json")
 }
 
 func TestStdMuxHandle(t *testing.T) {
@@ -159,11 +133,7 @@ func TestStdMuxHandle(t *testing.T) {
 
 	doc := buildDoc(t, d)
 	for _, p := range []string{"/onboarding", "/onboarding/{id}"} {
-		if _, ok := pathsObj(doc)[p]; !ok {
-			t.Errorf("missing std path %q; have %v", p, pathsObj(doc))
-		}
+		assert.Contains(t, pathsObj(doc), p, "missing std path %q", p)
 	}
-	if _, ok := opOf(t, doc, "/onboarding/{id}", "delete")["responses"].(map[string]any)["204"]; !ok {
-		t.Error("std delete missing 204")
-	}
+	assert.Contains(t, opOf(t, doc, "/onboarding/{id}", "delete")["responses"].(map[string]any), "204", "std delete missing 204")
 }

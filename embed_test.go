@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/happytoolin/specout"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Regression: a body struct that embeds a base type and also carries a query
@@ -23,21 +25,14 @@ func TestEmbeddedBodyWithParam(t *testing.T) {
 
 	doc := docOf(t, "POST", "/x", specout.Handler[Req, specout.NoContent]{HandlerFunc: noop})
 	p := props(t, doc, "Req")
-	if len(p) != 3 {
-		t.Fatalf("body props = %v, want id, flags, name", p)
-	}
-	if p["flags"].(map[string]any)["readOnly"] != true {
-		t.Errorf("embedded readOnly lost: %v", p["flags"])
-	}
-	if !isNullable(p["id"].(map[string]any)) {
-		t.Errorf("embedded pointer not nullable: %v", p["id"])
-	}
-	if _, ok := p["page"]; ok {
-		t.Error("query param leaked into the body")
-	}
-	if params := paramsOf(t, opOf(t, doc, "/x", "post")); len(params) != 1 || params["page"] == nil {
-		t.Errorf("parameters = %v, want [page]", params)
-	}
+	require.Len(t, p, 3, "body props = %v, want id, flags, name", p)
+	assert.Equal(t, true, p["flags"].(map[string]any)["readOnly"], "embedded readOnly lost: %v", p["flags"])
+	assert.True(t, isNullable(p["id"].(map[string]any)), "embedded pointer not nullable: %v", p["id"])
+	assert.NotContains(t, p, "page", "query param leaked into the body")
+
+	params := paramsOf(t, opOf(t, doc, "/x", "post"))
+	assert.Len(t, params, 1, "parameters = %v, want [page]", params)
+	assert.Contains(t, params, "page")
 }
 
 // Regression: an untagged embedded struct is flattened by invopop, so its
@@ -60,17 +55,11 @@ func TestEmbeddedFieldsKeepFixups(t *testing.T) {
 
 	p := props(t, docOf(t, "POST", "/x", specout.Handler[struct{}, Res]{HandlerFunc: noop}), "Res")
 	for _, name := range []string{"id", "flags", "score", "name"} {
-		if _, ok := p[name]; !ok {
-			t.Fatalf("promoted property %s missing: %v", name, p)
-		}
+		require.Contains(t, p, name, "promoted property missing: %v", p)
 	}
-	if p["flags"].(map[string]any)["readOnly"] != true {
-		t.Errorf("promoted readOnly lost: %v", p["flags"])
-	}
+	assert.Equal(t, true, p["flags"].(map[string]any)["readOnly"], "promoted readOnly lost: %v", p["flags"])
 	for _, name := range []string{"id", "score"} {
-		if !isNullable(p[name].(map[string]any)) {
-			t.Errorf("promoted pointer %s not nullable: %v", name, p[name])
-		}
+		assert.True(t, isNullable(p[name].(map[string]any)), "promoted pointer %s not nullable: %v", name, p[name])
 	}
 }
 
@@ -86,12 +75,10 @@ func TestPointerElementsNullable(t *testing.T) {
 	}
 
 	p := props(t, docOf(t, "POST", "/x", specout.Handler[struct{}, Res]{HandlerFunc: noop}), "Res")
-	if items := p["slice"].(map[string]any)["items"].(map[string]any); !isNullable(items) {
-		t.Errorf("slice element not nullable: %v", items)
-	}
-	if add := p["map"].(map[string]any)["additionalProperties"].(map[string]any); !isNullable(add) {
-		t.Errorf("map value not nullable: %v", add)
-	}
+	items := p["slice"].(map[string]any)["items"].(map[string]any)
+	assert.True(t, isNullable(items), "slice element not nullable: %v", items)
+	add := p["map"].(map[string]any)["additionalProperties"].(map[string]any)
+	assert.True(t, isNullable(add), "map value not nullable: %v", add)
 }
 
 // Regression: a body that embeds a base type and shadows one of its fields
@@ -109,11 +96,8 @@ func TestEmbeddedShadowingField(t *testing.T) {
 	}
 
 	p := props(t, docOf(t, "POST", "/x", specout.Handler[Req, specout.NoContent]{HandlerFunc: noop}), "Req")
-	if len(p) != 1 {
-		t.Fatalf("body props = %v, want only the shadowing id", p)
-	}
+	require.Len(t, p, 1, "body props = %v, want only the shadowing id", p)
 	typ, _ := p["id"].(map[string]any)["type"].([]any)
-	if len(typ) != 2 || typ[0] != "integer" {
-		t.Errorf("id = %v, want the direct *int64 field to win", p["id"])
-	}
+	assert.Len(t, typ, 2)
+	assert.Equal(t, "integer", typ[0], "want the direct *int64 field to win")
 }

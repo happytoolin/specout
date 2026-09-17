@@ -1,6 +1,9 @@
 package specout
 
-import "sort"
+import (
+	"maps"
+	"slices"
+)
 
 // strObj builds an object from name/value pairs, skipping empty values.
 // Every one of these (contact, license, externalDocs) is optional per field.
@@ -26,12 +29,7 @@ func externalDocsObj(ed *ExternalDocs) *obj {
 // sortedKeys returns a string-keyed map's keys in sorted order: anything
 // driven by a Go map would otherwise emit a different document per run.
 func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
+	return slices.Sorted(maps.Keys(m))
 }
 
 func toAny[T any](s []T) []any {

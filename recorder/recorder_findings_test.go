@@ -10,6 +10,7 @@ import (
 	"github.com/happytoolin/specout"
 	"github.com/happytoolin/specout/internal/demo/router"
 	"github.com/happytoolin/specout/recorder"
+	"github.com/stretchr/testify/assert"
 )
 
 // A handler returning a global-default code the spec declares (404) is not
@@ -64,9 +65,7 @@ func TestResponseControllerThroughRecorder(t *testing.T) {
 		_, _ = w.Write([]byte("hi"))
 	})
 	recorder.New(r).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/stream", nil))
-	if !flushed {
-		t.Error("ResponseController could not reach the Flusher")
-	}
+	assert.True(t, flushed, "ResponseController could not reach the Flusher")
 }
 
 // gorilla carries the matched route on a request copy, so the recorder has

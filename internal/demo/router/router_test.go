@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // The spec declares security for the protected routes, so the app must enforce
@@ -17,18 +19,14 @@ func TestProtectedRoutesRequireAuth(t *testing.T) {
 		return rec.Code
 	}
 
-	if got := do(httptest.NewRequest(http.MethodPost, "/onboarding", nil)); got != http.StatusUnauthorized {
-		t.Errorf("POST /onboarding without credentials = %d, want 401", got)
-	}
+	noCreds := httptest.NewRequest(http.MethodPost, "/onboarding", nil)
+	assert.Equal(t, http.StatusUnauthorized, do(noCreds), "POST /onboarding without credentials")
 
 	req := httptest.NewRequest(http.MethodPost, "/onboarding", strings.NewReader(`{"owner":"a@b.com","stage":"draft"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer demo-token")
-	if got := do(req); got == http.StatusUnauthorized {
-		t.Errorf("POST /onboarding with credentials = 401, want past the middleware")
-	}
+	assert.NotEqual(t, http.StatusUnauthorized, do(req), "POST /onboarding with credentials")
 
-	if got := do(httptest.NewRequest(http.MethodGet, "/onboarding", nil)); got != http.StatusOK {
-		t.Errorf("GET /onboarding = %d, want 200 (public)", got)
-	}
+	list := httptest.NewRequest(http.MethodGet, "/onboarding", nil)
+	assert.Equal(t, http.StatusOK, do(list), "GET /onboarding (public)")
 }

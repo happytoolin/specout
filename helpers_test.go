@@ -3,14 +3,15 @@ package specout_test
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/happytoolin/specout"
+	"github.com/stretchr/testify/require"
 )
 
 // newGen is the throwaway generator every test starts from.
@@ -22,28 +23,16 @@ func newGen() *specout.Generator {
 func buildDoc(t *testing.T, d *specout.Generator) map[string]any {
 	t.Helper()
 	var buf bytes.Buffer
-	if err := d.WriteJSON(&buf); err != nil {
-		t.Fatalf("build: %v", err)
-	}
+	require.NoError(t, d.WriteJSON(&buf), "build")
 	var doc map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &doc); err != nil {
-		t.Fatalf("invalid json: %v", err)
-	}
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &doc), "invalid json")
 	return doc
-}
-
-// wantErr fails unless err mentions want.
-func wantErr(t *testing.T, err error, want string) {
-	t.Helper()
-	if err == nil || !strings.Contains(err.Error(), want) {
-		t.Fatalf("want error containing %q, got %v", want, err)
-	}
 }
 
 // wantBuildErr fails unless building d returns an error mentioning want.
 func wantBuildErr(t *testing.T, d *specout.Generator, want string) {
 	t.Helper()
-	wantErr(t, d.WriteJSON(&bytes.Buffer{}), want)
+	require.ErrorContains(t, d.WriteJSON(&bytes.Buffer{}), want)
 }
 
 // pathsObj is the paths object of an already-built document.
@@ -61,13 +50,9 @@ func docPaths(t *testing.T, d *specout.Generator) map[string]any {
 func opOf(t *testing.T, doc map[string]any, path, method string) map[string]any {
 	t.Helper()
 	item, ok := doc["paths"].(map[string]any)[path].(map[string]any)
-	if !ok {
-		t.Fatalf("no path %s in the document: %v", path, doc["paths"])
-	}
+	require.True(t, ok, "no path %s in the document", path)
 	op, ok := item[method].(map[string]any)
-	if !ok {
-		t.Fatalf("no %s %s in the document", method, path)
-	}
+	require.True(t, ok, "no %s %s in the document", method, path)
 	return op
 }
 
@@ -77,9 +62,7 @@ func adopt(t *testing.T, b interface {
 	Adopt(...specout.SkipRule) error
 }) {
 	t.Helper()
-	if err := b.Adopt(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, b.Adopt())
 }
 
 // serve mounts the spec on an already-adopted router and returns the document
@@ -89,13 +72,9 @@ func serve(t *testing.T, d *specout.Generator, r chi.Router) map[string]any {
 	r.Mount("/openapi.json", d)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
-	if w.Code != 200 {
-		t.Fatalf("openapi.json status %d", w.Code)
-	}
+	require.Equal(t, 200, w.Code, "openapi.json status")
 	var doc map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &doc); err != nil {
-		t.Fatalf("invalid json: %v", err)
-	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &doc), "invalid json")
 	return doc
 }
 
@@ -149,53 +128,29 @@ type noBody = specout.Handler[struct{}, specout.NoContent]
 // test that needs the same handler on two routes reuses this one.
 var okGet = noBody{HandlerFunc: okBody}
 
-// panics fails unless fn panics.
-func panics(t *testing.T, fn func()) {
-	t.Helper()
-	defer func() {
-		if recover() == nil {
-			t.Error("want a panic")
-		}
-	}()
-	fn()
-}
-
 // declaredStatuses and specStatuses are the two drift views, fatal on error.
 func declaredStatuses(t *testing.T, d *specout.Generator) map[specout.RouteKey]map[int]bool {
 	t.Helper()
 	st, err := d.DeclaredStatuses()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return st
 }
 
 func specStatuses(t *testing.T, d *specout.Generator) map[specout.RouteKey]map[int]bool {
 	t.Helper()
 	st, err := d.SpecStatuses()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return st
 }
 
 // keys is the sorted key set of a JSON object, for stable messages.
-func keys(m map[string]any) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	slices.Sort(out)
-	return out
-}
+func keys(m map[string]any) []string { return slices.Sorted(maps.Keys(m)) }
 
 // schemas is the document's components.schemas object.
 func schemas(t *testing.T, doc map[string]any) map[string]any {
 	t.Helper()
 	s, ok := doc["components"].(map[string]any)["schemas"].(map[string]any)
-	if !ok {
-		t.Fatal("no components.schemas in the document")
-	}
+	require.True(t, ok, "no components.schemas in the document")
 	return s
 }
 
@@ -203,9 +158,7 @@ func schemas(t *testing.T, doc map[string]any) map[string]any {
 func props(t *testing.T, doc map[string]any, name string) map[string]any {
 	t.Helper()
 	s, ok := schemas(t, doc)[name].(map[string]any)
-	if !ok {
-		t.Fatalf("no component %s", name)
-	}
+	require.True(t, ok, "no component %s", name)
 	return s["properties"].(map[string]any)
 }
 

@@ -5,6 +5,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/happytoolin/specout"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestOperationIDOverride(t *testing.T) {
@@ -17,14 +18,7 @@ func TestOperationIDOverride(t *testing.T) {
 		HandlerFunc: noop,
 	})
 	doc := serveDoc(t, d, r)
-	get := func(p string) string {
-		op := doc["paths"].(map[string]any)[p].(map[string]any)["get"].(map[string]any)
-		return op["operationId"].(string)
-	}
-	if got := get("/users/{id}/profile"); got != "getUserProfile" {
-		t.Errorf("override ignored: %s", got)
-	}
-	if got := get("/users/{id}/settings"); got != "getUsersIdSettings" {
-		t.Errorf("derived changed: %s", got)
-	}
+	get := func(p string) string { return opOf(t, doc, p, "get")["operationId"].(string) }
+	assert.Equal(t, "getUserProfile", get("/users/{id}/profile"), "override ignored")
+	assert.Equal(t, "getUsersIdSettings", get("/users/{id}/settings"), "derived changed")
 }

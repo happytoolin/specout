@@ -11,6 +11,8 @@ import (
 	"github.com/happytoolin/specout"
 	"github.com/happytoolin/specout/internal/examplekit/exampletest"
 	"github.com/happytoolin/specout/recorder"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // published is the path -> method -> operationId map of the live document
@@ -40,28 +42,20 @@ var dig = exampletest.Dig
 
 func TestSpecMatchesPublishedDocument(t *testing.T) {
 	paths := dig(t, spec(t), "paths").(map[string]any)
-	if len(paths) != len(published) {
-		t.Errorf("paths = %d, want %d", len(paths), len(published))
-	}
+	assert.Len(t, paths, len(published), "paths")
 	for p, methods := range published {
-		item, _ := paths[p].(map[string]any)
-		if item == nil {
-			t.Errorf("missing path %s", p)
+		item, ok := paths[p].(map[string]any)
+		if !assert.True(t, ok, "missing path %s", p) {
 			continue
 		}
-		if len(item) != len(methods) {
-			t.Errorf("%s has %d operations, want %d", p, len(item), len(methods))
-		}
+		assert.Len(t, item, len(methods), "%s operations", p)
 		// the 19 published operationIds, no more, no fewer, on the right route
 		for m, wantID := range methods {
-			op, _ := item[m].(map[string]any)
-			if op == nil {
-				t.Errorf("missing %s %s", m, p)
+			op, ok := item[m].(map[string]any)
+			if !assert.True(t, ok, "missing %s %s", m, p) {
 				continue
 			}
-			if op["operationId"] != wantID {
-				t.Errorf("%s %s operationId = %v, want %s", m, p, op["operationId"], wantID)
-			}
+			assert.Equal(t, wantID, op["operationId"], "%s %s operationId", m, p)
 		}
 	}
 }
@@ -75,62 +69,42 @@ func TestSpecKeepsPublishedShapes(t *testing.T) {
 
 	// int64 path param with its published description
 	param := dig(t, doc, "paths", "/pet/{petId}", "get", "parameters").([]any)[0].(map[string]any)
-	if param["name"] != "petId" || dig(t, param, "schema", "type") != "integer" || dig(t, param, "schema", "format") != "int64" {
-		t.Errorf("petId param = %v", param)
-	}
+	assert.Equal(t, "petId", param["name"])
+	assert.Equal(t, "integer", dig(t, param, "schema", "type"), "petId param")
+	assert.Equal(t, "int64", dig(t, param, "schema", "format"), "petId param")
 
 	// response headers, scalar and time
 	headers := dig(t, doc, "paths", "/user/login", "get", "responses", "200", "headers").(map[string]any)
-	if dig(t, headers, "X-Rate-Limit", "schema", "type") != "integer" {
-		t.Errorf("X-Rate-Limit = %v", headers["X-Rate-Limit"])
-	}
-	if dig(t, headers, "X-Expires-After", "schema", "format") != "date-time" {
-		t.Errorf("X-Expires-After = %v", headers["X-Expires-After"])
-	}
+	assert.Equal(t, "integer", dig(t, headers, "X-Rate-Limit", "schema", "type"))
+	assert.Equal(t, "date-time", dig(t, headers, "X-Expires-After", "schema", "format"))
 
 	// map[string]int32 body is inlined, not $ref'd
 	inv := dig(t, doc, "paths", "/store/inventory", "get", "responses", "200", "content", "application/json", "schema").(map[string]any)
-	if inv["type"] != "object" || inv["additionalProperties"] == nil {
-		t.Errorf("inventory schema = %v", inv)
-	}
+	assert.Equal(t, "object", inv["type"], "inventory schema")
+	assert.NotNil(t, inv["additionalProperties"], "inventory schema")
 
 	// security opt-out on a published public operation, none on a protected one
-	if _, ok := dig(t, doc, "paths", "/user/logout", "get").(map[string]any)["security"]; !ok {
-		t.Error("logout should carry security: []")
-	}
-	if _, ok := dig(t, doc, "paths", "/pet/{petId}", "get").(map[string]any)["security"]; ok {
-		t.Error("getPetById should inherit the global requirement")
-	}
+	assert.Contains(t, dig(t, doc, "paths", "/user/logout", "get").(map[string]any), "security", "logout should carry security: []")
+	assert.NotContains(t, dig(t, doc, "paths", "/pet/{petId}", "get").(map[string]any), "security", "getPetById should inherit the global requirement")
 
 	// uploadImage: multipart with the renamed, required file field
 	content := dig(t, doc, "paths", "/pet/{petId}/uploadImage", "post", "requestBody", "content").(map[string]any)
-	if _, ok := content["multipart/form-data"]; !ok {
-		t.Fatalf("uploadImage content = %v", content)
-	}
+	require.Contains(t, content, "multipart/form-data", "uploadImage content")
 
 	// the File marker must not leak into components, and required must name
 	// the property, not the Go field
 	schemas := dig(t, doc, "components", "schemas").(map[string]any)
-	if _, leaked := schemas["File"]; leaked {
-		t.Error("File marker leaked into components.schemas")
-	}
+	assert.NotContains(t, schemas, "File", "File marker leaked into components.schemas")
 	req := schemas["uploadImageReq"].(map[string]any)
-	required := req["required"].([]any)
-	if len(required) != 1 || required[0] != "file" {
-		t.Errorf("uploadImageReq required = %v, want [file]", required)
-	}
-	if _, ok := dig(t, req, "properties", "file").(map[string]any)["format"]; !ok {
-		t.Errorf("file field = %v", dig(t, req, "properties"))
-	}
+	assert.Equal(t, []any{"file"}, req["required"], "uploadImageReq required")
+	assert.Contains(t, dig(t, req, "properties", "file").(map[string]any), "format")
 
 	// Tag and Category are reached only through Pet, so invopop hoists them
 	// without a Go-type entry: the property fixups must follow the $ref into
 	// the nested component. Regression — the format= tag used to survive on
 	// Pet but vanish on Tag.
 	for _, name := range []string{"Pet", "Tag", "Category"} {
-		if dig(t, schemas, name, "properties", "id", "format") != "int64" {
-			t.Errorf("%s.id missing format int64", name)
-		}
+		assert.Equal(t, "int64", dig(t, schemas, name, "properties", "id", "format"), "%s.id format", name)
 	}
 }
 
@@ -152,20 +126,14 @@ func TestDemoServesEveryRouteAndNoUndocumentedCode(t *testing.T) {
 	send := func(req *http.Request, want int) {
 		t.Helper()
 		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		resp.Body.Close()
-		if resp.StatusCode != want {
-			t.Errorf("%s %s = %d, want %d", req.Method, req.URL.Path, resp.StatusCode, want)
-		}
+		assert.Equal(t, want, resp.StatusCode, "%s %s", req.Method, req.URL.Path)
 	}
 	do := func(method, path, body string, want int) {
 		t.Helper()
 		req, err := http.NewRequest(method, srv.URL+"/api/v3"+path, strings.NewReader(body))
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		if body != "" {
 			req.Header.Set("Content-Type", "application/json")
 		}
@@ -203,21 +171,18 @@ func TestDemoServesEveryRouteAndNoUndocumentedCode(t *testing.T) {
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 	fw, err := mw.CreateFormFile("file", "pet.png")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	fw.Write([]byte("png"))
 	mw.Close()
-	req, _ := http.NewRequest("POST", srv.URL+"/api/v3/pet/2/uploadImage", &buf)
+	req, err := http.NewRequest("POST", srv.URL+"/api/v3/pet/2/uploadImage", &buf)
+	require.NoError(t, err)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	send(req, 200)
 
 	ft := &captureT{}
 	recorder.Verify(ft, d, rec)
 	for _, e := range ft.Errs {
-		if strings.Contains(e, "but spec does not declare it") {
-			t.Errorf("drift: %s", e)
-		}
+		assert.NotContains(t, e, "but spec does not declare it", "drift")
 	}
 	if len(ft.Errs) == 0 {
 		t.Log("no drift at all: the demo produced every declared code")

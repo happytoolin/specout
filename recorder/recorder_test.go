@@ -8,6 +8,7 @@ import (
 
 	"github.com/happytoolin/specout/internal/demo/router"
 	"github.com/happytoolin/specout/recorder"
+	"github.com/stretchr/testify/require"
 )
 
 // TestVerifyPassesOnFullCoverage exercises every declared route and status
@@ -57,9 +58,5 @@ func TestVerifyFailsOnDeclaredButUnproduced(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	rec.ServeHTTP(httptest.NewRecorder(), req)
 
-	ft := &failT{}
-	recorder.Verify(ft, d, rec)
-	if findErr(ft.errs, "never produced") == "" {
-		t.Fatalf("expected never-produced failure, got %v", ft.errs)
-	}
+	require.NotEmpty(t, findErr(verify(d, rec), "never produced"), "expected never-produced failure")
 }

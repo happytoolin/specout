@@ -3,13 +3,14 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
-	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/happytoolin/specout"
 	"github.com/happytoolin/specout/internal/examplekit/exampletest"
 	"github.com/happytoolin/specout/recorder"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // publishedGraph is the path -> method -> operationId map of the eight
@@ -36,58 +37,41 @@ func graphOp(t *testing.T, doc map[string]any, path, method string) map[string]a
 	return dig(t, doc, "paths", path, method)
 }
 
+// paramNamed returns the operation parameter declared with this name and
+// location.
 func paramNamed(t *testing.T, op map[string]any, name, in string) map[string]any {
 	t.Helper()
 	raw, _ := op["parameters"].([]any)
 	for _, one := range raw {
-		p := one.(map[string]any)
-		if p["name"] == name && p["in"] == in {
+		if p := one.(map[string]any); p["name"] == name && p["in"] == in {
 			return p
 		}
 	}
-	t.Fatalf("missing %s parameter %s", in, name)
+	require.Fail(t, "missing parameter", "%s parameter %s", in, name)
 	return nil
 }
 
-// eq fails when a published field is not what the document says.
-func eq(t *testing.T, label string, got, want any) {
-	t.Helper()
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("%s = %v, want %v", label, got, want)
-	}
-}
-
-// haveKeys fails when any published property is absent; absent fails when a
-// published omission is present. Label names the context of the last.
+// haveKeys fails when any published property is absent.
 func haveKeys(t *testing.T, m map[string]any, keys ...string) {
 	t.Helper()
 	for _, k := range keys {
-		if _, ok := m[k]; !ok {
-			t.Errorf("missing %q in %v", k, m)
-		}
-	}
-}
-
-func absent(t *testing.T, label string, m map[string]any, key string) {
-	t.Helper()
-	if v, ok := m[key]; ok {
-		t.Errorf("%s: %q is present (%v)", label, key, v)
+		assert.Contains(t, m, k)
 	}
 }
 
 func TestSpecMatchesPublishedDocument(t *testing.T) {
 	paths := dig(t, spec(t), "paths")
-	eq(t, "paths", len(paths), len(publishedGraph))
+	assert.Len(t, paths, len(publishedGraph), "paths")
 	ids := 0
 	for p, methods := range publishedGraph {
 		item := dig(t, paths, p)
-		eq(t, p+" operations", len(item), len(methods))
+		assert.Len(t, item, len(methods), "%s operations", p)
 		for m, id := range methods {
-			eq(t, p+" "+m+" operationId", dig(t, item, m)["operationId"], id)
+			assert.Equal(t, id, dig(t, item, m)["operationId"], "%s %s operationId", p, m)
 			ids++
 		}
 	}
-	eq(t, "operation count", ids, 8)
+	assert.Equal(t, 8, ids, "operation count")
 }
 
 // TestSpecKeepsPublishedShapes pins the Graph shapes the example exists to
@@ -100,7 +84,7 @@ func TestSpecKeepsPublishedShapes(t *testing.T) {
 	schemas := dig(t, comps, "schemas")
 
 	// the published document declares no securitySchemes
-	absent(t, "components", comps, "securitySchemes")
+	assert.NotContains(t, comps, "securitySchemes", "components")
 
 	// every operation carries the ODataError envelope under the document's own
 	// range keys: 4XX and 5XX, described "error", not a fan-out per code
@@ -109,18 +93,16 @@ func TestSpecKeepsPublishedShapes(t *testing.T) {
 			responses := dig(t, graphOp(t, doc, path, m), "responses")
 			for _, code := range []string{"4XX", "5XX"} {
 				resp := dig(t, responses, code)
-				eq(t, m+" "+path+" "+code+" description", resp["description"], "error")
-				eq(t, m+" "+path+" "+code+" schema",
-					dig(t, resp, "content", "application/json", "schema")["$ref"], "#/components/schemas/ODataError")
+				assert.Equal(t, "error", resp["description"], "%s %s %s description", m, path, code)
+				assert.Equal(t, "#/components/schemas/ODataError",
+					dig(t, resp, "content", "application/json", "schema")["$ref"], "%s %s %s schema", m, path, code)
 			}
 			// the successes the document ranges are keyed 2XX; the operations
 			// that answer 204 keep the concrete code
-			if _, ok2XX := responses["2XX"]; !ok2XX {
-				if _, ok204 := responses["204"]; !ok204 {
-					t.Errorf("%s %s: neither a 2XX nor a 204 response", m, path)
-				}
+			if _, ok := responses["2XX"]; !ok {
+				assert.Contains(t, responses, "204", "%s %s: neither a 2XX nor a 204 response", m, path)
 			}
-			absent(t, m+" "+path, responses, "404")
+			assert.NotContains(t, responses, "404", m+" "+path)
 		}
 	}
 
@@ -131,9 +113,8 @@ func TestSpecKeepsPublishedShapes(t *testing.T) {
 	// nested-only: the pointer must still widen to [InnerError, null].
 	// Regression — the pointer field kept invopop's bare $ref.
 	arms, _ := dig(t, schemas, "MainError", "properties", "innerError")["oneOf"].([]any)
-	if len(arms) != 2 || arms[1].(map[string]any)["type"] != "null" {
-		t.Errorf("MainError.innerError = %v, want a $ref and a null arm", arms)
-	}
+	require.Len(t, arms, 2, "MainError.innerError = %v, want a $ref and a null arm", arms)
+	assert.Equal(t, "null", arms[1].(map[string]any)["type"])
 
 	me := graphOp(t, doc, "/me", "get")
 	list := graphOp(t, doc, "/users", "get")
@@ -161,15 +142,15 @@ func TestSpecKeepsPublishedShapes(t *testing.T) {
 		{"photo format", dig(t, photo, "responses", "2XX", "content", "application/octet-stream", "schema")["format"], "binary"},
 		{"contentType enum", dig(t, schemas, "ItemBody", "properties", "contentType")["enum"], []any{"text", "html"}},
 	} {
-		eq(t, c.label, c.got, c.want)
+		assert.Equal(t, c.want, c.got, c.label)
 	}
 
 	// DELETE keeps a description-only 204; sendMail's body is its own component
 	// under the published property names, without the path parameter
-	absent(t, "DELETE 204", dig(t, del, "responses", "204"), "content")
+	assert.NotContains(t, dig(t, del, "responses", "204"), "content", "DELETE 204")
 	paramNamed(t, mail, "user-id", "path")
 	haveKeys(t, bodyProps, "Message", "SaveToSentItems")
-	absent(t, "sendMail body", bodyProps, "user-id")
+	assert.NotContains(t, bodyProps, "user-id", "sendMail body")
 	haveKeys(t, dig(t, schemas, "UserCollectionResponse", "properties"), "@odata.count", "@odata.nextLink", "value")
 }
 
@@ -187,20 +168,14 @@ func TestGraphDemoServesEveryRouteAndNoUndocumentedCode(t *testing.T) {
 	do := func(method, path, body string, want int) {
 		t.Helper()
 		req, err := http.NewRequest(method, srv.URL+path, strings.NewReader(body))
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		if body != "" {
 			req.Header.Set("Content-Type", "application/json")
 		}
 		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		resp.Body.Close()
-		if resp.StatusCode != want {
-			t.Errorf("%s %s = %d, want %d", method, path, resp.StatusCode, want)
-		}
+		assert.Equal(t, want, resp.StatusCode, "%s %s", method, path)
 	}
 
 	alice := "48d31887-5fad-4d73-a9f5-3c356e68a038"
@@ -238,9 +213,7 @@ func TestGraphDemoServesEveryRouteAndNoUndocumentedCode(t *testing.T) {
 	ft := &captureT{}
 	recorder.Verify(ft, d, rec)
 	for _, e := range ft.Errs {
-		if strings.Contains(e, "but spec does not declare it") {
-			t.Errorf("drift: %s", e)
-		}
+		assert.NotContains(t, e, "but spec does not declare it", "drift")
 	}
 }
 

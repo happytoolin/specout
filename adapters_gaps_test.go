@@ -10,6 +10,8 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/happytoolin/specout"
 	"github.com/happytoolin/specout/recorder"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type probeQ struct {
@@ -70,90 +72,55 @@ func probeRegister(get func(string, specout.Handler[probeQ, probeRes]), post fun
 func probeAssert(t *testing.T, doc map[string]any) {
 	t.Helper()
 	op := opOf(t, doc, "/things/{id}", "get")
-	params := map[string]map[string]any{}
-	for _, raw := range op["parameters"].([]any) {
-		p := raw.(map[string]any)
-		params[p["name"].(string)] = p
-	}
-	if params["filter"]["style"] != "deepObject" || params["filter"]["explode"] != true {
-		t.Errorf("filter param = %v", params["filter"])
-	}
+	params := paramsOf(t, op)
+	assert.Equal(t, "deepObject", params["filter"]["style"], "filter param")
+	assert.Equal(t, true, params["filter"]["explode"], "filter param")
 	// a parameter keyword, not a schema keyword: the schema must not grow one
-	if sch := params["filter"]["schema"].(map[string]any); sch["style"] != nil || sch["explode"] != nil {
-		t.Errorf("style/explode belong to the parameter, not its schema: %v", sch)
-	}
-	if params["X-Req"]["in"] != "header" {
-		t.Errorf("header param = %v", params["X-Req"])
-	}
-	if id := params["id"]; id["in"] != "path" || id["required"] != true {
-		t.Errorf("path param = %v", id)
-	}
+	sch := params["filter"]["schema"].(map[string]any)
+	assert.Nil(t, sch["style"], "style/explode belong to the parameter: %v", sch)
+	assert.Nil(t, sch["explode"], "style/explode belong to the parameter: %v", sch)
+	assert.Equal(t, "header", params["X-Req"]["in"], "header param")
+	assert.Equal(t, "path", params["id"]["in"], "path param")
+	assert.Equal(t, true, params["id"]["required"], "path param")
+
 	resp := op["responses"].(map[string]any)
-	if _, ok := resp["4XX"]; !ok {
-		t.Errorf("responses = %v, want 4XX", resp)
-	}
-	if _, ok := resp["404"]; ok {
-		t.Error("a range key must not fan out into one code")
-	}
-	if _, ok := resp["200"]; !ok {
-		t.Error("the Res default 200 stays beside an explicit response")
-	}
-	if op["externalDocs"].(map[string]any)["description"] != "how it works" {
-		t.Errorf("op externalDocs = %v", op["externalDocs"])
-	}
-	if op["x-rate-limit"] != float64(100) {
-		t.Errorf("x-rate-limit = %v", op["x-rate-limit"])
-	}
+	assert.Contains(t, resp, "4XX", "responses")
+	assert.NotContains(t, resp, "404", "a range key must not fan out into one code")
+	assert.Contains(t, resp, "200", "the Res default 200 stays beside an explicit response")
+	assert.Equal(t, "how it works", op["externalDocs"].(map[string]any)["description"], "op externalDocs")
+	assert.Equal(t, float64(100), op["x-rate-limit"])
 
 	postOp := opOf(t, doc, "/things", "post")
-	reqContent := postOp["requestBody"].(map[string]any)["content"].(map[string]any)
-	if _, ok := reqContent["application/xml"]; !ok {
-		t.Errorf("request content = %v, want xml too", reqContent)
-	}
+	assert.Contains(t, postOp["requestBody"].(map[string]any)["content"].(map[string]any), "application/xml", "request content")
 	resContent := postOp["responses"].(map[string]any)["200"].(map[string]any)["content"].(map[string]any)
-	if len(resContent) != 2 {
-		t.Fatalf("response content = %v, want two media types", resContent)
-	}
+	require.Len(t, resContent, 2, "response content = %v, want two media types", resContent)
 	jsonRef := resContent["application/json"].(map[string]any)["schema"].(map[string]any)["$ref"]
 	xmlRef := resContent["application/xml"].(map[string]any)["schema"].(map[string]any)["$ref"]
-	if xmlRef != jsonRef || jsonRef != "#/components/schemas/probeRes" {
-		t.Errorf("media type schemas = %v and %v, want one probeRes ref", jsonRef, xmlRef)
-	}
+	assert.Equal(t, "#/components/schemas/probeRes", jsonRef, "media type schemas = %v and %v", jsonRef, xmlRef)
+	assert.Equal(t, jsonRef, xmlRef, "media type schemas = %v and %v", jsonRef, xmlRef)
 
 	info := doc["info"].(map[string]any)
-	if info["termsOfService"] != "https://x.example/tos" || info["license"].(map[string]any)["name"] != "MIT" {
-		t.Errorf("info = %v", info)
-	}
+	assert.Equal(t, "https://x.example/tos", info["termsOfService"], "info")
+	assert.Equal(t, "MIT", info["license"].(map[string]any)["name"], "info")
 	contact := info["contact"].(map[string]any)
-	if contact["email"] != "api@x.example" {
-		t.Errorf("contact = %v", contact)
-	}
-	if _, ok := contact["url"]; ok {
-		t.Error("an empty contact field must not be emitted")
-	}
-	if doc["tags"].([]any)[0].(map[string]any)["externalDocs"].(map[string]any)["url"] != "https://x.example/things" {
-		t.Errorf("tag externalDocs = %v", doc["tags"])
-	}
+	assert.Equal(t, "api@x.example", contact["email"], "contact")
+	assert.NotContains(t, contact, "url", "an empty contact field must not be emitted")
+	assert.Equal(t, "https://x.example/things",
+		doc["tags"].([]any)[0].(map[string]any)["externalDocs"].(map[string]any)["url"], "tag externalDocs")
 
 	schemes := doc["components"].(map[string]any)["securitySchemes"].(map[string]any)
 	implicit := schemes["oauth"].(map[string]any)["flows"].(map[string]any)["implicit"].(map[string]any)
-	if implicit["authorizationUrl"] != "https://x.example/auth" {
-		t.Errorf("oauth flows = %v", implicit)
-	}
-	if scopes := implicit["scopes"].(map[string]any); len(scopes) != 2 || scopes["write:pets"] != "modify pets" {
-		t.Errorf("scopes = %v", scopes)
-	}
-	if schemes["api_key"].(map[string]any)["name"] != "X-Key" {
-		t.Errorf("api_key = %v", schemes["api_key"])
-	}
+	assert.Equal(t, "https://x.example/auth", implicit["authorizationUrl"], "oauth flows")
+	scopes := implicit["scopes"].(map[string]any)
+	assert.Len(t, scopes, 2, "scopes")
+	assert.Equal(t, "modify pets", scopes["write:pets"], "scopes")
+	assert.Equal(t, "X-Key", schemes["api_key"].(map[string]any)["name"], "api_key")
 
-	props := doc["components"].(map[string]any)["schemas"].(map[string]any)["probeBody"].(map[string]any)["properties"].(map[string]any)
-	if props["old"].(map[string]any)["deprecated"] != true || props["tagged"].(map[string]any)["x-ms-identifiers"] != "id" {
-		t.Errorf("probeBody props = %v", props)
-	}
-	if ex, _ := props["example"].(map[string]any)["examples"].([]any); len(ex) != 2 {
-		t.Errorf("examples = %v", props["example"])
-	}
+	bProps := schemas(t, doc)["probeBody"].(map[string]any)["properties"].(map[string]any)
+	assert.Equal(t, true, bProps["old"].(map[string]any)["deprecated"], "probeBody props")
+	assert.Equal(t, "id", bProps["tagged"].(map[string]any)["x-ms-identifiers"], "probeBody props")
+	ex, _ := bProps["example"].(map[string]any)["examples"].([]any)
+	assert.Len(t, ex, 2, "examples")
 }
 
 // probeInvariant: every path SpecStatuses knows about is a path the document
@@ -164,17 +131,11 @@ func probeInvariant(t *testing.T, d *specout.Generator, doc map[string]any) {
 	st, declared := specStatuses(t, d), declaredStatuses(t, d)
 	paths := doc["paths"].(map[string]any)
 	for k := range st {
-		if _, ok := paths[k.Path]; !ok {
-			t.Errorf("SpecStatuses path %s is not in the document", k.Path)
-		}
+		assert.Contains(t, paths, k.Path, "SpecStatuses path %s is not in the document", k.Path)
 	}
 	key := specout.RouteKey{Method: "GET", Path: "/things/{id}"}
-	if !st[key][404] {
-		t.Error("4XX must allow 404")
-	}
-	if declared[key][404] {
-		t.Error("a bare range must not require 404")
-	}
+	assert.True(t, st[key][404], "4XX must allow 404")
+	assert.False(t, declared[key][404], "a bare range must not require 404")
 }
 
 // probeServe produces the fixture's documented codes through the recorder.
