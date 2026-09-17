@@ -32,52 +32,45 @@ type UpsertRequest struct {
 
 type EmptyReq struct{}
 
-func okJSON(w http.ResponseWriter, r *http.Request)    {}
-func noContent(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }
-
 // TestQuickStartFlow mirrors docs/api-reference.html §01: registrations on
 // the root router with full patterns.
 func TestQuickStartFlow(t *testing.T) {
-	d := specout.New(specout.Config{
+	d, r := specout.New(specout.Config{
 		Title:         "Onboarding API",
 		Version:       "1.0.0",
 		Description:   "Internal onboarding service.",
 		ErrorType:     Problem{},
 		DefaultErrors: []int{400, 404, 500},
-	})
+	}), chi.NewRouter()
 
-	r := chi.NewRouter()
-	specout.Chi(d, r).Delete("/onboarding/{id}", specout.Handler[EmptyReq, struct{}]{HandlerFunc: noContent})
-	specout.Chi(d, r).Put("/onboarding/{id}", specout.Handler[UpsertRequest, Onboarding]{
-		HandlerFunc: okJSON,
+	rc := specout.Chi(d, r)
+	rc.Delete("/onboarding/{id}", specout.Handler[EmptyReq, struct{}]{HandlerFunc: okBody})
+	rc.Put("/onboarding/{id}", specout.Handler[UpsertRequest, Onboarding]{
+		HandlerFunc: noop,
 		Responses:   []specout.Response{{Status: http.StatusCreated}},
 	})
-	specout.Chi(d, r).Get("/onboarding", specout.Handler[EmptyReq, []Onboarding]{HandlerFunc: okJSON, Summary: "List onboarding"})
-	if err := specout.Chi(d, r).Adopt(); err != nil {
-		t.Fatal(err)
-	}
+	rc.Get("/onboarding", specout.Handler[EmptyReq, []Onboarding]{HandlerFunc: noop, Summary: "List onboarding"})
+	adopt(t, rc)
 	r.Mount("/openapi.json", d)
 
-	srv := httptest.NewServer(r)
-	defer srv.Close()
-
-	resp, err := http.Get(srv.URL + "/openapi.json")
-	if err != nil {
-		t.Fatal(err)
+	fetch := func() []byte {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
+		if w.Code != 200 {
+			t.Fatalf("status = %d", w.Code)
+		}
+		return w.Body.Bytes()
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
+	body := fetch()
 	var doc map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+	if err := json.Unmarshal(body, &doc); err != nil {
 		t.Fatal(err)
 	}
 
 	if doc["openapi"] != "3.1.0" {
 		t.Fatalf("openapi = %v", doc["openapi"])
 	}
-	paths := doc["paths"].(map[string]any)
+	paths := pathsObj(doc)
 	for _, p := range []string{"/onboarding", "/onboarding/{id}"} {
 		if _, ok := paths[p]; !ok {
 			t.Errorf("missing path %q; have %v", p, paths)
@@ -85,13 +78,10 @@ func TestQuickStartFlow(t *testing.T) {
 	}
 
 	// 204 for NoContent, 200+201 refs for the upsert, global errors stamped
-	del := paths["/onboarding/{id}"].(map[string]any)["delete"].(map[string]any)
-	delResps := del["responses"].(map[string]any)
-	if _, ok := delResps["204"]; !ok {
+	if _, ok := opOf(t, doc, "/onboarding/{id}", "delete")["responses"].(map[string]any)["204"]; !ok {
 		t.Error("delete missing 204")
 	}
-	put := paths["/onboarding/{id}"].(map[string]any)["put"].(map[string]any)
-	putResps := put["responses"].(map[string]any)
+	putResps := opOf(t, doc, "/onboarding/{id}", "put")["responses"].(map[string]any)
 	if _, ok := putResps["201"]; !ok {
 		t.Error("put missing 201")
 	}
@@ -102,98 +92,58 @@ func TestQuickStartFlow(t *testing.T) {
 	}
 
 	// component dedupe: Onboarding emitted once, referenced at 200 and 201
-	comps := doc["components"].(map[string]any)["schemas"].(map[string]any)
-	if _, ok := comps["Onboarding"]; !ok {
-		t.Errorf("missing Onboarding component; have %v", comps)
+	if _, ok := schemas(t, doc)["Onboarding"]; !ok {
+		t.Error("missing Onboarding component")
 	}
-	ref200 := putResps["200"].(map[string]any)["content"].(map[string]any)["application/json"].(map[string]any)["schema"].(map[string]any)["$ref"]
-	ref201 := putResps["201"].(map[string]any)["content"].(map[string]any)["application/json"].(map[string]any)["schema"].(map[string]any)["$ref"]
-	if ref200 != "#/components/schemas/Onboarding" || ref201 != ref200 {
+	ref := func(code string) any {
+		return putResps[code].(map[string]any)["content"].(map[string]any)["application/json"].(map[string]any)["schema"].(map[string]any)["$ref"]
+	}
+	if ref200, ref201 := ref("200"), ref("201"); ref200 != "#/components/schemas/Onboarding" || ref201 != ref200 {
 		t.Errorf("dedupe broken: 200=%v 201=%v", ref200, ref201)
 	}
 
 	// determinism: second serve is byte-identical
-	r2, _ := http.Get(srv.URL + "/openapi.json")
-	var b2 bytes.Buffer
-	b2.ReadFrom(r2.Body)
-	r2.Body.Close()
-	var w1, w2 bytes.Buffer
-	d.WriteJSON(&w1)
-	_ = w2
-	var second map[string]any
-	json.Unmarshal(b2.Bytes(), &second)
-	j1, _ := json.Marshal(doc)
-	j2, _ := json.Marshal(second)
-	if !bytes.Equal(j1, j2) {
+	if second := fetch(); !bytes.Equal(body, second) {
 		t.Error("spec not deterministic across serves")
 	}
 
 	// post-freeze registration panics
-	func() {
-		defer func() {
-			if recover() == nil {
-				t.Error("expected panic on post-freeze registration")
-			}
-		}()
-		specout.Chi(d, r).Get("/late", specout.Handler[EmptyReq, Onboarding]{HandlerFunc: okJSON})
-	}()
+	panics(t, func() { rc.Get("/late", specout.Handler[EmptyReq, Onboarding]{HandlerFunc: noop}) })
 }
 
 // TestGroupsAndMountsResolve: Route groups and Mount'd subrouters resolve to
 // full paths when the generator adopts the serving root (d.Adopt).
 func TestGroupsAndMountsResolve(t *testing.T) {
-	d := specout.New(specout.Config{Title: "T", Version: "1"})
-	r := chi.NewRouter()
-	r.Route("/onboarding", func(r chi.Router) {
-		specout.Chi(d, r).Get("/", specout.Handler[EmptyReq, Onboarding]{HandlerFunc: okJSON})
-	})
-	if err := specout.Chi(d, r).Adopt(); err != nil {
-		t.Fatal(err)
-	}
-	var buf bytes.Buffer
-	if err := d.WriteJSON(&buf); err != nil {
-		t.Fatal(err)
-	}
-	var doc map[string]any
-	json.Unmarshal(buf.Bytes(), &doc)
-	paths := doc["paths"].(map[string]any)
-	if _, ok := paths["/onboarding/"]; !ok {
-		t.Errorf("group route not resolved to full path; have %v", paths)
+	d, r := newGen(), chi.NewRouter()
+	r.Route("/onboarding", func(r chi.Router) { specout.Chi(d, r).Get("/", okGet) })
+	adopt(t, specout.Chi(d, r))
+	if _, ok := docPaths(t, d)["/onboarding/"]; !ok {
+		t.Errorf("group route not resolved to full path; have %v", docPaths(t, d))
 	}
 }
 
 // TestAdoptRejectsStrays: Adopt reports plain-handler routes the generator
 // never registered.
 func TestAdoptRejectsStrays(t *testing.T) {
-	d := specout.New(specout.Config{Title: "T", Version: "1"})
-	r := chi.NewRouter()
-	specout.Chi(d, r).Get("/known", specout.Handler[EmptyReq, Onboarding]{HandlerFunc: okJSON})
-	r.Get("/stray", func(w http.ResponseWriter, _ *http.Request) {})
-	err := specout.Chi(d, r).Adopt()
-	if err == nil || !strings.Contains(err.Error(), "/stray") {
-		t.Fatalf("expected stray-route error, got %v", err)
-	}
+	d, r := newGen(), chi.NewRouter()
+	specout.Chi(d, r).Get("/known", okGet)
+	r.Get("/stray", func(http.ResponseWriter, *http.Request) {})
+	wantErr(t, specout.Chi(d, r).Adopt(), "/stray")
 }
 
 func TestServeOnlyGet(t *testing.T) {
-	d := specout.New(specout.Config{Title: "T", Version: "1"})
-	r := chi.NewRouter()
-	rc := specout.Chi(d, r)
-	rc.Get("/x", specout.Handler[EmptyReq, Onboarding]{HandlerFunc: okJSON})
-	if err := rc.Adopt(); err != nil {
-		t.Fatal(err)
-	}
+	d, r := newGen(), chi.NewRouter()
+	specout.Chi(d, r).Get("/x", okGet)
+	adopt(t, specout.Chi(d, r))
 
-	req := httptest.NewRequest(http.MethodPost, "/openapi.json", nil)
 	rec := httptest.NewRecorder()
-	d.ServeHTTP(rec, req)
+	d.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/openapi.json", nil))
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("POST = %d, want 405", rec.Code)
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
 	rec = httptest.NewRecorder()
-	d.ServeHTTP(rec, req)
+	d.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
 	if rec.Code != http.StatusOK {
 		t.Errorf("GET = %d, want 200", rec.Code)
 	}
@@ -203,25 +153,17 @@ func TestServeOnlyGet(t *testing.T) {
 }
 
 func TestStdMuxHandle(t *testing.T) {
-	d := specout.New(specout.Config{Title: "T", Version: "1"})
-	mux := http.NewServeMux()
-	specout.Std(d, mux).Handle("DELETE /onboarding/{id}", specout.Handler[EmptyReq, struct{}]{HandlerFunc: noContent})
-	specout.Std(d, mux).Handle("GET /onboarding", specout.Handler[EmptyReq, []Onboarding]{HandlerFunc: okJSON})
+	d, mux := newGen(), http.NewServeMux()
+	specout.Std(d, mux).Handle("DELETE /onboarding/{id}", specout.Handler[EmptyReq, struct{}]{HandlerFunc: okBody})
+	specout.Std(d, mux).Handle("GET /onboarding", specout.Handler[EmptyReq, []Onboarding]{HandlerFunc: noop})
 
-	var buf bytes.Buffer
-	if err := d.WriteJSON(&buf); err != nil {
-		t.Fatal(err)
-	}
-	var doc map[string]any
-	json.Unmarshal(buf.Bytes(), &doc)
-	paths := doc["paths"].(map[string]any)
+	doc := buildDoc(t, d)
 	for _, p := range []string{"/onboarding", "/onboarding/{id}"} {
-		if _, ok := paths[p]; !ok {
-			t.Errorf("missing std path %q; have %v", p, paths)
+		if _, ok := pathsObj(doc)[p]; !ok {
+			t.Errorf("missing std path %q; have %v", p, pathsObj(doc))
 		}
 	}
-	del := paths["/onboarding/{id}"].(map[string]any)["delete"].(map[string]any)
-	if _, ok := del["responses"].(map[string]any)["204"]; !ok {
+	if _, ok := opOf(t, doc, "/onboarding/{id}", "delete")["responses"].(map[string]any)["204"]; !ok {
 		t.Error("std delete missing 204")
 	}
 }

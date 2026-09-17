@@ -46,10 +46,15 @@ func wantBuildErr(t *testing.T, d *specout.Generator, want string) {
 	wantErr(t, d.WriteJSON(&bytes.Buffer{}), want)
 }
 
+// pathsObj is the paths object of an already-built document.
+func pathsObj(doc map[string]any) map[string]any {
+	return doc["paths"].(map[string]any)
+}
+
 // docPaths is the document's paths object.
 func docPaths(t *testing.T, d *specout.Generator) map[string]any {
 	t.Helper()
-	return buildDoc(t, d)["paths"].(map[string]any)
+	return pathsObj(buildDoc(t, d))
 }
 
 // opOf digs doc.paths[path][method] out of the parsed document.
@@ -77,10 +82,10 @@ func adopt(t *testing.T, b interface {
 	}
 }
 
-// serveDoc adopts the chi root, mounts the spec and returns the served document.
-func serveDoc(t *testing.T, d *specout.Generator, r chi.Router) map[string]any {
+// serve mounts the spec on an already-adopted router and returns the document
+// the router actually serves.
+func serve(t *testing.T, d *specout.Generator, r chi.Router) map[string]any {
 	t.Helper()
-	adopt(t, specout.Chi(d, r))
 	r.Mount("/openapi.json", d)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
@@ -92,6 +97,13 @@ func serveDoc(t *testing.T, d *specout.Generator, r chi.Router) map[string]any {
 		t.Fatalf("invalid json: %v", err)
 	}
 	return doc
+}
+
+// serveDoc adopts the chi root, mounts the spec and returns the served document.
+func serveDoc(t *testing.T, d *specout.Generator, r chi.Router) map[string]any {
+	t.Helper()
+	adopt(t, specout.Chi(d, r))
+	return serve(t, d, r)
 }
 
 // getDoc registers one GET route on a fresh chi root and returns the served
