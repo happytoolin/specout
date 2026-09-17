@@ -25,6 +25,15 @@ func (o *obj) set(k string, v any) *obj {
 	return o
 }
 
+// setIf sets k to v unless v is empty: every optional spec field is a string
+// that is omitted rather than emitted empty.
+func (o *obj) setIf(k, v string) *obj {
+	if v != "" {
+		o.set(k, v)
+	}
+	return o
+}
+
 // get returns the value at k, or nil when the key is absent.
 func (o *obj) get(k string) any { return o.vals[k] }
 

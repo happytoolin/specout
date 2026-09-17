@@ -178,46 +178,6 @@ func pathParamObjs(pattern string, req reflect.Type) []any {
 	return out
 }
 
-// requestBodyFor picks the request content type for a body type: a bare File
-// is an octet-stream payload, a struct with a binary field is
-// multipart/form-data, anything else is JSON.
-func requestBodyFor(body reflect.Type, sr *schemaRegistry) (string, *obj) {
-	if body == reflect.TypeFor[File]() {
-		return "application/octet-stream", newObj().set("schema", binarySchema())
-	}
-	schema := newObj().set("schema", newObj().set("$ref", sr.refFor(body)))
-	if hasBinaryField(body) {
-		return "multipart/form-data", schema
-	}
-	return "application/json", schema
-}
-
-// binarySchema is the schema of a raw byte payload.
-func binarySchema() *obj {
-	return newObj().set("type", "string").set("format", "binary")
-}
-
-// hasBinaryField reports whether any field is a File marker or tagged format=binary.
-func hasBinaryField(t reflect.Type) bool {
-	if t.Kind() != reflect.Struct {
-		return false
-	}
-	fileT := reflect.TypeOf(File{})
-	if t == fileT {
-		return true
-	}
-	for i := 0; i < t.NumField(); i++ {
-		ft := t.Field(i).Type
-		if ft == fileT || (ft.Kind() == reflect.Slice && ft.Elem() == fileT) {
-			return true
-		}
-		if tagValue(t.Field(i).Tag.Get("jsonschema"), "format") == "binary" {
-			return true
-		}
-	}
-	return false
-}
-
 // propSchema builds a synthetic struct with one field shaped like f, so
 // invopop applies the field's jsonschema tag, then returns the property.
 func propSchema(t reflect.Type, tag reflect.StructTag) *jsonschema.Schema {
