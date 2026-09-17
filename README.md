@@ -9,7 +9,9 @@ d := specout.New(specout.Config{
 	Title: "Onboarding API",
 	Version: "1.0.0",
 })
+```
 
+```go
 func HandleList(deps Deps) specout.Handler[ListRequest, Page] {
 	return specout.Handler[ListRequest, Page]{
 		HandlerFunc: func(w http.ResponseWriter, r *http.Request) { /* raw std */ },
@@ -65,6 +67,28 @@ func HandleUpsert(d Deps) specout.Handler[UpsertRequest, Onboarding] {
 		Responses: []specout.Response{{Status: 422, Type: api.ValidationError{}}},
 	}
 }
+```
+
+The same metadata has a fluent spelling — chains copy, so factories can build up a base and callers extend it:
+
+```go
+func HandleUpsert(d Deps) specout.Handler[UpsertRequest, Onboarding] {
+	return specout.Handler[UpsertRequest, Onboarding]{HandlerFunc: upsert(d)}.
+		WithSummary("Create or replace a record").
+		WithTags("onboarding").
+		WithResponse(specout.Response{Status: 409, Type: SyncConflict{}})
+}
+```
+
+Both spellings are the same type: literal fields where metadata is static, the chain for composing or extending shared bases. Every link returns a copy.
+
+## Shape aliases
+
+The empty sides of `Handler` need no spelling out. Two aliases cover them; both are full type aliases, so every binder and `With*` method accepts them unchanged:
+
+```go
+specout.Get[Onboarding]{HandlerFunc: fetch, Summary: "Fetch one record"}      // = Handler[struct{}, Onboarding]
+specout.Delete{HandlerFunc: remove, Summary: "Delete an onboarding record"}  // = Handler[struct{}, NoContent]
 ```
 
 Everything the spec needs is visible in the source you already write:

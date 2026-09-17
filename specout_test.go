@@ -126,6 +126,29 @@ func TestServeOnlyGet(t *testing.T) {
 	assert.Contains(t, rec.Header().Get("Content-Type"), "application/json")
 }
 
+// The fluent With* chain and the struct literal produce the same document.
+func TestHandlerFluent(t *testing.T) {
+	literal := specout.Handler[EmptyReq, Onboarding]{
+		HandlerFunc: noop, Summary: "s", Tags: []string{"t"},
+		Responses:  []specout.Response{{Status: 409, Type: Problem{}}},
+		Deprecated: true,
+	}
+	chained := specout.Handler[EmptyReq, Onboarding]{HandlerFunc: noop}.
+		WithSummary("s").WithTags("t").
+		WithResponse(specout.Response{Status: 409, Type: Problem{}}).
+		WithDeprecated()
+
+	for _, h := range []specout.Handler[EmptyReq, Onboarding]{literal, chained} {
+		g := newGen()
+		specout.Document(g, http.MethodGet, "/x", h)
+		op := opOf(t, buildDoc(t, g), "/x", "get")
+		assert.Equal(t, "s", op["summary"])
+		assert.Equal(t, []any{"t"}, op["tags"])
+		assert.Contains(t, op["responses"], "409")
+		assert.Equal(t, true, op["deprecated"])
+	}
+}
+
 func TestStdMuxHandle(t *testing.T) {
 	d, mux := newGen(), http.NewServeMux()
 	specout.Std(d, mux).Handle("DELETE /onboarding/{id}", specout.Handler[EmptyReq, struct{}]{HandlerFunc: okBody})

@@ -36,3 +36,75 @@ type Handler[Req, Res any] struct {
 func (h Handler[Req, Res]) Types() (reflect.Type, reflect.Type) {
 	return reflect.TypeFor[Req](), reflect.TypeFor[Res]()
 }
+
+
+// With* methods are the fluent form of the metadata fields: each returns a
+// copy of h with the field set, so chains never mutate. Tags and Responses
+// append; the rest replace. Field assignment stays equally valid — one
+// vocabulary, two spellings.
+
+// WithSummary sets the operation summary.
+func (h Handler[Req, Res]) WithSummary(summary string) Handler[Req, Res] {
+	h.Summary = summary
+	return h
+}
+
+// WithDescription sets the long description.
+func (h Handler[Req, Res]) WithDescription(desc string) Handler[Req, Res] {
+	h.Description = desc
+	return h
+}
+
+// WithOperationID sets an explicit operationId.
+func (h Handler[Req, Res]) WithOperationID(id string) Handler[Req, Res] {
+	h.OperationID = id
+	return h
+}
+
+// WithTags appends tags.
+func (h Handler[Req, Res]) WithTags(tags ...string) Handler[Req, Res] {
+	h.Tags = append(h.Tags, tags...)
+	return h
+}
+
+// WithResponse appends one response declaration.
+func (h Handler[Req, Res]) WithResponse(r Response) Handler[Req, Res] {
+	h.Responses = append(h.Responses, r)
+	return h
+}
+
+// WithResponses appends several response declarations.
+func (h Handler[Req, Res]) WithResponses(rs ...Response) Handler[Req, Res] {
+	h.Responses = append(h.Responses, rs...)
+	return h
+}
+
+// WithRequestContentTypes appends request body media types.
+func (h Handler[Req, Res]) WithRequestContentTypes(cts ...string) Handler[Req, Res] {
+	h.RequestContentTypes = append(h.RequestContentTypes, cts...)
+	return h
+}
+
+// WithExternalDocs sets the operation-level external docs.
+func (h Handler[Req, Res]) WithExternalDocs(ed *ExternalDocs) Handler[Req, Res] {
+	h.ExternalDocs = ed
+	return h
+}
+
+// WithRaw splices operation-level keys (x- extensions); it replaces, not merges.
+func (h Handler[Req, Res]) WithRaw(raw map[string]any) Handler[Req, Res] {
+	h.Raw = raw
+	return h
+}
+
+// WithDeprecated marks the operation deprecated.
+func (h Handler[Req, Res]) WithDeprecated() Handler[Req, Res] {
+	h.Deprecated = true
+	return h
+}
+
+// WithPublic opts the operation out of the global auth requirement.
+func (h Handler[Req, Res]) WithPublic() Handler[Req, Res] {
+	h.Public = true
+	return h
+}

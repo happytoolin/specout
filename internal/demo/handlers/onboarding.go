@@ -66,34 +66,50 @@ func get(w http.ResponseWriter, d Deps, id string) {
 }
 
 func HandleGet(d Deps) specout.Handler[struct{}, onboarding.Onboarding] {
-	return op[struct{}, onboarding.Onboarding]("onboarding", "Fetch one onboarding record", true, func(w http.ResponseWriter, r *http.Request) {
-		get(w, d, chi.URLParam(r, "id"))
-	})
+	return specout.Get[onboarding.Onboarding]{
+		HandlerFunc: func(w http.ResponseWriter, r *http.Request) { get(w, d, chi.URLParam(r, "id")) },
+		Summary:     "Fetch one onboarding record",
+		Tags:        []string{"onboarding"},
+		Public:      true,
+	}
 }
 
 // HandleLegacyGet serves the deprecated /legacy endpoint; the closure keeps router-walk on its own path.
 func HandleLegacyGet(d Deps) specout.Handler[struct{}, onboarding.Onboarding] {
-	h := op[struct{}, onboarding.Onboarding]("onboarding", "Replaced by GET /onboarding/{id}", true, func(w http.ResponseWriter, _ *http.Request) {
-		get(w, d, "onb_4f9x")
-	})
-	h.Deprecated = true
-	return h
+	return specout.Handler[struct{}, onboarding.Onboarding]{
+		HandlerFunc: func(w http.ResponseWriter, _ *http.Request) {
+			get(w, d, "onb_4f9x")
+		},
+		Summary: "Replaced by GET /onboarding/{id}",
+		Tags:    []string{"onboarding"},
+		Public:  true,
+	}.WithDeprecated()
 }
 
 func HandleUpsert(d Deps) specout.Handler[onboarding.UpsertRequest, onboarding.Onboarding] {
-	return op[onboarding.UpsertRequest, onboarding.Onboarding]("onboarding", "Create or replace an onboarding record", false, func(w http.ResponseWriter, r *http.Request) {
-		upsert(w, d, r, chi.URLParam(r, "id"), true)
-	}, specout.Response{Status: http.StatusCreated}, specout.Response{Status: http.StatusUnprocessableEntity, Type: api.ValidationError{}})
+	return specout.Handler[onboarding.UpsertRequest, onboarding.Onboarding]{
+		HandlerFunc: func(w http.ResponseWriter, r *http.Request) { upsert(w, d, r, chi.URLParam(r, "id"), true) },
+	}.
+		WithSummary("Create or replace an onboarding record").
+		WithTags("onboarding").
+		WithResponses(
+			specout.Response{Status: http.StatusCreated},
+			specout.Response{Status: http.StatusUnprocessableEntity, Type: api.ValidationError{}},
+		)
 }
 
 func HandleDelete(d Deps) specout.Handler[struct{}, specout.NoContent] {
-	return op[struct{}, specout.NoContent]("onboarding", "Delete an onboarding record", false, func(w http.ResponseWriter, r *http.Request) {
-		if err := d.Store.Delete(chi.URLParam(r, "id")); err != nil {
-			writeErr(w, d, err)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	})
+	return specout.Delete{
+		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
+			if err := d.Store.Delete(chi.URLParam(r, "id")); err != nil {
+				writeErr(w, d, err)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		},
+		Summary: "Delete an onboarding record",
+		Tags:    []string{"onboarding"},
+	}
 }
 
 // HandleSync shows the typed-error flow: *ConflictError keeps one error exit and its own 409 body.
