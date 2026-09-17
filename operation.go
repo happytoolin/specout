@@ -88,7 +88,8 @@ func checkOperationIDs(records []*routeRecord) error {
 		if first, dup := seen[id]; dup {
 			return fmt.Errorf(
 				"specout: duplicate operationId %s (%s and %s %s) — set OperationID on one route",
-				id, first, rec.method, rec.full)
+				id, first, rec.method, rec.full,
+			)
 		}
 		seen[id] = rec.method + " " + rec.full
 	}
