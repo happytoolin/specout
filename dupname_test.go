@@ -60,22 +60,22 @@ func TestNestedOnlyOverrideApplies(t *testing.T) {
 	specout.Chi(d, r).Get("/x", specout.Handler[struct{}, nestedDup]{HandlerFunc: noop})
 	doc := serveDoc(t, d, r)
 
-	schemas := doc["components"].(map[string]any)["schemas"].(map[string]any)
-	local, ok := schemas["LocalContact"].(map[string]any)
+	comps := schemas(t, doc)
+	local, ok := comps["LocalContact"].(map[string]any)
 	if !ok {
-		t.Fatalf("the override did not apply: %v", schemas)
+		t.Fatalf("the override did not apply: %v", comps)
 	}
 	if _, ok := local["properties"].(map[string]any)["handle"]; !ok {
 		t.Errorf("LocalContact = %v", local)
 	}
-	if lib := schemas["Contact"].(map[string]any)["properties"].(map[string]any); len(lib) != 3 {
+	if lib := comps["Contact"].(map[string]any)["properties"].(map[string]any); len(lib) != 3 {
 		t.Errorf("Contact = %v, want the library shape", lib)
 	}
-	props := schemas["nestedDup"].(map[string]any)["properties"].(map[string]any)
-	if ref := props["local"].(map[string]any)["$ref"]; ref != "#/components/schemas/LocalContact" {
+	np := props(t, doc, "nestedDup")
+	if ref := np["local"].(map[string]any)["$ref"]; ref != "#/components/schemas/LocalContact" {
 		t.Errorf("local ref = %v", ref)
 	}
-	if ref := props["lib"].(map[string]any)["$ref"]; ref != "#/components/schemas/Contact" {
+	if ref := np["lib"].(map[string]any)["$ref"]; ref != "#/components/schemas/Contact" {
 		t.Errorf("lib ref = %v", ref)
 	}
 }

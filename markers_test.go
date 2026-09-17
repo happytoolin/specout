@@ -1,9 +1,7 @@
 package specout_test
 
 import (
-	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -21,28 +19,20 @@ type item struct {
 // TestMarkerTypes: NoContent reads as 204, File turns the request into
 // multipart with a binary property, Header declares a response header.
 func TestMarkerTypes(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
+	d := newGen()
 	r := chi.NewRouter()
-	specout.Chi(d, r).Post("/files", specout.Handler[uploadReq, specout.NoContent]{
+	b := specout.Chi(d, r)
+	b.Post("/files", specout.Handler[uploadReq, specout.NoContent]{
 		HandlerFunc: func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) },
 	})
-	specout.Chi(d, r).Post("/items", specout.Handler[emptyMarker, item]{
+	b.Post("/items", specout.Handler[emptyMarker, item]{
 		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {},
 		Responses: []specout.Response{
 			{Status: 201, Headers: []specout.Header{{Name: "Location"}}},
 		},
 	})
-	if err := specout.Chi(d, r).Adopt(); err != nil {
-		t.Fatal(err)
-	}
-	r.Mount("/openapi.json", d)
-
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest("GET", "/openapi.json", nil))
-	var doc map[string]any
-	json.Unmarshal(w.Body.Bytes(), &doc)
-
-	paths := doc["paths"].(map[string]any)
+	doc := serveDoc(t, d, r)
+	paths := pathsObj(doc)
 
 	// NoContent -> 204
 	files := paths["/files"].(map[string]any)["post"].(map[string]any)

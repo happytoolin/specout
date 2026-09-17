@@ -51,9 +51,7 @@ func (d *Generator) register(rec routeRecord) {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.frozen {
-		panic("specout: registration after the spec was built")
-	}
+	d.mustBeOpen()
 	d.records = append(d.records, &rec)
 	d.known[rec.ptr()] = true
 }

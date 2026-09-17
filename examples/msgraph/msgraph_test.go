@@ -1,9 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -11,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/happytoolin/specout"
+	"github.com/happytoolin/specout/internal/examplekit/exampletest"
 	"github.com/happytoolin/specout/recorder"
 )
 
@@ -26,35 +24,12 @@ var publishedGraph = map[string]map[string]string{
 	"/users/{user-id}/sendMail":     {"post": "users.user.sendMail"},
 }
 
-func buildGraphSpec(t *testing.T) map[string]any {
-	t.Helper()
-	d, _ := New()
-	var buf bytes.Buffer
-	if err := d.WriteJSON(&buf); err != nil {
-		t.Fatal(err)
-	}
-	var doc map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &doc); err != nil {
-		t.Fatal(err)
-	}
-	return doc
-}
+// spec builds the example and returns its document.
+func spec(t *testing.T) map[string]any { d, _ := New(); return exampletest.Spec(t, d) }
 
-// dig walks a nested JSON object, failing the test at the first missing key.
-func dig(t *testing.T, v any, keys ...string) map[string]any {
-	t.Helper()
-	for _, k := range keys {
-		m, ok := v.(map[string]any)
-		if !ok {
-			t.Fatalf("no %q in %v", k, v)
-		}
-		v, ok = m[k]
-		if !ok {
-			t.Fatalf("missing %q", k)
-		}
-	}
-	return v.(map[string]any)
-}
+// dig walks a decoded document by key path, ending on an object: the shared
+// example walker.
+var dig = exampletest.Obj
 
 func graphOp(t *testing.T, doc map[string]any, path, method string) map[string]any {
 	t.Helper()
@@ -101,7 +76,7 @@ func absent(t *testing.T, label string, m map[string]any, key string) {
 }
 
 func TestSpecMatchesPublishedDocument(t *testing.T) {
-	paths := dig(t, buildGraphSpec(t), "paths")
+	paths := dig(t, spec(t), "paths")
 	eq(t, "paths", len(paths), len(publishedGraph))
 	ids := 0
 	for p, methods := range publishedGraph {
@@ -120,7 +95,7 @@ func TestSpecMatchesPublishedDocument(t *testing.T) {
 // parameter name, header parameters, OData dollar-prefixed query parameters,
 // a binary media response, and a request body split out of Req.
 func TestSpecKeepsPublishedShapes(t *testing.T) {
-	doc := buildGraphSpec(t)
+	doc := spec(t)
 	comps := dig(t, doc, "components")
 	schemas := dig(t, comps, "schemas")
 
@@ -262,7 +237,7 @@ func TestGraphDemoServesEveryRouteAndNoUndocumentedCode(t *testing.T) {
 
 	ft := &captureT{}
 	recorder.Verify(ft, d, rec)
-	for _, e := range ft.errs {
+	for _, e := range ft.Errs {
 		if strings.Contains(e, "but spec does not declare it") {
 			t.Errorf("drift: %s", e)
 		}
@@ -271,8 +246,4 @@ func TestGraphDemoServesEveryRouteAndNoUndocumentedCode(t *testing.T) {
 
 // captureT collects failures so a test can assert on one drift category
 // without the other failing it.
-type captureT struct{ errs []string }
-
-func (c *captureT) Helper()                   {}
-func (c *captureT) Errorf(f string, a ...any) { c.errs = append(c.errs, fmt.Sprintf(f, a...)) }
-func (c *captureT) Fatalf(f string, a ...any) { c.errs = append(c.errs, fmt.Sprintf(f, a...)) }
+type captureT = exampletest.CaptureT

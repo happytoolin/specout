@@ -4,12 +4,21 @@
 package examplekit
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 
 	"github.com/happytoolin/specout"
 )
+
+// WriteJSON answers v as application/json with code: the one JSON writer both
+// examples share.
+func WriteJSON(w http.ResponseWriter, code int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(v)
+}
 
 // SwaggerPage is the Swagger UI page for a spec served at specPath.
 func SwaggerPage(title, specPath string) string {

@@ -1,9 +1,7 @@
 package specout_test
 
 import (
-	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -42,26 +40,12 @@ func TestDocFields(t *testing.T) {
 		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {},
 		Public:      true,
 	})
-	if err := specout.Chi(d, r).Adopt(); err != nil {
-		t.Fatal(err)
-	}
-	r.Mount("/openapi.json", d)
-
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest("GET", "/openapi.json", nil))
-	var doc map[string]any
-	json.Unmarshal(w.Body.Bytes(), &doc)
-
+	doc := serveDoc(t, d, r)
 	// cookie + header params
-	post := doc["paths"].(map[string]any)["/things"].(map[string]any)["post"].(map[string]any)
-	params := post["parameters"].([]any)
-	got := map[string]string{}
-	for _, p := range params {
-		m := p.(map[string]any)
-		got[m["in"].(string)] = m["name"].(string)
-	}
-	if got["cookie"] != "session" || got["header"] != "X-Trace-Id" {
-		t.Errorf("params = %v", got)
+	post := opOf(t, doc, "/things", "post")
+	params := paramsOf(t, post)
+	if params["session"]["in"] != "cookie" || params["X-Trace-Id"]["in"] != "header" {
+		t.Errorf("params = %v", params)
 	}
 	if post["description"] != "longer description" {
 		t.Error("description missing")
@@ -89,7 +73,7 @@ func TestDocFields(t *testing.T) {
 	}
 
 	// public route: security: []
-	ping := doc["paths"].(map[string]any)["/ping"].(map[string]any)["get"].(map[string]any)
+	ping := opOf(t, doc, "/ping", "get")
 	if sec, ok := ping["security"]; !ok || len(sec.([]any)) != 0 {
 		t.Errorf("public route security = %v", ping["security"])
 	}

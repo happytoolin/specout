@@ -2,8 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
-	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/happytoolin/specout"
+	"github.com/happytoolin/specout/internal/examplekit/exampletest"
 	"github.com/happytoolin/specout/recorder"
 )
 
@@ -33,38 +32,14 @@ var published = map[string]map[string]string{
 	"/user/{username}":         {"get": "getUserByName", "put": "updateUser", "delete": "deleteUser"},
 }
 
-func buildSpec(t *testing.T) map[string]any {
-	t.Helper()
-	d, _ := New()
-	var buf bytes.Buffer
-	if err := d.WriteJSON(&buf); err != nil {
-		t.Fatal(err)
-	}
-	var doc map[string]any
-	if err := json.NewDecoder(&buf).Decode(&doc); err != nil {
-		t.Fatal(err)
-	}
-	return doc
-}
+// spec builds the example and returns its document.
+func spec(t *testing.T) map[string]any { d, _ := New(); return exampletest.Spec(t, d) }
 
-// dig walks a decoded document by key path and fails the test at the first
-// level the published shape is missing.
-func dig(t *testing.T, v any, keys ...string) any {
-	t.Helper()
-	for _, k := range keys {
-		m, ok := v.(map[string]any)
-		if !ok {
-			t.Fatalf("no object at %q: %v", k, v)
-		}
-		if v, ok = m[k]; !ok {
-			t.Fatalf("no %q in %v", k, m)
-		}
-	}
-	return v
-}
+// dig walks a decoded document by key path: the shared example walker.
+var dig = exampletest.Dig
 
 func TestSpecMatchesPublishedDocument(t *testing.T) {
-	paths := dig(t, buildSpec(t), "paths").(map[string]any)
+	paths := dig(t, spec(t), "paths").(map[string]any)
 	if len(paths) != len(published) {
 		t.Errorf("paths = %d, want %d", len(paths), len(published))
 	}
@@ -96,7 +71,7 @@ func TestSpecMatchesPublishedDocument(t *testing.T) {
 // and the answer to the two bugs the example found (leaked File component,
 // required carrying the Go field name).
 func TestSpecKeepsPublishedShapes(t *testing.T) {
-	doc := buildSpec(t)
+	doc := spec(t)
 
 	// int64 path param with its published description
 	param := dig(t, doc, "paths", "/pet/{petId}", "get", "parameters").([]any)[0].(map[string]any)
@@ -161,11 +136,7 @@ func TestSpecKeepsPublishedShapes(t *testing.T) {
 
 // captureT collects failures so a test can assert on one drift category
 // without the other failing it.
-type captureT struct{ errs []string }
-
-func (c *captureT) Helper()                   {}
-func (c *captureT) Errorf(f string, a ...any) { c.errs = append(c.errs, fmt.Sprintf(f, a...)) }
-func (c *captureT) Fatalf(f string, a ...any) { c.errs = append(c.errs, fmt.Sprintf(f, a...)) }
+type captureT = exampletest.CaptureT
 
 // TestDemoServesEveryRouteAndNoUndocumentedCode drives the served demo over
 // real HTTP, then checks the drift direction that must hold: every code a
@@ -243,12 +214,12 @@ func TestDemoServesEveryRouteAndNoUndocumentedCode(t *testing.T) {
 
 	ft := &captureT{}
 	recorder.Verify(ft, d, rec)
-	for _, e := range ft.errs {
+	for _, e := range ft.Errs {
 		if strings.Contains(e, "but spec does not declare it") {
 			t.Errorf("drift: %s", e)
 		}
 	}
-	if len(ft.errs) == 0 {
+	if len(ft.Errs) == 0 {
 		t.Log("no drift at all: the demo produced every declared code")
 	}
 }
