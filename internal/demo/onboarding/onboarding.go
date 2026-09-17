@@ -56,7 +56,7 @@ type SyncResult struct {
 var ErrNotFound = errors.New("onboarding: not found")
 
 // ConflictError knows its own status and wire shape, so the generic mapper
-// never sees it.
+// never sees it (api-reference §05).
 type ConflictError struct {
 	ID               string
 	Expected, Actual int
