@@ -1,11 +1,11 @@
 package specout
 
 import (
+	"cmp"
 	"fmt"
 	"net/http"
 	"reflect"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -154,17 +154,19 @@ func (d *Generator) pairPaths() error {
 		}
 		pairs = append(pairs, pairing{rec, hits[rec.key()]})
 	}
-	sort.SliceStable(pairs, func(i, j int) bool { return pairs[i].rec.pattern < pairs[j].rec.pattern })
+	slices.SortStableFunc(pairs, func(a, b pairing) int {
+		return strings.Compare(a.rec.pattern, b.rec.pattern)
+	})
 	claimed := d.claimedPaths()
 	for _, p := range pairs {
-		sort.Slice(p.cands, func(i, j int) bool {
-			if ei, ej := p.cands[i] == p.rec.pattern, p.cands[j] == p.rec.pattern; ei != ej {
-				return ei
+		slices.SortFunc(p.cands, func(a, b string) int {
+			if ea, eb := a == p.rec.pattern, b == p.rec.pattern; ea != eb {
+				if ea {
+					return -1
+				}
+				return 1
 			}
-			if len(p.cands[i]) != len(p.cands[j]) {
-				return len(p.cands[i]) > len(p.cands[j])
-			}
-			return p.cands[i] < p.cands[j]
+			return cmp.Or(cmp.Compare(len(b), len(a)), strings.Compare(a, b))
 		})
 		for _, c := range p.cands {
 			ck := candidate{p.rec.key(), c}
@@ -210,7 +212,8 @@ func (d *Generator) checkSurplus(pairs []pairing, claimed map[candidate]bool) er
 			return fmt.Errorf(
 				"specout: %s %s is also served at %s; adopt only the outermost "+
 					"router, or register each path with Document",
-				p.rec.method, p.rec.pattern, strings.Join(extra, ", "))
+				p.rec.method, p.rec.pattern, strings.Join(extra, ", "),
+			)
 		}
 	}
 	return nil
@@ -225,7 +228,8 @@ func (d *Generator) validateRecords() error {
 			return fmt.Errorf(
 				"specout: %s %q never resolved; adopt the outermost router "+
 					"(Adopt) or use Document",
-				rec.method, rec.pattern)
+				rec.method, rec.pattern,
+			)
 		}
 		// an empty parameter name (/{} ) is not a legal OpenAPI path template.
 		// chi accepts the route, so fail here instead of emitting a broken path.
@@ -239,7 +243,8 @@ func (d *Generator) validateRecords() error {
 			return fmt.Errorf(
 				"specout: %s %q has a Req field tagged path:%q, but the pattern "+
 					"has no {%s}",
-				rec.method, rec.pattern, name, name)
+				rec.method, rec.pattern, name, name,
+			)
 		}
 		// duplicate canonical (path, method) from two registrations fails loud.
 		// Keyed on the documented path: /x/{id:[0-9]+} and /x/{id:[a-z]+} are
@@ -249,7 +254,8 @@ func (d *Generator) validateRecords() error {
 		if first, dup := seen[ck]; dup {
 			return fmt.Errorf(
 				"specout: duplicate route %s %s (registered as %q and %q)",
-				rec.method, docPath(rec.full), first, rec.pattern)
+				rec.method, docPath(rec.full), first, rec.pattern,
+			)
 		}
 		seen[ck] = rec.pattern
 	}

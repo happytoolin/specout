@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -62,10 +63,9 @@ func petCollectionRoutes(b *specout.ChiRouter, s *store) {
 			out := []Pet{}
 			for _, p := range s.petsList() {
 				for _, t := range p.Tags {
-					for _, wt := range want {
-						if t.Name == wt {
-							out = append(out, p)
-						}
+					if slices.Contains(want, t.Name) {
+						out = append(out, p)
+						break
 					}
 				}
 			}

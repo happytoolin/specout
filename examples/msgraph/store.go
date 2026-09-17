@@ -3,8 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -84,12 +85,10 @@ func (s *store) getMe(w http.ResponseWriter, _ *http.Request) {
 func (s *store) listUsers(w http.ResponseWriter, r *http.Request) {
 	top, _ := strconv.Atoi(r.URL.Query().Get("$top"))
 	s.mu.Lock()
-	out := UserCollectionResponse{Value: []User{}}
-	for _, u := range s.users {
-		out.Value = append(out.Value, u)
-	}
+	value := slices.SortedFunc(maps.Values(s.users), func(a, b User) int { return strings.Compare(a.ID, b.ID) })
 	s.mu.Unlock()
-	sort.Slice(out.Value, func(i, j int) bool { return out.Value[i].ID < out.Value[j].ID })
+	// keep Value non-nil so an empty store still answers "value": []
+	out := UserCollectionResponse{Value: append([]User{}, value...)}
 	if top > 0 && top < len(out.Value) {
 		out.ODataNextLink = "/users?$top=" + strconv.Itoa(top) + "&$skiptoken=" + out.Value[top-1].ID
 		out.Value = out.Value[:top]
