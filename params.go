@@ -3,6 +3,7 @@ package specout
 import (
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -15,7 +16,7 @@ import (
 // {id:[0-9]{4}} would stop at the inner } and leave a stray brace behind.
 // ponytail: one nesting level; a two-deep regex stays unnormalized rather
 // than mangled. Swap in a brace scanner if such a pattern ever appears.
-var pathParamRe = regexp.MustCompile(`\{([^}:]+)(:[^{}]*(?:\{[^{}]*\}[^{}]*)*)?\}`)
+var pathParamRe = regexp.MustCompile(`{([^}:]+)(:[^{}]*(?:{[^{}]*}[^{}]*)*)?}`)
 
 // pathParams extracts {name} placeholders from a route pattern.
 func pathParams(pattern string) []string {
@@ -26,31 +27,46 @@ func pathParams(pattern string) []string {
 	return out
 }
 
+// paramTag returns the parameter location and tag value of a Req field:
+// query, header, cookie or path.
+func paramTag(f reflect.StructField) (loc, value string) {
+	for _, l := range []string{"query", "header", "cookie", "path"} {
+		if t := f.Tag.Get(l); t != "" {
+			return l, t
+		}
+	}
+	return "", ""
+}
+
+// isParamField reports whether an exported Req field is an OpenAPI parameter.
+// A path: field is one: it types the {name} placeholder and must not appear in
+// the body either.
+func isParamField(f reflect.StructField) bool {
+	if f.PkgPath != "" {
+		return false
+	}
+	loc, value := paramTag(f)
+	if loc == "" {
+		return false
+	}
+	// query:"-" (or header:"-") opts out: the field is a plain body field.
+	return loc == "path" || parts0(value) != "-"
+}
+
+// hasParamField reports whether t carries any parameter field.
+func hasParamField(t reflect.Type) bool {
+	return slices.ContainsFunc(exportedFields(t), isParamField)
+}
+
 // taggedParams reflects Req fields carrying a query/header/cookie tag into
 // OpenAPI parameters.
 func taggedParams(req reflect.Type, sr *schemaRegistry) []any {
-	if req == nil {
-		return nil
-	}
-	for req.Kind() == reflect.Pointer {
-		req = req.Elem()
-	}
-	if req.Kind() != reflect.Struct {
-		return nil
-	}
 	var params []any
-	for i := 0; i < req.NumField(); i++ {
-		f := req.Field(i)
-		if f.PkgPath != "" {
-			continue
-		}
+	for _, f := range exportedFields(req) {
 		loc, qt := paramTag(f)
-		// not a parameter: it is a body field (or a path: field, which only
-		// types an already-declared path parameter and never becomes one here).
-		if !isParamField(f) {
-			continue
-		}
-		if loc == "path" {
+		// a non-parameter is a body field, and a path: field only types an
+		// already-declared placeholder: neither becomes a query parameter here.
+		if !isParamField(f) || loc == "path" {
 			continue
 		}
 		name := parts0(qt)
@@ -100,225 +116,9 @@ func applyParamStyle(p *obj, f reflect.StructField) {
 	}
 }
 
-// paramTag returns the parameter location and tag value of a Req field:
-// query, header, cookie or path.
-func paramTag(f reflect.StructField) (loc, value string) {
-	for _, l := range []string{"query", "header", "cookie", "path"} {
-		if t := f.Tag.Get(l); t != "" {
-			return l, t
-		}
-	}
-	return "", ""
-}
-
-// isParamField reports whether an exported Req field is an OpenAPI parameter.
-// A path: field is one: it types the {name} placeholder and must not appear in
-// the body either.
-func isParamField(f reflect.StructField) bool {
-	if f.PkgPath != "" {
-		return false
-	}
-	loc, value := paramTag(f)
-	if loc == "" {
-		return false
-	}
-	// query:"-" (or header:"-") opts out: the field is a plain body field.
-	return loc == "path" || parts0(value) != "-"
-}
-
-// hasParamField reports whether t carries any parameter field.
-func hasParamField(t reflect.Type) bool {
-	for i := 0; i < t.NumField(); i++ {
-		if isParamField(t.Field(i)) {
-			return true
-		}
-	}
-	return false
-}
-
-// bodyView is the request-body view of a Req type that mixes parameters and
-// body fields: the synthetic body-only struct, and the component name it is
-// registered under.
-type bodyView struct {
-	t    reflect.Type
-	name string
-}
-
-// bodyType returns the type whose schema is Req's request body plus the
-// component name to register it under, or (nil, "") when Req carries no body.
-//
-// Req is path+query+body together, so a $ref to the whole struct would list a
-// path or query parameter as a body property: reify the struct without its
-// parameter fields instead. Any other Req is itself the body — []User is a
-// JSON array body, and File is an octet-stream payload.
-//
-// The synthetic type is memoized per Req: StructOf must yield exactly one type
-// per Req, or two operations sharing a Req type would each register a
-// component under the same name.
-func (sr *schemaRegistry) bodyType(req reflect.Type) (reflect.Type, string) {
-	if req == nil {
-		return nil, ""
-	}
-	for req.Kind() == reflect.Pointer {
-		req = req.Elem()
-	}
-	// an empty struct carries no body, but a bare File is an octet-stream
-	// payload: it is a marker type, not a body schema.
-	if req == reflect.TypeFor[File]() {
-		return req, ""
-	}
-	if req.Kind() != reflect.Struct {
-		return req, ""
-	}
-	if req.NumField() == 0 {
-		return nil, ""
-	}
-	if !hasParamField(req) {
-		return req, ""
-	}
-	if v, ok := sr.bodyViews[req]; ok {
-		return v.t, v.name
-	}
-	fields := bodyFields(req)
-	if len(fields) == 0 {
-		// every field is a parameter: the operation has no body at all
-		return nil, ""
-	}
-	v := bodyView{t: reflect.StructOf(fields), name: sr.nameFor(req)}
-	sr.bodyViews[req] = v
-	return v.t, v.name
-}
-
-// bodyFields lists the StructOf fields of a request-body view: req's exported,
-// non-parameter fields, with untagged embedded structs expanded the way
-// encoding/json expands them. reflect.StructOf rejects an unexported field,
-// and the promoted fields belong in the body, so the expansion is required: a
-// body that embeds a base type (ids, timestamps) must not panic the moment it
-// also carries a query parameter.
-func bodyFields(req reflect.Type) []reflect.StructField {
-	// a direct field shadows a promoted one of the same name, and StructOf
-	// rejects the duplicate: reserve the direct names before expanding
-	taken := make(map[string]bool, req.NumField())
-	for i := 0; i < req.NumField(); i++ {
-		if f := req.Field(i); !isParamField(f) && !promotes(f) {
-			taken[f.Name] = true
-		}
-	}
-	var out []reflect.StructField
-	for i := 0; i < req.NumField(); i++ {
-		if f := req.Field(i); !isParamField(f) {
-			out = bodyField(out, f, taken)
-		}
-	}
-	return out
-}
-
-// promotes reports whether f is an untagged embedded struct: the fields it
-// promotes are properties of the parent object.
-func promotes(f reflect.StructField) bool {
-	if !f.Anonymous || parts0(f.Tag.Get("json")) != "" {
-		return false
-	}
-	return deref(f.Type).Kind() == reflect.Struct
-}
-
-func deref(t reflect.Type) reflect.Type {
-	for t.Kind() == reflect.Pointer {
-		t = t.Elem()
-	}
-	return t
-}
-
-// ponytail: first declaration wins when two embedded structs promote the same
-// name; encoding/json drops both as ambiguous. Add a depth map if that shows up.
-func bodyField(out []reflect.StructField, f reflect.StructField, taken map[string]bool) []reflect.StructField {
-	if promotes(f) {
-		et := deref(f.Type)
-		for i := 0; i < et.NumField(); i++ {
-			sub := et.Field(i)
-			if sub.PkgPath != "" && !sub.Anonymous {
-				continue // unexported plain field: never marshaled
-			}
-			if taken[sub.Name] {
-				continue // shadowed by a field at this or a shallower level
-			}
-			taken[sub.Name] = true
-			out = bodyField(out, sub, taken)
-		}
-		return out
-	}
-	if f.PkgPath != "" {
-		if !f.Anonymous {
-			return out // unexported plain field: never marshaled
-		}
-		// unexported embedded type: StructOf needs an exported Go name; the
-		// JSON property name still comes from the tag.
-		if parts0(f.Tag.Get("json")) == "" {
-			f.Tag = reflect.StructTag(`json:"` + f.Name + `" ` + string(f.Tag))
-		}
-		f.Anonymous = false
-		f.Name = "Embedded" + f.Name
-		f.PkgPath = ""
-	}
-	return append(out, f)
-}
-
-// reflectParam builds a synthetic struct with one field shaped like f, so
-// invopop applies the field's jsonschema tag, then returns the property.
-func propSchema(t reflect.Type, tag reflect.StructTag) *jsonschema.Schema {
-	wrap := reflect.StructOf([]reflect.StructField{{Name: "Wrap", Type: t, Tag: tag}})
-	r := &jsonschema.Reflector{Anonymous: true, DoNotReference: true}
-	s := r.Reflect(reflect.New(wrap).Interface())
-	s.Version = ""
-	if s.Properties == nil {
-		return nil
-	}
-	var p *jsonschema.Schema
-	for k := range s.Properties.KeysFromOldest() {
-		p, _ = s.Properties.Get(k)
-		break
-	}
-	applyFormatTag(p, tag)
-	return p
-}
-
-// applyFormatTag copies a format= tag onto the schema. invopop only reads
-// format in its string-keyword branch, so format=int64 on an integer (every
-// published spec names int32/int64) is otherwise dropped on the floor.
-func applyFormatTag(p *jsonschema.Schema, tag reflect.StructTag) {
-	if p == nil || p.Format != "" {
-		return
-	}
-	if f := tagValue(tag.Get("jsonschema"), "format"); f != "" {
-		p.Format = f
-	}
-}
-
-// reflectParam is propSchema for the field's own type and tag.
-func reflectParam(f reflect.StructField) *jsonschema.Schema {
-	return propSchema(f.Type, f.Tag)
-}
-
-func parts0(s string) string {
-	if p := strings.Split(s, ","); p[0] != "" {
-		return p[0]
-	}
-	return s
-}
-
-// tagValue extracts key=value from a jsonschema tag string.
-func tagValue(tag, key string) string {
-	for _, part := range strings.Split(tag, ",") {
-		if strings.HasPrefix(part, key+"=") {
-			return strings.TrimPrefix(part, key+"=")
-		}
-	}
-	return ""
-}
-
 // pathField finds the Req field tagged path:"name".
 func pathField(req reflect.Type, name string) (reflect.StructField, bool) {
-	for _, f := range pathFields(req) {
+	for _, f := range exportedFields(req) {
 		if parts0(f.Tag.Get("path")) == name {
 			return f, true
 		}
@@ -326,39 +126,18 @@ func pathField(req reflect.Type, name string) (reflect.StructField, bool) {
 	return reflect.StructField{}, false
 }
 
-// pathFields returns the exported Req fields tagged path:"...".
-func pathFields(req reflect.Type) []reflect.StructField {
-	if req == nil {
-		return nil
-	}
-	for req.Kind() == reflect.Pointer {
-		req = req.Elem()
-	}
-	if req.Kind() != reflect.Struct {
-		return nil
-	}
-	var out []reflect.StructField
-	for i := 0; i < req.NumField(); i++ {
-		f := req.Field(i)
-		if f.PkgPath == "" && parts0(f.Tag.Get("path")) != "" {
-			out = append(out, f)
-		}
-	}
-	return out
-}
-
 // strayPathField returns a path:"name" tag that the pattern does not carry as
 // a {name} placeholder. The field is dropped from the body and the
 // placeholder falls back to a plain string parameter, so a typo here would
 // silently document the wrong thing.
 func strayPathField(req reflect.Type, pattern string) (string, bool) {
-	have := make(map[string]bool)
+	have := map[string]bool{}
 	for _, n := range pathParams(pattern) {
 		have[strings.TrimSuffix(n, "...")] = true
 	}
-	for _, f := range pathFields(req) {
+	for _, f := range exportedFields(req) {
 		name := parts0(f.Tag.Get("path"))
-		if name != "-" && !have[name] {
+		if name != "" && name != "-" && !have[name] {
 			return name, true
 		}
 	}
@@ -437,4 +216,57 @@ func hasBinaryField(t reflect.Type) bool {
 		}
 	}
 	return false
+}
+
+// propSchema builds a synthetic struct with one field shaped like f, so
+// invopop applies the field's jsonschema tag, then returns the property.
+func propSchema(t reflect.Type, tag reflect.StructTag) *jsonschema.Schema {
+	wrap := reflect.StructOf([]reflect.StructField{{Name: "Wrap", Type: t, Tag: tag}})
+	r := &jsonschema.Reflector{Anonymous: true, DoNotReference: true}
+	s := r.Reflect(reflect.New(wrap).Interface())
+	s.Version = ""
+	if s.Properties == nil {
+		return nil
+	}
+	var p *jsonschema.Schema
+	for k := range s.Properties.KeysFromOldest() {
+		p, _ = s.Properties.Get(k)
+		break
+	}
+	applyFormatTag(p, tag)
+	return p
+}
+
+// applyFormatTag copies a format= tag onto the schema. invopop only reads
+// format in its string-keyword branch, so format=int64 on an integer (every
+// published spec names int32/int64) is otherwise dropped on the floor.
+func applyFormatTag(p *jsonschema.Schema, tag reflect.StructTag) {
+	if p == nil || p.Format != "" {
+		return
+	}
+	if f := tagValue(tag.Get("jsonschema"), "format"); f != "" {
+		p.Format = f
+	}
+}
+
+// reflectParam is propSchema for the field's own type and tag.
+func reflectParam(f reflect.StructField) *jsonschema.Schema {
+	return propSchema(f.Type, f.Tag)
+}
+
+func parts0(s string) string {
+	if p := strings.Split(s, ","); p[0] != "" {
+		return p[0]
+	}
+	return s
+}
+
+// tagValue extracts key=value from a jsonschema tag string.
+func tagValue(tag, key string) string {
+	for _, part := range strings.Split(tag, ",") {
+		if strings.HasPrefix(part, key+"=") {
+			return strings.TrimPrefix(part, key+"=")
+		}
+	}
+	return ""
 }
