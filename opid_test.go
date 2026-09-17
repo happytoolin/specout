@@ -1,32 +1,24 @@
 package specout_test
 
 import (
-	"net/http"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/happytoolin/specout"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestOperationIDOverride(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	r := chi.NewRouter()
+	d, r := newGen(), chi.NewRouter()
 	specout.Chi(d, r).Get("/users/{id}/profile", specout.Handler[struct{}, struct{ V int }]{
-		HandlerFunc: func(http.ResponseWriter, *http.Request) {},
+		HandlerFunc: noop,
 		OperationID: "getUserProfile",
 	})
 	specout.Chi(d, r).Get("/users/{id}/settings", specout.Handler[struct{}, struct{ V int }]{
-		HandlerFunc: func(http.ResponseWriter, *http.Request) {},
+		HandlerFunc: noop,
 	})
 	doc := serveDoc(t, d, r)
-	get := func(p string) string {
-		op := doc["paths"].(map[string]any)[p].(map[string]any)["get"].(map[string]any)
-		return op["operationId"].(string)
-	}
-	if got := get("/users/{id}/profile"); got != "getUserProfile" {
-		t.Errorf("override ignored: %s", got)
-	}
-	if got := get("/users/{id}/settings"); got != "getUsersIdSettings" {
-		t.Errorf("derived changed: %s", got)
-	}
+	get := func(p string) string { return opOf(t, doc, p, "get")["operationId"].(string) }
+	assert.Equal(t, "getUserProfile", get("/users/{id}/profile"), "override ignored")
+	assert.Equal(t, "getUsersIdSettings", get("/users/{id}/settings"), "derived changed")
 }

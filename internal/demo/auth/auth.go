@@ -1,5 +1,4 @@
-// Package auth is the demo's own middleware. specout only declares the
-// securitySchemes; enforcement is app code.
+// Package auth enforces the schemes specout only declares.
 package auth
 
 import (
@@ -7,23 +6,12 @@ import (
 	"strings"
 )
 
-// Require accepts any of the three declared schemes: Bearer token,
-// X-API-Key header, or session cookie. All demo tokens/keys are accepted.
+// Require accepts any declared scheme; all demo tokens and keys pass.
 func Require(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		has := func() bool {
-			if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
-				return true
-			}
-			if r.Header.Get("X-API-Key") != "" {
-				return true
-			}
-			if _, err := r.Cookie("session"); err == nil {
-				return true
-			}
-			return false
-		}()
-		if !has {
+		_, cookieErr := r.Cookie("session")
+		ok := cookieErr == nil || strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") || r.Header.Get("X-API-Key") != ""
+		if !ok {
 			w.Header().Set("WWW-Authenticate", "Bearer")
 			http.Error(w, "missing credentials", http.StatusUnauthorized)
 			return

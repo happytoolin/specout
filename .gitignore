@@ -31,3 +31,8 @@ go.work.sum
 # .idea/
 # .vscode/
 .venv
+
+# Built example binaries (go build ./examples/...)
+/demo
+/msgraph
+/petstore

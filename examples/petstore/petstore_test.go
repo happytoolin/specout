@@ -2,8 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
-	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -11,109 +9,57 @@ import (
 	"testing"
 
 	"github.com/happytoolin/specout"
+	"github.com/happytoolin/specout/internal/examplekit/exampletest"
 	"github.com/happytoolin/specout/recorder"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// published is the path -> method set of the live document
+// published is the path -> method -> operationId map of the live document
 // (petstore.swagger.io/v3/openapi.json, 3.0.4). The example must emit it
 // exactly; every deviation is listed in examples/README.md.
-var published = map[string][]string{
-	"/pet":                     {"put", "post"},
-	"/pet/findByStatus":        {"get"},
-	"/pet/findByTags":          {"get"},
-	"/pet/{petId}":             {"get", "post", "delete"},
-	"/pet/{petId}/uploadImage": {"post"},
-	"/store/inventory":         {"get"},
-	"/store/order":             {"post"},
-	"/store/order/{orderId}":   {"get", "delete"},
-	"/user":                    {"post"},
-	"/user/createWithList":     {"post"},
-	"/user/login":              {"get"},
-	"/user/logout":             {"get"},
-	"/user/{username}":         {"get", "put", "delete"},
+var published = map[string]map[string]string{
+	"/pet":                     {"put": "updatePet", "post": "addPet"},
+	"/pet/findByStatus":        {"get": "findPetsByStatus"},
+	"/pet/findByTags":          {"get": "findPetsByTags"},
+	"/pet/{petId}":             {"get": "getPetById", "post": "updatePetWithForm", "delete": "deletePet"},
+	"/pet/{petId}/uploadImage": {"post": "uploadFile"},
+	"/store/inventory":         {"get": "getInventory"},
+	"/store/order":             {"post": "placeOrder"},
+	"/store/order/{orderId}":   {"get": "getOrderById", "delete": "deleteOrder"},
+	"/user":                    {"post": "createUser"},
+	"/user/createWithList":     {"post": "createUsersWithListInput"},
+	"/user/login":              {"get": "loginUser"},
+	"/user/logout":             {"get": "logoutUser"},
+	"/user/{username}":         {"get": "getUserByName", "put": "updateUser", "delete": "deleteUser"},
 }
 
-func buildSpec(t *testing.T) map[string]any {
+// spec builds the example and returns its document.
+func spec(t *testing.T) map[string]any {
 	t.Helper()
 	d, _ := New()
-	var buf bytes.Buffer
-	if err := d.WriteJSON(&buf); err != nil {
-		t.Fatal(err)
-	}
-	var doc map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &doc); err != nil {
-		t.Fatal(err)
-	}
-	return doc
+	return exampletest.Spec(t, d)
 }
 
-func pathItem(t *testing.T, doc map[string]any, path string) map[string]any {
-	t.Helper()
-	p, ok := doc["paths"].(map[string]any)
-	if !ok {
-		t.Fatal("no paths object")
-	}
-	item, ok := p[path].(map[string]any)
-	if !ok {
-		t.Fatalf("missing path %s", path)
-	}
-	return item
-}
-
-func operation(t *testing.T, doc map[string]any, path, method string) map[string]any {
-	t.Helper()
-	op, ok := pathItem(t, doc, path)[method].(map[string]any)
-	if !ok {
-		t.Fatalf("missing %s %s", method, path)
-	}
-	return op
-}
+// dig walks a decoded document by key path: the shared example walker.
+var dig = exampletest.Dig
 
 func TestSpecMatchesPublishedDocument(t *testing.T) {
-	doc := buildSpec(t)
-	paths := doc["paths"].(map[string]any)
-	if len(paths) != len(published) {
-		t.Errorf("paths = %d, want %d", len(paths), len(published))
-	}
+	paths := dig(t, spec(t), "paths").(map[string]any)
+	assert.Len(t, paths, len(published), "paths")
 	for p, methods := range published {
 		item, ok := paths[p].(map[string]any)
-		if !ok {
-			t.Errorf("missing path %s", p)
+		if !assert.True(t, ok, "missing path %s", p) {
 			continue
 		}
-		for _, m := range methods {
-			if _, ok := item[m]; !ok {
-				t.Errorf("missing %s %s", m, p)
+		assert.Len(t, item, len(methods), "%s operations", p)
+		// the 19 published operationIds, no more, no fewer, on the right route
+		for m, wantID := range methods {
+			op, ok := item[m].(map[string]any)
+			if !assert.True(t, ok, "missing %s %s", m, p) {
+				continue
 			}
-		}
-		if len(item) != len(methods) {
-			t.Errorf("%s has %d operations, want %d", p, len(item), len(methods))
-		}
-	}
-	// the 19 published operationIds, no more, no fewer
-	ids := []string{}
-	for p, raw := range paths {
-		for m, op := range raw.(map[string]any) {
-			id, _ := op.(map[string]any)["operationId"].(string)
-			if id == "" {
-				t.Errorf("%s %s has no operationId", m, p)
-			}
-			ids = append(ids, id)
-		}
-	}
-	if len(ids) != 19 {
-		t.Errorf("operations = %d, want 19", len(ids))
-	}
-	for _, want := range []string{"updatePet", "addPet", "findPetsByStatus", "findPetsByTags",
-		"getPetById", "updatePetWithForm", "deletePet", "uploadFile", "getInventory",
-		"placeOrder", "getOrderById", "deleteOrder", "createUser", "createUsersWithListInput",
-		"loginUser", "logoutUser", "getUserByName", "updateUser", "deleteUser"} {
-		found := false
-		for _, id := range ids {
-			found = found || id == want
-		}
-		if !found {
-			t.Errorf("missing operationId %s", want)
+			assert.Equal(t, wantID, op["operationId"], "%s %s operationId", m, p)
 		}
 	}
 }
@@ -123,82 +69,52 @@ func TestSpecMatchesPublishedDocument(t *testing.T) {
 // and the answer to the two bugs the example found (leaked File component,
 // required carrying the Go field name).
 func TestSpecKeepsPublishedShapes(t *testing.T) {
-	doc := buildSpec(t)
+	doc := spec(t)
 
 	// int64 path param with its published description
-	params := operation(t, doc, "/pet/{petId}", "get")["parameters"].([]any)
-	first := params[0].(map[string]any)
-	schema := first["schema"].(map[string]any)
-	if first["name"] != "petId" || schema["type"] != "integer" || schema["format"] != "int64" {
-		t.Errorf("petId param = %v", first)
-	}
+	param := dig(t, doc, "paths", "/pet/{petId}", "get", "parameters").([]any)[0].(map[string]any)
+	assert.Equal(t, "petId", param["name"])
+	assert.Equal(t, "integer", dig(t, param, "schema", "type"), "petId param")
+	assert.Equal(t, "int64", dig(t, param, "schema", "format"), "petId param")
 
 	// response headers, scalar and time
-	resp200 := operation(t, doc, "/user/login", "get")["responses"].(map[string]any)["200"].(map[string]any)
-	headers := resp200["headers"].(map[string]any)
-	if headers["X-Rate-Limit"].(map[string]any)["schema"].(map[string]any)["type"] != "integer" {
-		t.Errorf("X-Rate-Limit = %v", headers["X-Rate-Limit"])
-	}
-	if headers["X-Expires-After"].(map[string]any)["schema"].(map[string]any)["format"] != "date-time" {
-		t.Errorf("X-Expires-After = %v", headers["X-Expires-After"])
-	}
+	headers := dig(t, doc, "paths", "/user/login", "get", "responses", "200", "headers").(map[string]any)
+	assert.Equal(t, "integer", dig(t, headers, "X-Rate-Limit", "schema", "type"))
+	assert.Equal(t, "date-time", dig(t, headers, "X-Expires-After", "schema", "format"))
 
 	// map[string]int32 body is inlined, not $ref'd
-	inv := operation(t, doc, "/store/inventory", "get")["responses"].(map[string]any)["200"].(map[string]any)
-	invSchema := inv["content"].(map[string]any)["application/json"].(map[string]any)["schema"].(map[string]any)
-	if invSchema["type"] != "object" || invSchema["additionalProperties"] == nil {
-		t.Errorf("inventory schema = %v", invSchema)
-	}
+	inv := dig(t, doc, "paths", "/store/inventory", "get", "responses", "200", "content", "application/json", "schema").(map[string]any)
+	assert.Equal(t, "object", inv["type"], "inventory schema")
+	assert.NotNil(t, inv["additionalProperties"], "inventory schema")
 
 	// security opt-out on a published public operation, none on a protected one
-	if _, ok := operation(t, doc, "/user/logout", "get")["security"]; !ok {
-		t.Error("logout should carry security: []")
-	}
-	if _, ok := operation(t, doc, "/pet/{petId}", "get")["security"]; ok {
-		t.Error("getPetById should inherit the global requirement")
-	}
+	assert.Contains(t, dig(t, doc, "paths", "/user/logout", "get").(map[string]any), "security", "logout should carry security: []")
+	assert.NotContains(t, dig(t, doc, "paths", "/pet/{petId}", "get").(map[string]any), "security", "getPetById should inherit the global requirement")
 
 	// uploadImage: multipart with the renamed, required file field
-	body := operation(t, doc, "/pet/{petId}/uploadImage", "post")["requestBody"].(map[string]any)
-	content := body["content"].(map[string]any)
-	if _, ok := content["multipart/form-data"]; !ok {
-		t.Fatalf("uploadImage content = %v", content)
-	}
+	content := dig(t, doc, "paths", "/pet/{petId}/uploadImage", "post", "requestBody", "content").(map[string]any)
+	require.Contains(t, content, "multipart/form-data", "uploadImage content")
 
 	// the File marker must not leak into components, and required must name
 	// the property, not the Go field
-	schemas := doc["components"].(map[string]any)["schemas"].(map[string]any)
-	if _, leaked := schemas["File"]; leaked {
-		t.Error("File marker leaked into components.schemas")
-	}
+	schemas := dig(t, doc, "components", "schemas").(map[string]any)
+	assert.NotContains(t, schemas, "File", "File marker leaked into components.schemas")
 	req := schemas["uploadImageReq"].(map[string]any)
-	required := req["required"].([]any)
-	if len(required) != 1 || required[0] != "file" {
-		t.Errorf("uploadImageReq required = %v, want [file]", required)
-	}
-	if _, ok := req["properties"].(map[string]any)["file"].(map[string]any)["format"]; !ok {
-		t.Errorf("file field = %v", req["properties"])
-	}
+	assert.Equal(t, []any{"file"}, req["required"], "uploadImageReq required")
+	assert.Contains(t, dig(t, req, "properties", "file").(map[string]any), "format")
 
 	// Tag and Category are reached only through Pet, so invopop hoists them
 	// without a Go-type entry: the property fixups must follow the $ref into
 	// the nested component. Regression — the format= tag used to survive on
 	// Pet but vanish on Tag.
 	for _, name := range []string{"Pet", "Tag", "Category"} {
-		id := schemas[name].(map[string]any)["properties"].(map[string]any)["id"].(map[string]any)
-		if id["format"] != "int64" {
-			t.Errorf("%s.id = %v, want format int64", name, id)
-		}
+		assert.Equal(t, "int64", dig(t, schemas, name, "properties", "id", "format"), "%s.id format", name)
 	}
 }
 
 // captureT collects failures so a test can assert on one drift category
 // without the other failing it.
-type captureT struct{ errs []string }
-
-func (c *captureT) Helper()                   {}
-func (c *captureT) Errorf(f string, a ...any) { c.errs = append(c.errs, fmt.Sprintf(f, a...)) }
-func (c *captureT) Fatalf(f string, a ...any) { c.errs = append(c.errs, fmt.Sprintf(f, a...)) }
+type captureT = exampletest.CaptureT
 
 // TestDemoServesEveryRouteAndNoUndocumentedCode drives the served demo over
 // real HTTP, then checks the drift direction that must hold: every code a
@@ -208,26 +124,24 @@ func (c *captureT) Fatalf(f string, a ...any) { c.errs = append(c.errs, fmt.Spri
 func TestDemoServesEveryRouteAndNoUndocumentedCode(t *testing.T) {
 	d, r := New()
 	rec := recorder.New(r, specout.Skip("/openapi.json"))
-	srv := httptest.NewServer(Handler(d, rec))
+	srv := httptest.NewServer(Handler(rec))
 	defer srv.Close()
 
+	send := func(req *http.Request, want int) {
+		t.Helper()
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+		assert.Equal(t, want, resp.StatusCode, "%s %s", req.Method, req.URL.Path)
+	}
 	do := func(method, path, body string, want int) {
 		t.Helper()
-		req, err := http.NewRequest(method, srv.URL+"/api/v3"+path, strings.NewReader(body))
-		if err != nil {
-			t.Fatal(err)
-		}
+		req, err := http.NewRequestWithContext(t.Context(), method, srv.URL+"/api/v3"+path, strings.NewReader(body))
+		require.NoError(t, err)
 		if body != "" {
 			req.Header.Set("Content-Type", "application/json")
 		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
-		if resp.StatusCode != want {
-			t.Errorf("%s %s = %d, want %d", method, path, resp.StatusCode, want)
-		}
+		send(req, want)
 	}
 
 	do("PUT", "/pet", `{"name":"doggie","photoUrls":["a"],"status":"available"}`, 200)
@@ -252,48 +166,30 @@ func TestDemoServesEveryRouteAndNoUndocumentedCode(t *testing.T) {
 	// chi answers HEAD on a GET-only route with 405: not an operation, so
 	// the recorder must key nothing for it (no drift either way)
 	do("HEAD", "/pet/2", "", 405)
+	// the spec is served under the declared server prefix
+	do("GET", "/openapi.json", "", 200)
+	// an unmatched path is not drift: the recorder keys nothing for it
+	do("GET", "/nope", "", 404)
 
 	// multipart upload: the one body the example does not send as JSON
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 	fw, err := mw.CreateFormFile("file", "pet.png")
-	if err != nil {
-		t.Fatal(err)
-	}
-	fw.Write([]byte("png"))
-	mw.Close()
-	req, _ := http.NewRequest("POST", srv.URL+"/api/v3/pet/2/uploadImage", &buf)
+	require.NoError(t, err)
+	_, err = fw.Write([]byte("png"))
+	require.NoError(t, err)
+	require.NoError(t, mw.Close())
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, srv.URL+"/api/v3/pet/2/uploadImage", &buf)
+	require.NoError(t, err)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != 200 {
-		t.Errorf("uploadImage = %d, want 200", resp.StatusCode)
-	}
-
-	// the spec is served under the declared server prefix
-	sresp, err := http.Get(srv.URL + "/api/v3/openapi.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	sresp.Body.Close()
-	if sresp.StatusCode != 200 {
-		t.Errorf("spec = %d, want 200", sresp.StatusCode)
-	}
-
-	// an unmatched path is not drift: the recorder keys nothing for it
-	do("GET", "/nope", "", 404)
+	send(req, 200)
 
 	ft := &captureT{}
 	recorder.Verify(ft, d, rec)
-	for _, e := range ft.errs {
-		if strings.Contains(e, "but spec does not declare it") {
-			t.Errorf("drift: %s", e)
-		}
+	for _, e := range ft.Errs {
+		assert.NotContains(t, e, "but spec does not declare it", "drift")
 	}
-	if len(ft.errs) == 0 {
+	if len(ft.Errs) == 0 {
 		t.Log("no drift at all: the demo produced every declared code")
 	}
 }

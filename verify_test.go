@@ -9,6 +9,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/happytoolin/specout"
 	"github.com/happytoolin/specout/internal/demo/router"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRequireDocumentedPasses(t *testing.T) {
@@ -18,14 +20,12 @@ func TestRequireDocumentedPasses(t *testing.T) {
 
 func TestRequireDocumentedFailsOnStray(t *testing.T) {
 	d, r := router.New()
-	r.(chi.Router).Get("/debug/vars", func(w http.ResponseWriter, _ *http.Request) {})
-	r.(chi.Router).Get("/debug/hidden", func(w http.ResponseWriter, _ *http.Request) {})
+	r.(chi.Router).Get("/debug/vars", func(http.ResponseWriter, *http.Request) {})
+	r.(chi.Router).Get("/debug/hidden", func(http.ResponseWriter, *http.Request) {})
 
 	capt := &captureT{}
 	specout.Chi(d, r.(chi.Router)).RequireDocumented(capt, specout.Skip("/debug/*"))
-	if len(capt.errs) > 0 {
-		t.Fatalf("skip should suppress /debug/*, got %v", capt.errs)
-	}
+	require.Empty(t, capt.errs, "skip must suppress /debug/*")
 }
 
 // A plain r.Get with no skip is reported, naming the route.
@@ -34,9 +34,7 @@ func TestRequireDocumentedReportsStray(t *testing.T) {
 	r.(chi.Router).Get("/stray", strayHandler)
 	capt := &captureT{}
 	specout.Chi(d, r.(chi.Router)).RequireDocumented(capt)
-	if !strings.Contains(strings.Join(capt.errs, ";"), "/stray") {
-		t.Fatalf("want /stray reported, got %v", capt.errs)
-	}
+	require.Contains(t, strings.Join(capt.errs, ";"), "/stray", "want /stray reported")
 }
 
 // Two generators on two roots each check their own router: no shared state.
@@ -51,15 +49,11 @@ func TestTwoGeneratorsTwoRoots(t *testing.T) {
 	c1, c2 := &captureT{}, &captureT{}
 	specout.Chi(d1, r1).RequireDocumented(c1)
 	specout.Chi(d2, r2).RequireDocumented(c2)
-	if len(c1.errs) != 0 {
-		t.Errorf("root one reported %v", c1.errs)
-	}
-	if len(c2.errs) == 0 {
-		t.Error("root two stray not reported")
-	}
+	assert.Empty(t, c1.errs, "root one reported a stray")
+	assert.NotEmpty(t, c2.errs, "root two stray not reported")
 }
 
-func strayHandler(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }
+func strayHandler(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }
 
 type captureT struct{ errs []string }
 

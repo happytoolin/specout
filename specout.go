@@ -32,6 +32,8 @@ type Generator struct {
 	specJSON []byte
 }
 
+// New returns a Generator that collects routes for cfg. It is safe for
+// concurrent registration; the spec freezes on first read.
 func New(cfg Config) *Generator {
 	return &Generator{
 		cfg:           cfg,

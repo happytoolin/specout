@@ -1,8 +1,8 @@
 package specout
 
 import (
+	"fmt"
 	"net/http"
-	"reflect"
 	"strings"
 
 	"github.com/gorilla/mux"
@@ -10,10 +10,10 @@ import (
 
 // Gorilla returns the gorilla binder for d on r. Templates are absolute;
 // {id} and {id:re...} params map straight to OpenAPI path params.
-func Gorilla(d *Generator, r *mux.Router) *GorillaRouter {
-	return &GorillaRouter{d: d, r: r}
-}
+func Gorilla(d *Generator, r *mux.Router) *GorillaRouter { return &GorillaRouter{d: d, r: r} }
 
+// GorillaRouter registers specout handlers on a gorilla/mux router. Templates
+// are absolute, so Register needs no walk.
 type GorillaRouter struct {
 	d *Generator
 	r *mux.Router
@@ -30,89 +30,77 @@ func (g *GorillaRouter) register(method, pattern string, rec routeRecord) {
 	g.d.register(rec)
 }
 
-func (g *GorillaRouter) Get[Req, Res any](pattern string, h Handler[Req, Res]) {
-	g.register(http.MethodGet, pattern, recOf(h))
+// Get registers a GET route on p.
+func (g *GorillaRouter) Get[Req, Res any](p string, h Handler[Req, Res]) {
+	g.register(http.MethodGet, p, recOf(h))
 }
 
-func (g *GorillaRouter) Head[Req, Res any](pattern string, h Handler[Req, Res]) {
-	g.register(http.MethodHead, pattern, recOf(h))
+// Head registers a HEAD route on p.
+func (g *GorillaRouter) Head[Req, Res any](p string, h Handler[Req, Res]) {
+	g.register(http.MethodHead, p, recOf(h))
 }
 
-func (g *GorillaRouter) Post[Req, Res any](pattern string, h Handler[Req, Res]) {
-	g.register(http.MethodPost, pattern, recOf(h))
+// Post registers a POST route on p.
+func (g *GorillaRouter) Post[Req, Res any](p string, h Handler[Req, Res]) {
+	g.register(http.MethodPost, p, recOf(h))
 }
 
-func (g *GorillaRouter) Put[Req, Res any](pattern string, h Handler[Req, Res]) {
-	g.register(http.MethodPut, pattern, recOf(h))
+// Put registers a PUT route on p.
+func (g *GorillaRouter) Put[Req, Res any](p string, h Handler[Req, Res]) {
+	g.register(http.MethodPut, p, recOf(h))
 }
 
-func (g *GorillaRouter) Patch[Req, Res any](pattern string, h Handler[Req, Res]) {
-	g.register(http.MethodPatch, pattern, recOf(h))
+// Patch registers a PATCH route on p.
+func (g *GorillaRouter) Patch[Req, Res any](p string, h Handler[Req, Res]) {
+	g.register(http.MethodPatch, p, recOf(h))
 }
 
-func (g *GorillaRouter) Delete[Req, Res any](pattern string, h Handler[Req, Res]) {
-	g.register(http.MethodDelete, pattern, recOf(h))
+// Delete registers a DELETE route on p.
+func (g *GorillaRouter) Delete[Req, Res any](p string, h Handler[Req, Res]) {
+	g.register(http.MethodDelete, p, recOf(h))
 }
 
-func (g *GorillaRouter) Options[Req, Res any](pattern string, h Handler[Req, Res]) {
-	g.register(http.MethodOptions, pattern, recOf(h))
+// Options registers an OPTIONS route on p.
+func (g *GorillaRouter) Options[Req, Res any](p string, h Handler[Req, Res]) {
+	g.register(http.MethodOptions, p, recOf(h))
 }
 
-func (g *GorillaRouter) Trace[Req, Res any](pattern string, h Handler[Req, Res]) {
-	g.register(http.MethodTrace, pattern, recOf(h))
+// Trace registers a TRACE route on p.
+func (g *GorillaRouter) Trace[Req, Res any](p string, h Handler[Req, Res]) {
+	g.register(http.MethodTrace, p, recOf(h))
 }
 
 // Adopt walks an already-built gorilla router. Routes without a method
 // constraint are all-methods endpoints, not mounts: they fail loud
 // (they cannot be documented as one OpenAPI operation) unless skipped.
 func (g *GorillaRouter) Adopt(skips ...SkipRule) error {
-	var unknown []string
+	s := strayScan{d: g.d, skips: skips}
 	err := g.r.Walk(func(route *mux.Route, _ *mux.Router, _ []*mux.Route) error {
 		tpl, err := route.GetPathTemplate()
 		if err != nil {
-			return err
+			return fmt.Errorf("specout: read route template: %w", err)
 		}
 		// A route with no handler is a PathPrefix/Subrouter mount, not an
 		// endpoint: skip it like chi skips Mount stubs.
-		if route.GetHandler() == nil {
+		h := route.GetHandler()
+		if h == nil {
 			return nil
-		}
-		// the spec itself is usually served from this router; chi's Adopt
-		// skips the generator for the same reason.
-		if route.GetHandler() == http.Handler(g.d) {
-			return nil
-		}
-		for _, s := range skips {
-			if s.Matches(tpl) {
-				return nil
-			}
 		}
 		methods, err := route.GetMethods()
-		if err != nil || len(methods) == 0 {
-			unknown = append(unknown, "? "+tpl+" (no method constraint)")
-			return nil
+		if err != nil {
+			methods = nil
 		}
-		handler := route.GetHandler()
-		ptr := reflect.ValueOf(handler).Pointer()
-		if !g.d.lookup(ptr) {
-			unknown = append(unknown, strings.Join(methods, ",")+" "+tpl)
-		}
+		s.collect(tpl, strings.Join(methods, ","), h)
 		return nil
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("specout: walk gorilla router: %w", err)
 	}
-	if len(unknown) > 0 {
-		return &StrayError{Routes: unknown}
-	}
-	return nil
+	return s.err()
 }
 
 // RequireDocumented fails the test when the gorilla router holds endpoint
 // routes specout never registered.
-func (g *GorillaRouter) RequireDocumented(t TestingT, skips ...SkipRule) {
-	t.Helper()
-	if err := g.Adopt(skips...); err != nil {
-		t.Errorf("%v", err)
-	}
+func (g *GorillaRouter) RequireDocumented(t TestingT, s ...SkipRule) {
+	requireDocumented(t, g.Adopt(s...))
 }

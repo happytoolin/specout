@@ -1,13 +1,12 @@
 package specout_test
 
 import (
-	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/happytoolin/specout"
+	"github.com/stretchr/testify/assert"
 )
 
 type docReq struct {
@@ -34,68 +33,40 @@ func TestDocFields(t *testing.T) {
 	})
 	r := chi.NewRouter()
 	specout.Chi(d, r).Post("/things", specout.Handler[docReq, docRes]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {},
+		HandlerFunc: func(http.ResponseWriter, *http.Request) {},
 		Summary:     "s",
 		Description: "longer description",
 	})
 	specout.Chi(d, r).Get("/ping", specout.Handler[struct{}, docRes]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {},
+		HandlerFunc: func(http.ResponseWriter, *http.Request) {},
 		Public:      true,
 	})
-	if err := specout.Chi(d, r).Adopt(); err != nil {
-		t.Fatal(err)
-	}
-	r.Mount("/openapi.json", d)
-
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest("GET", "/openapi.json", nil))
-	var doc map[string]any
-	json.Unmarshal(w.Body.Bytes(), &doc)
-
+	doc := serveDoc(t, d, r)
 	// cookie + header params
-	post := doc["paths"].(map[string]any)["/things"].(map[string]any)["post"].(map[string]any)
-	params := post["parameters"].([]any)
-	got := map[string]string{}
-	for _, p := range params {
-		m := p.(map[string]any)
-		got[m["in"].(string)] = m["name"].(string)
-	}
-	if got["cookie"] != "session" || got["header"] != "X-Trace-Id" {
-		t.Errorf("params = %v", got)
-	}
-	if post["description"] != "longer description" {
-		t.Error("description missing")
-	}
-	if post["operationId"] != "postThings" {
-		t.Errorf("operationId = %v", post["operationId"])
-	}
-	if _, ok := post["security"]; ok {
-		t.Error("non-public route should inherit top-level security")
-	}
+	post := opOf(t, doc, "/things", "post")
+	params := paramsOf(t, post)
+	assert.Equal(t, "cookie", params["session"]["in"], "session param")
+	assert.Equal(t, "header", params["X-Trace-Id"]["in"], "X-Trace-Id param")
+	assert.Equal(t, "longer description", post["description"], "description missing")
+	assert.Equal(t, "postThings", post["operationId"], "operationId")
+	assert.NotContains(t, post, "security", "non-public route inherits top-level security")
 
 	// schemes + top-level security alternatives (OR semantics)
 	schemes := doc["components"].(map[string]any)["securitySchemes"].(map[string]any)
 	bearer := schemes["bearerAuth"].(map[string]any)
-	if bearer["type"] != "http" || bearer["scheme"] != "bearer" {
-		t.Errorf("bearer = %v", bearer)
-	}
+	assert.Equal(t, "http", bearer["type"], "bearer type")
+	assert.Equal(t, "bearer", bearer["scheme"], "bearer scheme")
 	apikey := schemes["apiKey"].(map[string]any)
-	if apikey["type"] != "apiKey" || apikey["name"] != "X-API-Key" || apikey["in"] != "header" {
-		t.Errorf("apiKey = %v", apikey)
-	}
+	assert.Equal(t, "apiKey", apikey["type"], "apiKey type")
+	assert.Equal(t, "X-API-Key", apikey["name"], "apiKey name")
+	assert.Equal(t, "header", apikey["in"], "apiKey in")
 	sec := doc["security"].([]any)
-	if len(sec) != 2 {
-		t.Errorf("security alternatives = %d, want 2", len(sec))
-	}
+	assert.Len(t, sec, 2, "security alternatives")
 
 	// public route: security: []
-	ping := doc["paths"].(map[string]any)["/ping"].(map[string]any)["get"].(map[string]any)
-	if sec, ok := ping["security"]; !ok || len(sec.([]any)) != 0 {
-		t.Errorf("public route security = %v", ping["security"])
-	}
+	ping := opOf(t, doc, "/ping", "get")
+	assert.Empty(t, ping["security"], "public route security")
 
 	// externalDocs
-	if doc["externalDocs"].(map[string]any)["url"] != "https://x.example" {
-		t.Error("externalDocs missing")
-	}
+	assert.Equal(t, "https://x.example", doc["externalDocs"].(map[string]any)["url"], "externalDocs")
 }

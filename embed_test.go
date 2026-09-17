@@ -1,46 +1,12 @@
 package specout_test
 
 import (
-	"bytes"
-	"encoding/json"
-	"net/http"
 	"testing"
 
 	"github.com/happytoolin/specout"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
-
-// oneDoc renders a single Document-registered route into its whole document.
-func oneDoc[Req, Res any](t *testing.T, h specout.Handler[Req, Res]) map[string]any {
-	t.Helper()
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	specout.Document(d, "POST", "/x", h)
-	var buf bytes.Buffer
-	if err := d.WriteJSON(&buf); err != nil {
-		t.Fatal(err)
-	}
-	var doc map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &doc); err != nil {
-		t.Fatal(err)
-	}
-	return doc
-}
-
-func docProps(t *testing.T, doc map[string]any, name string) map[string]any {
-	t.Helper()
-	s, ok := doc["components"].(map[string]any)["schemas"].(map[string]any)[name].(map[string]any)
-	if !ok {
-		t.Fatalf("no component %s", name)
-	}
-	return s["properties"].(map[string]any)
-}
-
-func isNullable(p map[string]any) bool {
-	if arms, _ := p["oneOf"].([]any); len(arms) == 2 {
-		return true
-	}
-	typ, _ := p["type"].([]any)
-	return len(typ) == 2 && typ[1] == "null"
-}
 
 // Regression: a body struct that embeds a base type and also carries a query
 // parameter used to panic in reflect.StructOf (the body view copies fields
@@ -53,34 +19,21 @@ func TestEmbeddedBodyWithParam(t *testing.T) {
 	}
 	type Req struct {
 		base
+
 		Name *string `json:"name,omitempty"`
 		Page int     `query:"page"`
 	}
 
-	doc := oneDoc[Req, specout.NoContent](t, specout.Handler[Req, specout.NoContent]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {},
-	})
-	props := docProps(t, doc, "Req")
-	if len(props) != 3 {
-		t.Fatalf("body props = %v, want id, flags, name", props)
-	}
-	if props["flags"].(map[string]any)["readOnly"] != true {
-		t.Errorf("embedded readOnly lost: %v", props["flags"])
-	}
-	if !isNullable(props["id"].(map[string]any)) {
-		t.Errorf("embedded pointer not nullable: %v", props["id"])
-	}
-	if _, ok := props["page"]; ok {
-		t.Error("query param leaked into the body")
-	}
-	op := doc["paths"].(map[string]any)["/x"].(map[string]any)["post"].(map[string]any)
-	var names []string
-	for _, p := range op["parameters"].([]any) {
-		names = append(names, p.(map[string]any)["name"].(string))
-	}
-	if len(names) != 1 || names[0] != "page" {
-		t.Errorf("parameters = %v, want [page]", names)
-	}
+	doc := docOf(t, "POST", "/x", specout.Handler[Req, specout.NoContent]{HandlerFunc: noop})
+	p := props(t, doc, "Req")
+	require.Len(t, p, 3, "body props = %v, want id, flags, name", p)
+	assert.Equal(t, true, p["flags"].(map[string]any)["readOnly"], "embedded readOnly lost: %v", p["flags"])
+	assert.True(t, isNullable(p["id"].(map[string]any)), "embedded pointer not nullable: %v", p["id"])
+	assert.NotContains(t, p, "page", "query param leaked into the body")
+
+	params := paramsOf(t, opOf(t, doc, "/x", "post"))
+	assert.Len(t, params, 1, "parameters = %v, want [page]", params)
+	assert.Contains(t, params, "page")
 }
 
 // Regression: an untagged embedded struct is flattened by invopop, so its
@@ -98,25 +51,17 @@ func TestEmbeddedFieldsKeepFixups(t *testing.T) {
 	type Res struct {
 		embedded
 		embed
+
 		Name string `json:"name"`
 	}
 
-	doc := oneDoc[struct{}, Res](t, specout.Handler[struct{}, Res]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {},
-	})
-	props := docProps(t, doc, "Res")
-	for _, p := range []string{"id", "flags", "score", "name"} {
-		if _, ok := props[p]; !ok {
-			t.Fatalf("promoted property %s missing: %v", p, props)
-		}
+	p := props(t, docOf(t, "POST", "/x", specout.Handler[struct{}, Res]{HandlerFunc: noop}), "Res")
+	for _, name := range []string{"id", "flags", "score", "name"} {
+		require.Contains(t, p, name, "promoted property missing: %v", p)
 	}
-	if props["flags"].(map[string]any)["readOnly"] != true {
-		t.Errorf("promoted readOnly lost: %v", props["flags"])
-	}
-	for _, p := range []string{"id", "score"} {
-		if !isNullable(props[p].(map[string]any)) {
-			t.Errorf("promoted pointer %s not nullable: %v", p, props[p])
-		}
+	assert.Equal(t, true, p["flags"].(map[string]any)["readOnly"], "promoted readOnly lost: %v", p["flags"])
+	for _, name := range []string{"id", "score"} {
+		assert.True(t, isNullable(p[name].(map[string]any)), "promoted pointer %s not nullable: %v", name, p[name])
 	}
 }
 
@@ -131,18 +76,11 @@ func TestPointerElementsNullable(t *testing.T) {
 		Map   map[string]*Item `json:"map"`
 	}
 
-	doc := oneDoc[struct{}, Res](t, specout.Handler[struct{}, Res]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {},
-	})
-	props := docProps(t, doc, "Res")
-	items := props["slice"].(map[string]any)["items"].(map[string]any)
-	if !isNullable(items) {
-		t.Errorf("slice element not nullable: %v", items)
-	}
-	add := props["map"].(map[string]any)["additionalProperties"].(map[string]any)
-	if !isNullable(add) {
-		t.Errorf("map value not nullable: %v", add)
-	}
+	p := props(t, docOf(t, "POST", "/x", specout.Handler[struct{}, Res]{HandlerFunc: noop}), "Res")
+	items := p["slice"].(map[string]any)["items"].(map[string]any)
+	assert.True(t, isNullable(items), "slice element not nullable: %v", items)
+	add := p["map"].(map[string]any)["additionalProperties"].(map[string]any)
+	assert.True(t, isNullable(add), "map value not nullable: %v", add)
 }
 
 // Regression: a body that embeds a base type and shadows one of its fields
@@ -155,19 +93,14 @@ func TestEmbeddedShadowingField(t *testing.T) {
 	}
 	type Req struct {
 		base
+
 		ID *int64 `json:"id"`
 		Q  string `query:"q"`
 	}
 
-	doc := oneDoc[Req, specout.NoContent](t, specout.Handler[Req, specout.NoContent]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {},
-	})
-	props := docProps(t, doc, "Req")
-	if len(props) != 1 {
-		t.Fatalf("body props = %v, want only the shadowing id", props)
-	}
-	typ, _ := props["id"].(map[string]any)["type"].([]any)
-	if len(typ) != 2 || typ[0] != "integer" {
-		t.Errorf("id = %v, want the direct *int64 field to win", props["id"])
-	}
+	p := props(t, docOf(t, "POST", "/x", specout.Handler[Req, specout.NoContent]{HandlerFunc: noop}), "Req")
+	require.Len(t, p, 1, "body props = %v, want only the shadowing id", p)
+	typ, _ := p["id"].(map[string]any)["type"].([]any)
+	assert.Len(t, typ, 2)
+	assert.Equal(t, "integer", typ[0], "want the direct *int64 field to win")
 }

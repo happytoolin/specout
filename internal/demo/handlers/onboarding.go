@@ -12,151 +12,110 @@ import (
 	"github.com/happytoolin/specout/internal/demo/onboarding"
 )
 
-// Deps is what every handler factory receives. API is the app's own error
-// mapper — plain data, no library involvement.
-type Deps struct {
-	Store  *onboarding.Store
-	Mapper api.Mapper
-}
-
-func writeErr(w http.ResponseWriter, d Deps, err error) {
-	api.Error(w, d.Mapper, err)
-}
-
 func HandleList(d Deps) specout.Handler[onboarding.ListRequest, onboarding.Page] {
-	return specout.Handler[onboarding.ListRequest, onboarding.Page]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
-			var req onboarding.ListRequest
-			// raw std: query-tagged fields are yours to read however you like
-			if v := r.URL.Query().Get("limit"); v != "" {
-				json.Unmarshal([]byte(v), &req.Limit)
-			}
-			items := d.Store.List()
-			if req.Limit > 0 && len(items) > req.Limit {
-				items = items[:req.Limit]
-			}
-			api.JSON(w, http.StatusOK, onboarding.Page{Items: items})
-		},
-		Summary: "List onboarding records",
-		Public:  true, // reads are open
-		Tags:    []string{"onboarding"},
+	return op[onboarding.ListRequest, onboarding.Page]("onboarding", "List onboarding records", true, func(w http.ResponseWriter, r *http.Request) {
+		items := d.Store.List()
+		if n := queryInt(r.URL.Query(), "limit", 0); n > 0 && len(items) > n {
+			items = items[:n]
+		}
+		api.JSON(w, http.StatusOK, onboarding.Page{Items: items})
+	})
+}
+
+// upsert is the shared create/replace tail: 201 + Location when new, else 200.
+func upsert(w http.ResponseWriter, d Deps, r *http.Request, id string, checkOwner bool) {
+	var req onboarding.UpsertRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, d, err)
+		return
 	}
+	if checkOwner && req.Owner != "" && !strings.Contains(req.Owner, "@") {
+		api.Invalid(w, "owner", "must be a valid email")
+		return
+	}
+	ob, created, err := d.Store.Upsert(id, req)
+	if err != nil {
+		writeErr(w, d, err)
+		return
+	}
+	if !created {
+		api.JSON(w, http.StatusOK, ob)
+		return
+	}
+	w.Header().Set("Location", "/onboarding/"+ob.ID)
+	api.JSON(w, http.StatusCreated, ob)
 }
 
 func HandleCreate(d Deps) specout.Handler[onboarding.UpsertRequest, onboarding.Onboarding] {
-	return specout.Handler[onboarding.UpsertRequest, onboarding.Onboarding]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
-			var req onboarding.UpsertRequest
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				writeErr(w, d, err)
-				return
-			}
-			id := "onb_n3w"
-			if r.URL.Query().Get("existing") != "" {
-				id = "onb_4f9x" // idempotent re-create
-			}
-			ob, created, err := d.Store.Upsert(id, req)
-			if err != nil {
-				writeErr(w, d, err)
-				return
-			}
-			if !created {
-				api.JSON(w, http.StatusOK, ob)
-				return
-			}
-			w.Header().Set("Location", "/onboarding/"+ob.ID)
-			api.JSON(w, http.StatusCreated, ob)
-		},
-		Summary: "Create an onboarding record",
-		Tags:    []string{"onboarding"},
-		Responses: []specout.Response{
-			{Status: http.StatusOK},
-			{Status: http.StatusCreated,
-				Headers: []specout.Header{{Name: "Location"}}},
-		},
+	return op[onboarding.UpsertRequest, onboarding.Onboarding]("onboarding", "Create an onboarding record", false, func(w http.ResponseWriter, r *http.Request) {
+		id := "onb_n3w"
+		if r.URL.Query().Get("existing") != "" {
+			id = "onb_4f9x" // idempotent re-create
+		}
+		upsert(w, d, r, id, false)
+	}, specout.Response{Status: http.StatusCreated, Headers: []specout.Header{{Name: "Location"}}})
+}
+
+func get(w http.ResponseWriter, d Deps, id string) {
+	ob, err := d.Store.Get(id)
+	if err != nil {
+		writeErr(w, d, err)
+		return
 	}
+	api.JSON(w, http.StatusOK, ob)
 }
 
 func HandleGet(d Deps) specout.Handler[struct{}, onboarding.Onboarding] {
-	return specout.Handler[struct{}, onboarding.Onboarding]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
-			ob, err := d.Store.Get(chi.URLParam(r, "id"))
-			if err != nil {
-				writeErr(w, d, err) // 404 + Problem via mapper
-				return
-			}
-			api.JSON(w, http.StatusOK, ob)
-		},
-		Summary: "Fetch one onboarding record",
-		Tags:    []string{"onboarding"},
-		Public:  true, // reads are open
-	}
+	return op[struct{}, onboarding.Onboarding]("onboarding", "Fetch one onboarding record", true, func(w http.ResponseWriter, r *http.Request) {
+		get(w, d, chi.URLParam(r, "id"))
+	})
+}
+
+// HandleLegacyGet serves the deprecated /legacy endpoint; the closure keeps router-walk on its own path.
+func HandleLegacyGet(d Deps) specout.Handler[struct{}, onboarding.Onboarding] {
+	h := op[struct{}, onboarding.Onboarding]("onboarding", "Replaced by GET /onboarding/{id}", true, func(w http.ResponseWriter, _ *http.Request) {
+		get(w, d, "onb_4f9x")
+	})
+	h.Deprecated = true
+	return h
 }
 
 func HandleUpsert(d Deps) specout.Handler[onboarding.UpsertRequest, onboarding.Onboarding] {
-	return specout.Handler[onboarding.UpsertRequest, onboarding.Onboarding]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
-			var req onboarding.UpsertRequest
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				writeErr(w, d, err)
-				return
-			}
-			if req.Owner != "" && !strings.Contains(req.Owner, "@") {
-				api.JSON(w, http.StatusUnprocessableEntity, api.ValidationError{
-					Problems: []api.FieldProblem{{Field: "owner", Message: "must be a valid email"}},
-				})
-				return
-			}
-			ob, created, err := d.Store.Upsert(chi.URLParam(r, "id"), req)
-			if err != nil {
-				writeErr(w, d, err)
-				return
-			}
-			if created {
-				w.Header().Set("Location", "/onboarding/"+ob.ID)
-				api.JSON(w, http.StatusCreated, ob)
-				return
-			}
-			api.JSON(w, http.StatusOK, ob)
-		},
-		Summary: "Create or replace an onboarding record",
-		Tags:    []string{"onboarding"},
-		Responses: []specout.Response{
-			{Status: http.StatusCreated},
-			{Status: http.StatusUnprocessableEntity, Type: api.ValidationError{}},
-		},
-	}
+	return op[onboarding.UpsertRequest, onboarding.Onboarding]("onboarding", "Create or replace an onboarding record", false, func(w http.ResponseWriter, r *http.Request) {
+		upsert(w, d, r, chi.URLParam(r, "id"), true)
+	}, specout.Response{Status: http.StatusCreated}, specout.Response{Status: http.StatusUnprocessableEntity, Type: api.ValidationError{}})
 }
 
 func HandleDelete(d Deps) specout.Handler[struct{}, specout.NoContent] {
-	return specout.Handler[struct{}, specout.NoContent]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
-			if err := d.Store.Delete(chi.URLParam(r, "id")); err != nil {
-				writeErr(w, d, err)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-		},
-		Summary: "Delete an onboarding record",
-		Tags:    []string{"onboarding"},
-	}
+	return op[struct{}, specout.NoContent]("onboarding", "Delete an onboarding record", false, func(w http.ResponseWriter, r *http.Request) {
+		if err := d.Store.Delete(chi.URLParam(r, "id")); err != nil {
+			writeErr(w, d, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
 }
 
-// HandleLegacyGet serves the deprecated /legacy endpoint. A distinct closure
-// so router-walk discovery resolves its own full path.
-func HandleLegacyGet(d Deps) specout.Handler[struct{}, onboarding.Onboarding] {
-	return specout.Handler[struct{}, onboarding.Onboarding]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
-			ob, err := d.Store.Get("onb_4f9x")
-			if err != nil {
-				writeErr(w, d, err)
-				return
-			}
-			api.JSON(w, http.StatusOK, ob)
-		},
-		Summary:    "Replaced by GET /onboarding/{id}",
-		Public:     true,
-		Tags:       []string{"onboarding"},
-		Deprecated: true,
-	}
+// HandleSync shows the typed-error flow: *ConflictError keeps one error exit and its own 409 body.
+func HandleSync(d Deps) specout.Handler[onboarding.SyncRequest, onboarding.SyncResult] {
+	h := op[onboarding.SyncRequest, onboarding.SyncResult]("sync", "Sync a record against an expected version", false, func(w http.ResponseWriter, r *http.Request) {
+		var req onboarding.SyncRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(w, d, err)
+			return
+		}
+		if req.Expected < 0 {
+			api.Invalid(w, "expected", "must be zero or positive")
+			return
+		}
+		result, err := d.Store.Sync(chi.URLParam(r, "id"), req.Expected)
+		if err != nil {
+			writeErr(w, d, err) // ConflictError carries its own 409 + shape
+			return
+		}
+		api.JSON(w, http.StatusOK, result)
+	}, specout.Response{Status: http.StatusConflict, Type: onboarding.SyncConflict{}}, specout.Response{Status: http.StatusUnprocessableEntity, Type: api.ValidationError{}},
+		specout.Response{Status: http.StatusUnauthorized, Omit: true}) // public route — 401 impossible
+	h.Description = "Optimistic concurrency: the client sends the version it last saw; a mismatch returns 409 with the current version and a resolve URL."
+	return h
 }

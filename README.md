@@ -33,7 +33,8 @@ Specs rot because they live apart from the code. specout closes the gap from the
 - **Provable.** A test-time recorder fails CI when a handler emits a status the spec does not declare, or vice versa.
 - **Byte-deterministic.** Same binary, same routes, same bytes. Diffs are reviewable; the spec commits like code.
 
-OpenAPI 3.1 (JSON Schema 2020-12), Go 1.27+, two dependencies: chi and the reflection layer.
+OpenAPI 3.1 (JSON Schema 2020-12), Go 1.27+. Three runtime dependencies: chi,
+gorilla/mux and the reflection layer. testify is a test-only dependency.
 
 ## Install
 

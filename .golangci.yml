@@ -1,6 +1,116 @@
+# golangci-lint config for specout.
+#
+# check:  just lint
+# repair: just tidy
+#
+# default: all is deliberate. Every disable below has one reason: the linter's
+# advice would make this code worse. Nothing is dropped to hide a finding.
 version: "2"
 
+run:
+  go: "1.27"
+  timeout: 5m
+
 linters:
+  default: all
+  disable:
+    # whitespace and naming opinions that fight gofumpt or legibility
+    - wsl
+    - wsl_v5
+    - nlreturn
+    - varnamelen
+    - noinlineerr
+    # method order by exportedness: the unexported helpers sit next to the
+    # type they serve, which reads better than the linter's grouping
+    - funcorder
+    # these structs mirror OpenAPI and the published Graph API, not Go defaults
+    - exhaustruct
+    - exhaustruct_v5
+    - tagliatelle
+    # returning chi.Router and wrapping errors dynamically is the design here
+    - ireturn
+    - err113
+    # package level fixture tables are the clearest form for these
+    - gochecknoglobals
+    - paralleltest
+    - forcetypeassert
+    # no dependency allow list here
+    - depguard
+    - gomodguard
+    - gomodguard_v2
+    # canonicalheader panics on go1.27 generics
+    - canonicalheader
+  settings:
+    cyclop:
+      # the reflect-driven field walks and the response planner are branchy by
+      # nature; 20 is the ceiling before a function has to split
+      max-complexity: 20
+    gocognit:
+      min-complexity: 40
+    funlen:
+      lines: 70
+      statements: 50
+    nestif:
+      min-complexity: 5
+    goconst:
+      min-occurrences: 4
+    lll:
+      line-length: 120
+    exhaustive:
+      # a reflect.Kind switch is not an enum, so a default is the signifier for
+      # the "every other kind" case
+      default-signifies-exhaustive: true
+  exclusions:
+    rules:
+      # tests: fixture literals, table rows and status codes are the readable
+      # form there. errcheck, noctx, thelper and testifylint still apply.
+      - path: _test.go
+        linters:
+          - lll
+          - funlen
+          - goconst
+          - mnd
+      # the examples mirror published documents: their type names, struct tags,
+      # status codes and data literals are the published ones
+      - path: ^examples/
+        linters:
+          - lll
+          - mnd
+          - goconst
+          - cyclop
+          - forbidigo
+      - path: ^examples/
+        linters:
+          - revive
+        text: var-naming
+      # the demo app is sample code: its long inline descriptions and its
+      # literal limits are the content
+      - path: ^internal/demo/
+        linters:
+          - lll
+          - mnd
+      # an example main prints its own URL: that is the demo's whole output
+      - path: ^cmd/
+        linters:
+          - forbidigo
+      # internal packages are not importable API, so a comment that only
+      # repeats the identifier adds nothing
+      - path: ^internal/
+        linters:
+          - revive
+        text: exported|package-comments
+      - path: ^cmd/
+        linters:
+          - revive
+        text: package-comments
+
+formatters:
   enable:
-    - vet
-    - staticcheck
+    - gofumpt
+  settings:
+    gofumpt:
+      module-path: github.com/happytoolin/specout
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

@@ -1,10 +1,11 @@
 package specout
 
 import (
+	"encoding/json/jsontext"
+	"fmt"
 	"io"
 	"net/http"
 
-	"encoding/json/jsontext"
 	json "encoding/json/v2"
 )
 
@@ -21,7 +22,7 @@ func (d *Generator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(spec)
+	_, _ = w.Write(spec)
 }
 
 // WriteJSON writes the spec to w. Builds and freezes if not already.
@@ -30,8 +31,10 @@ func (d *Generator) WriteJSON(w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	_, err = w.Write(b)
-	return err
+	if _, err := w.Write(b); err != nil {
+		return fmt.Errorf("specout: write spec: %w", err)
+	}
+	return nil
 }
 
 // bytes returns the frozen spec bytes, building lazily on first call.
@@ -48,9 +51,10 @@ func (d *Generator) bytes() ([]byte, error) {
 	// obj carries insertion order; jsontext preserves it. Indent directly.
 	b, err := json.Marshal(spec, jsontext.WithIndent("  "))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("specout: encode spec: %w", err)
 	}
 	d.frozen = true
-	d.specJSON = append(b, '\n') // trailing newline, like a text file
+	b = append(b, '\n') // trailing newline, like a text file
+	d.specJSON = b
 	return d.specJSON, nil
 }

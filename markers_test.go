@@ -1,69 +1,56 @@
 package specout_test
 
 import (
-	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/happytoolin/specout"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type uploadReq struct {
 	File specout.File `json:"file" jsonschema:"description=CSV"`
 }
-type emptyMarker struct{}
-type item struct {
-	ID string `json:"id"`
-}
+type (
+	emptyMarker struct{}
+	item        struct {
+		ID string `json:"id"`
+	}
+)
 
 // TestMarkerTypes: NoContent reads as 204, File turns the request into
 // multipart with a binary property, Header declares a response header.
 func TestMarkerTypes(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
+	d := newGen()
 	r := chi.NewRouter()
-	specout.Chi(d, r).Post("/files", specout.Handler[uploadReq, specout.NoContent]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) },
+	b := specout.Chi(d, r)
+	b.Post("/files", specout.Handler[uploadReq, specout.NoContent]{
+		HandlerFunc: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) },
 	})
-	specout.Chi(d, r).Post("/items", specout.Handler[emptyMarker, item]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {},
+	b.Post("/items", specout.Handler[emptyMarker, item]{
+		HandlerFunc: func(http.ResponseWriter, *http.Request) {},
 		Responses: []specout.Response{
 			{Status: 201, Headers: []specout.Header{{Name: "Location"}}},
 		},
 	})
-	if err := specout.Chi(d, r).Adopt(); err != nil {
-		t.Fatal(err)
-	}
-	r.Mount("/openapi.json", d)
-
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest("GET", "/openapi.json", nil))
-	var doc map[string]any
-	json.Unmarshal(w.Body.Bytes(), &doc)
-
-	paths := doc["paths"].(map[string]any)
+	doc := serveDoc(t, d, r)
+	paths := pathsObj(doc)
 
 	// NoContent -> 204
 	files := paths["/files"].(map[string]any)["post"].(map[string]any)
-	if _, ok := files["responses"].(map[string]any)["204"]; !ok {
-		t.Error("NoContent did not produce 204")
-	}
+	assert.Contains(t, files["responses"].(map[string]any), "204", "NoContent did not produce 204")
 	// File -> multipart + binary property
 	content := files["requestBody"].(map[string]any)["content"].(map[string]any)
-	if _, ok := content["multipart/form-data"]; !ok {
-		t.Fatalf("File did not produce multipart; have %v", content)
-	}
-	props := doc["components"].(map[string]any)["schemas"].(map[string]any)["uploadReq"].(map[string]any)["properties"].(map[string]any)
-	f := props["file"].(map[string]any)
-	if f["format"] != "binary" || f["type"] != "string" {
-		t.Errorf("File property = %v", f)
-	}
+	require.Contains(t, content, "multipart/form-data", "File did not produce multipart")
+	fileProps := doc["components"].(map[string]any)["schemas"].(map[string]any)["uploadReq"].(map[string]any)["properties"].(map[string]any)
+	f := fileProps["file"].(map[string]any)
+	assert.Equal(t, "binary", f["format"], "File property format")
+	assert.Equal(t, "string", f["type"], "File property type")
 
 	// Header -> Location declared on 201
 	items := paths["/items"].(map[string]any)["post"].(map[string]any)
 	hdrs := items["responses"].(map[string]any)["201"].(map[string]any)["headers"].(map[string]any)
-	if _, ok := hdrs["Location"]; !ok {
-		t.Errorf("Location header missing; have %v", hdrs)
-	}
+	assert.Contains(t, hdrs, "Location")
 }

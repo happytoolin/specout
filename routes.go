@@ -17,7 +17,7 @@ import (
 // composes prefixes invisibly (echo, fiber, gin use absolute patterns and
 // Document instead).
 type routeSource interface {
-	walk(func(method, pattern string, h http.Handler))
+	walk(fn func(method, pattern string, h http.Handler))
 }
 
 // routeRecord holds metadata captured at registration time. Relative
@@ -51,9 +51,7 @@ func (d *Generator) register(rec routeRecord) {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.frozen {
-		panic("specout: registration after the spec was built")
-	}
+	d.mustBeOpen()
 	d.records = append(d.records, &rec)
 	d.known[rec.ptr()] = true
 }
@@ -74,6 +72,7 @@ func (r *routeRecord) key() rkey { return rkey{r.ptr(), r.method} }
 // candidate is one (handler, method, path) a router actually serves.
 type candidate struct {
 	rkey
+
 	path string
 }
 
@@ -91,36 +90,62 @@ func (d *Generator) lookup(ptr uintptr) bool {
 func (d *Generator) addSource(s routeSource) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	for _, x := range d.sources {
-		if x == s {
-			return
-		}
+	if slices.Contains(d.sources, s) {
+		return
 	}
 	d.sources = append(d.sources, s)
 }
 
-// resolveLocked assigns every record a full path. Caller holds d.mu.
+// recOf pulls the metadata fields off a Handler into a routeRecord. Every
+// binder (std, gorilla, Document) starts here.
+func recOf[Req, Res any](h Handler[Req, Res]) routeRecord {
+	return routeRecord{
+		req: reflect.TypeFor[Req](), res: reflect.TypeFor[Res](),
+		responses: h.Responses, tags: h.Tags, summary: h.Summary,
+		operationID: h.OperationID, description: h.Description,
+		externalDocs: h.ExternalDocs, reqContentTypes: h.RequestContentTypes,
+		raw:        h.Raw,
+		deprecated: h.Deprecated, public: h.Public, fn: h.HandlerFunc,
+	}
+}
+
+// pairing is one record and the paths a walk reported for its handler.
+type pairing struct {
+	rec   *routeRecord
+	cands []string
+}
+
+// resolveLocked assigns every record a full path, then checks the result.
+// Caller holds d.mu.
 func (d *Generator) resolveLocked() error {
+	if err := d.pairPaths(); err != nil {
+		return err
+	}
+	return d.validateRecords()
+}
+
+// walkHits collects every path a walk reports, per (handler, method).
+func (d *Generator) walkHits() map[rkey][]string {
 	hits := make(map[rkey][]string)
 	for _, src := range d.sources {
 		src.walk(func(method, pattern string, h http.Handler) {
 			k := rkey{reflect.ValueOf(h).Pointer(), method}
 			// chi reports one r.Handle(mALL) route once per method, so the
-			// same path can arrive twice; the surplus check below counts
-			// distinct paths, not observations.
+			// same path can arrive twice; the surplus check counts distinct
+			// paths, not observations.
 			if !slices.Contains(hits[k], pattern) {
 				hits[k] = append(hits[k], pattern)
 			}
 		})
 	}
+	return hits
+}
 
-	// pair records sharing (ptr, method) deterministically: candidates equal
-	// to the as-passed pattern win (the common case: the pattern is already
-	// absolute), then longest, then lexical. Records sorted by pattern.
-	type pairing struct {
-		rec   *routeRecord
-		cands []string
-	}
+// pairPaths gives every record its full path. Candidates equal to the
+// as-passed pattern win (the common case: the pattern is already absolute),
+// then longest, then lexical. Records are sorted by pattern.
+func (d *Generator) pairPaths() error {
+	hits := d.walkHits()
 	var pairs []pairing
 	for i := range d.records {
 		rec := d.records[i]
@@ -130,7 +155,7 @@ func (d *Generator) resolveLocked() error {
 		pairs = append(pairs, pairing{rec, hits[rec.key()]})
 	}
 	sort.SliceStable(pairs, func(i, j int) bool { return pairs[i].rec.pattern < pairs[j].rec.pattern })
-	claimed := make(map[candidate]bool)
+	claimed := d.claimedPaths()
 	for _, p := range pairs {
 		sort.Slice(p.cands, func(i, j int) bool {
 			if ei, ej := p.cands[i] == p.rec.pattern, p.cands[j] == p.rec.pattern; ei != ej {
@@ -152,9 +177,28 @@ func (d *Generator) resolveLocked() error {
 		}
 	}
 
-	// a handler served at more paths than it has records: chi cannot say
-	// which mount the caller meant, and documenting one drops the rest, so
-	// fail loud and name every path.
+	return d.checkSurplus(pairs, claimed)
+}
+
+// claimedPaths seeds the claim set with paths an earlier pass resolved. The
+// resolve runs once per build and once per statusMap call, so a route
+// registered between two resolves shares its handler's walk hits with the
+// record that is already resolved; without this seed the surplus check reports
+// that sibling path as a second mount of the new route.
+func (d *Generator) claimedPaths() map[candidate]bool {
+	claimed := make(map[candidate]bool)
+	for _, rec := range d.records {
+		if rec.full != "" && !rec.absolute {
+			claimed[candidate{rec.key(), rec.full}] = true
+		}
+	}
+	return claimed
+}
+
+// checkSurplus fails when a handler is served at more paths than it has
+// records: chi cannot say which mount the caller meant, and documenting one
+// drops the rest, so fail loud and name every path.
+func (d *Generator) checkSurplus(pairs []pairing, claimed map[candidate]bool) error {
 	for _, p := range pairs {
 		var extra []string
 		for _, c := range p.cands {
@@ -163,17 +207,25 @@ func (d *Generator) resolveLocked() error {
 			}
 		}
 		if len(extra) > 0 {
-			return fmt.Errorf("specout: %s %s is also served at %s; adopt only the outermost router, or register each path with Document",
+			return fmt.Errorf(
+				"specout: %s %s is also served at %s; adopt only the outermost "+
+					"router, or register each path with Document",
 				p.rec.method, p.rec.pattern, strings.Join(extra, ", "))
 		}
 	}
+	return nil
+}
 
-	// one validation pass over the resolved records, first problem wins.
+// validateRecords checks the resolved records. First problem wins.
+func (d *Generator) validateRecords() error {
 	seen := make(map[string]string)
 	for _, rec := range d.records {
 		// unresolved: name the pattern
 		if rec.full == "" {
-			return fmt.Errorf("specout: %s %q never resolved; adopt the outermost router (Adopt) or use Document", rec.method, rec.pattern)
+			return fmt.Errorf(
+				"specout: %s %q never resolved; adopt the outermost router "+
+					"(Adopt) or use Document",
+				rec.method, rec.pattern)
 		}
 		// an empty parameter name (/{} ) is not a legal OpenAPI path template.
 		// chi accepts the route, so fail here instead of emitting a broken path.
@@ -184,7 +236,10 @@ func (d *Generator) resolveLocked() error {
 		// typo: the field leaves the body and the placeholder stays a plain
 		// string.
 		if name, ok := strayPathField(rec.req, rec.full); ok {
-			return fmt.Errorf("specout: %s %q has a Req field tagged path:%q, but the pattern has no {%s}", rec.method, rec.pattern, name, name)
+			return fmt.Errorf(
+				"specout: %s %q has a Req field tagged path:%q, but the pattern "+
+					"has no {%s}",
+				rec.method, rec.pattern, name, name)
 		}
 		// duplicate canonical (path, method) from two registrations fails loud.
 		// Keyed on the documented path: /x/{id:[0-9]+} and /x/{id:[a-z]+} are
@@ -192,19 +247,25 @@ func (d *Generator) resolveLocked() error {
 		// would silently overwrite the earlier operation.
 		ck := docPath(rec.full) + "|" + rec.method
 		if first, dup := seen[ck]; dup {
-			return fmt.Errorf("specout: duplicate route %s %s (registered as %q and %q)", rec.method, docPath(rec.full), first, rec.pattern)
+			return fmt.Errorf(
+				"specout: duplicate route %s %s (registered as %q and %q)",
+				rec.method, docPath(rec.full), first, rec.pattern)
 		}
 		seen[ck] = rec.pattern
 	}
 	return nil
 }
 
-// chi.Routes implementation: the generator has no subroutes, so mounting
-// the spec on a chi router does not surface as stray handler entries.
+// Routes implements chi.Routes. The generator has no subroutes, so chi.Walk
+// stops at a mounted spec instead of reporting its ten all-method mount paths
+// as strays. The four chi.Routes methods exist only for that interface.
 func (d *Generator) Routes() []chi.Route { return nil }
 
+// Middlewares implements chi.Routes. A Generator has none.
 func (d *Generator) Middlewares() chi.Middlewares { return nil }
 
-func (d *Generator) Match(rctx *chi.Context, method, path string) bool { return false }
+// Match implements chi.Routes. A Generator matches nothing.
+func (d *Generator) Match(*chi.Context, string, string) bool { return false }
 
-func (d *Generator) Find(rctx *chi.Context, method, path string) string { return "" }
+// Find implements chi.Routes. A Generator finds nothing.
+func (d *Generator) Find(*chi.Context, string, string) string { return "" }
