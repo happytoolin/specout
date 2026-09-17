@@ -1,7 +1,6 @@
 package specout_test
 
 import (
-	"net/http"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -27,12 +26,12 @@ func TestDuplicateComponentNamePanics(t *testing.T) {
 			t.Fatal("expected duplicate-name panic")
 		}
 	}()
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
+	d := newGen()
 	d.SchemaName[dupA]("Clash")
 	d.SchemaName[dupB]("Clash")
 	r := chi.NewRouter()
-	specout.Chi(d, r).Get("/a", specout.Handler[struct{}, dupA]{HandlerFunc: func(http.ResponseWriter, *http.Request) {}})
-	specout.Chi(d, r).Get("/b", specout.Handler[struct{}, dupB]{HandlerFunc: func(http.ResponseWriter, *http.Request) {}})
+	specout.Chi(d, r).Get("/a", specout.Handler[struct{}, dupA]{HandlerFunc: noop})
+	specout.Chi(d, r).Get("/b", specout.Handler[struct{}, dupB]{HandlerFunc: noop})
 	serveDoc(t, d, r)
 }
 
@@ -45,8 +44,7 @@ func TestSameNamedNestedTypesPanic(t *testing.T) {
 			t.Fatal("expected a duplicate-name panic")
 		}
 	}()
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	r := chi.NewRouter()
+	d, r := newGen(), chi.NewRouter()
 	specout.Chi(d, r).Get("/x", specout.Handler[struct{}, nestedDup]{HandlerFunc: noop})
 	serveDoc(t, d, r)
 }
@@ -54,7 +52,7 @@ func TestSameNamedNestedTypesPanic(t *testing.T) {
 // SchemaName must reach a type that is only ever nested: both components are
 // emitted and each $ref points at its own shape.
 func TestNestedOnlyOverrideApplies(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
+	d := newGen()
 	d.SchemaName[Contact]("LocalContact")
 	r := chi.NewRouter()
 	specout.Chi(d, r).Get("/x", specout.Handler[struct{}, nestedDup]{HandlerFunc: noop})

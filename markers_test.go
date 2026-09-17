@@ -44,8 +44,8 @@ func TestMarkerTypes(t *testing.T) {
 	if _, ok := content["multipart/form-data"]; !ok {
 		t.Fatalf("File did not produce multipart; have %v", content)
 	}
-	props := doc["components"].(map[string]any)["schemas"].(map[string]any)["uploadReq"].(map[string]any)["properties"].(map[string]any)
-	f := props["file"].(map[string]any)
+	fileProps := doc["components"].(map[string]any)["schemas"].(map[string]any)["uploadReq"].(map[string]any)["properties"].(map[string]any)
+	f := fileProps["file"].(map[string]any)
 	if f["format"] != "binary" || f["type"] != "string" {
 		t.Errorf("File property = %v", f)
 	}

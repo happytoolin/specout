@@ -45,8 +45,7 @@ func requestBody(t *testing.T, op map[string]any) (contentType string, media map
 }
 
 func TestBodyExcludesParamFields(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	r := chi.NewRouter()
+	d, r := newGen(), chi.NewRouter()
 	specout.Chi(d, r).Patch("/pets/{petId}", specout.Handler[patchReq, specout.NoContent]{HandlerFunc: okBody})
 	// one Req type on two routes: one body component, not a name clash
 	specout.Chi(d, r).Post("/pets/{petId}", specout.Handler[patchReq, specout.NoContent]{HandlerFunc: noop})
@@ -92,8 +91,7 @@ func TestBodyExcludesParamFields(t *testing.T) {
 
 // every field a parameter: no body at all.
 func TestAllParamReqHasNoBody(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	r := chi.NewRouter()
+	d, r := newGen(), chi.NewRouter()
 	specout.Chi(d, r).Post("/things/{id}", specout.Handler[onlyParams, specout.NoContent]{HandlerFunc: okBody})
 	doc := serveDoc(t, d, r)
 	op := doc["paths"].(map[string]any)["/things/{id}"].(map[string]any)["post"].(map[string]any)
@@ -105,8 +103,7 @@ func TestAllParamReqHasNoBody(t *testing.T) {
 // a non-struct Req is the whole body: an array payload, and a bare File is an
 // octet-stream payload (petstore's uploadImage).
 func TestNonStructRequestBody(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	r := chi.NewRouter()
+	d, r := newGen(), chi.NewRouter()
 	specout.Chi(d, r).Post("/tags", specout.Handler[[]tagBody, specout.NoContent]{HandlerFunc: okBody})
 	specout.Chi(d, r).Post("/upload", specout.Handler[specout.File, specout.NoContent]{HandlerFunc: noop})
 	doc := serveDoc(t, d, r)
@@ -136,8 +133,7 @@ func TestNonStructRequestBody(t *testing.T) {
 // the emitted document must be valid OpenAPI: the body schema of a mixed Req
 // keeps every body property in required-order and drops the params.
 func TestBodySchemaJSONShape(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	r := chi.NewRouter()
+	d, r := newGen(), chi.NewRouter()
 	specout.Chi(d, r).Post("/mixed/{petId}", specout.Handler[patchReq, specout.NoContent]{HandlerFunc: okBody})
 	doc := serveDoc(t, d, r)
 	body := doc["components"].(map[string]any)["schemas"].(map[string]any)["patchReq"]
