@@ -65,7 +65,8 @@ func operationID(method, path string) string {
 		if seg == "" {
 			return ""
 		}
-		b.WriteString(strings.ToUpper(seg[:1]) + seg[1:])
+		b.WriteString(strings.ToUpper(seg[:1]))
+		b.WriteString(seg[1:])
 	}
 	return b.String()
 }
