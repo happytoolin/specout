@@ -1,11 +1,11 @@
 package specout
 
 import (
+	"cmp"
 	"fmt"
 	"net/http"
 	"reflect"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -154,17 +154,19 @@ func (d *Generator) pairPaths() error {
 		}
 		pairs = append(pairs, pairing{rec, hits[rec.key()]})
 	}
-	sort.SliceStable(pairs, func(i, j int) bool { return pairs[i].rec.pattern < pairs[j].rec.pattern })
+	slices.SortStableFunc(pairs, func(a, b pairing) int {
+		return strings.Compare(a.rec.pattern, b.rec.pattern)
+	})
 	claimed := d.claimedPaths()
 	for _, p := range pairs {
-		sort.Slice(p.cands, func(i, j int) bool {
-			if ei, ej := p.cands[i] == p.rec.pattern, p.cands[j] == p.rec.pattern; ei != ej {
-				return ei
+		slices.SortFunc(p.cands, func(a, b string) int {
+			if ea, eb := a == p.rec.pattern, b == p.rec.pattern; ea != eb {
+				if ea {
+					return -1
+				}
+				return 1
 			}
-			if len(p.cands[i]) != len(p.cands[j]) {
-				return len(p.cands[i]) > len(p.cands[j])
-			}
-			return p.cands[i] < p.cands[j]
+			return cmp.Or(cmp.Compare(len(b), len(a)), strings.Compare(a, b))
 		})
 		for _, c := range p.cands {
 			ck := candidate{p.rec.key(), c}

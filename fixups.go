@@ -2,6 +2,7 @@ package specout
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/invopop/jsonschema"
@@ -100,10 +101,8 @@ func (sr *schemaRegistry) fixStructFields(t reflect.Type, s *jsonschema.Schema, 
 				s.Properties.Delete(name)
 				// required names the wire property too: leaving the Go field
 				// name here would require a property that does not exist.
-				for i, r := range s.Required {
-					if r == name {
-						s.Required[i] = fn
-					}
+				if i := slices.Index(s.Required, name); i >= 0 {
+					s.Required[i] = fn
 				}
 			}
 		}

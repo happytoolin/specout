@@ -8,19 +8,19 @@ import (
 
 // Category is components.schemas.Category.
 type Category struct {
-	ID   int64  `json:"id,omitempty"   jsonschema:"format=int64,example=1"`
+	ID   int64  `json:"id,omitzero"   jsonschema:"format=int64,example=1"`
 	Name string `json:"name,omitempty" jsonschema:"example=Dogs"`
 }
 
 // Tag is components.schemas.Tag.
 type Tag struct {
-	ID   int64  `json:"id,omitempty"   jsonschema:"format=int64"`
+	ID   int64  `json:"id,omitzero"   jsonschema:"format=int64"`
 	Name string `json:"name,omitempty"`
 }
 
 // Pet is components.schemas.Pet: required name + photoUrls, enum status.
 type Pet struct {
-	ID        int64    `json:"id,omitempty"      jsonschema:"format=int64,example=10"`
+	ID        int64    `json:"id,omitzero"      jsonschema:"format=int64,example=10"`
 	Name      string   `json:"name"              jsonschema:"example=doggie"`
 	Category  Category `json:"category,omitzero"`
 	PhotoURLs []string `json:"photoUrls"`
@@ -30,29 +30,29 @@ type Pet struct {
 
 // Order is components.schemas.Order.
 type Order struct {
-	ID       int64     `json:"id,omitempty"       jsonschema:"format=int64,example=10"`
-	PetID    int64     `json:"petId,omitempty"    jsonschema:"format=int64,example=198772"`
-	Quantity int32     `json:"quantity,omitempty" jsonschema:"format=int32,example=7"`
+	ID       int64     `json:"id,omitzero"       jsonschema:"format=int64,example=10"`
+	PetID    int64     `json:"petId,omitzero"    jsonschema:"format=int64,example=198772"`
+	Quantity int32     `json:"quantity,omitzero" jsonschema:"format=int32,example=7"`
 	ShipDate time.Time `json:"shipDate,omitzero"`
 	Status   string    `json:"status,omitempty"   jsonschema:"description=Order Status,example=approved,enum=placed|approved|delivered"`
-	Complete bool      `json:"complete,omitempty"`
+	Complete bool      `json:"complete,omitzero"`
 }
 
 // User is components.schemas.User.
 type User struct {
-	ID         int64  `json:"id,omitempty"         jsonschema:"format=int64,example=10"`
+	ID         int64  `json:"id,omitzero"         jsonschema:"format=int64,example=10"`
 	Username   string `json:"username,omitempty"   jsonschema:"example=theUser"`
 	FirstName  string `json:"firstName,omitempty"  jsonschema:"example=John"`
 	LastName   string `json:"lastName,omitempty"   jsonschema:"example=James"`
 	Email      string `json:"email,omitempty"      jsonschema:"example=john@email.com"`
 	Password   string `json:"password,omitempty"   jsonschema:"example=12345"`
 	Phone      string `json:"phone,omitempty"      jsonschema:"example=12345"`
-	UserStatus int32  `json:"userStatus,omitempty" jsonschema:"description=User Status,format=int32,example=1"`
+	UserStatus int32  `json:"userStatus,omitzero" jsonschema:"description=User Status,format=int32,example=1"`
 }
 
 // ApiResponse is components.schemas.ApiResponse.
 type ApiResponse struct {
-	Code    int32  `json:"code,omitempty"`
+	Code    int32  `json:"code,omitzero"`
 	Type    string `json:"type,omitempty"`
 	Message string `json:"message,omitempty"`
 }

@@ -1,6 +1,7 @@
 package specout
 
 import (
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
@@ -26,13 +27,9 @@ func (sr *schemaRegistry) unwrapDefs(t reflect.Type, s *jsonschema.Schema) *json
 	}
 	// $defs is a map; registration order feeds component order, so walk the
 	// names sorted to keep the output byte-deterministic.
-	defNames := make([]string, 0, len(s.Definitions))
-	for defName := range s.Definitions {
-		if defName != name {
-			defNames = append(defNames, defName)
-		}
-	}
-	slices.Sort(defNames)
+	defNames := slices.DeleteFunc(slices.Sorted(maps.Keys(s.Definitions)), func(defName string) bool {
+		return defName == name
+	})
 	for _, defName := range defNames {
 		if sr.byName[defName] == nil {
 			sr.addDef(defName, s.Definitions[defName])
@@ -65,8 +62,8 @@ func (sr *schemaRegistry) addDef(name string, def *jsonschema.Schema) {
 }
 
 func lastSeg(s string) string {
-	if i := strings.LastIndex(s, "."); i >= 0 {
-		return s[i+1:]
+	if _, last, ok := strings.CutLast(s, "."); ok {
+		return last
 	}
 	return s
 }

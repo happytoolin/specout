@@ -9,7 +9,7 @@ type CreateThingRequest struct {
 	Email       string            `json:"email"               jsonschema:"format=email,example=ops@example.com"`
 	Site        string            `json:"site,omitempty"      jsonschema:"format=uri"`
 	Priority    int               `json:"priority"            jsonschema:"minimum=1,maximum=5,default=3"`
-	Weight      float64           `json:"weight,omitempty"    jsonschema:"minimum=0,maximum=1000,multipleOf=0.5"`
+	Weight      float64           `json:"weight,omitzero"    jsonschema:"minimum=0,maximum=1000,multipleOf=0.5"`
 	Stock       int64             `json:"stock"               jsonschema:"minimum=0,maximum=1000000"`
 	Tags        []string          `json:"tags"                jsonschema:"minItems=1,maxItems=10,uniqueItems=true,description=Free-form labels"`
 	Scores      []int             `json:"scores,omitempty"    jsonschema:"minItems=1,maxItems=5,description=Judges scores 0-10"`
