@@ -35,7 +35,7 @@ type User struct {
 	GivenName         string `json:"givenName,omitempty"         jsonschema:"description=The given name (first name) of the user."`
 	Surname           string `json:"surname,omitempty"           jsonschema:"description=The user's surname (family name or last name)."`
 	JobTitle          string `json:"jobTitle,omitempty"          jsonschema:"description=The user's job title."`
-	AccountEnabled    bool   `json:"accountEnabled,omitzero"    jsonschema:"description=true if the account is enabled; otherwise, false."`
+	AccountEnabled    bool   `json:"accountEnabled,omitzero"     jsonschema:"description=true if the account is enabled; otherwise, false."`
 	CreatedDateTime   string `json:"createdDateTime,omitempty"   jsonschema:"format=date-time,description=The date and time the user was created."`
 }
 
