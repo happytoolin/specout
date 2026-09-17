@@ -35,9 +35,3 @@ type Handler[Req, Res any] struct {
 func (h Handler[Req, Res]) Types() (req, res reflect.Type) {
 	return reflect.TypeFor[Req](), reflect.TypeFor[Res]()
 }
-
-// Documented is implemented by metadata-carrying handlers. Registration
-// helpers type-assert against it.
-type Documented interface {
-	Types() (req, res reflect.Type)
-}

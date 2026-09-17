@@ -38,9 +38,6 @@ type Page struct {
 	Next  string       `json:"next,omitempty" jsonschema:"description=Cursor for the next page, empty on last"`
 }
 
-// Empty marks a request with no body.
-type Empty struct{}
-
 // SyncConflict is the rich 409 body for the sync endpoint.
 type SyncConflict struct {
 	Resource   string `json:"resource"   jsonschema:"example=onboarding"`

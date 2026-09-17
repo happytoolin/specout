@@ -199,12 +199,10 @@ func (d *Generator) resolveLocked() error {
 	return nil
 }
 
-// chi.Routes implementation: the generator has no subroutes, so mounting
-// the spec on a chi router does not surface as stray handler entries.
-func (d *Generator) Routes() []chi.Route { return nil }
-
-func (d *Generator) Middlewares() chi.Middlewares { return nil }
-
-func (d *Generator) Match(rctx *chi.Context, method, path string) bool { return false }
-
-func (d *Generator) Find(rctx *chi.Context, method, path string) string { return "" }
+// The generator has no subroutes, so implementing chi.Routes makes chi.Walk
+// stop at a mounted spec instead of reporting its ten all-method mount paths
+// as strays. The four methods exist only for that interface.
+func (d *Generator) Routes() []chi.Route                      { return nil }
+func (d *Generator) Middlewares() chi.Middlewares             { return nil }
+func (d *Generator) Match(*chi.Context, string, string) bool  { return false }
+func (d *Generator) Find(*chi.Context, string, string) string { return "" }

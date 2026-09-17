@@ -362,18 +362,6 @@ func isEmptyStruct(t reflect.Type) bool {
 	return t != nil && t.Kind() == reflect.Struct && t.NumField() == 0
 }
 
-// driftKey canonicalizes a served pattern for the recorder drift check.
-// chi RoutePattern collapses trailing slashes (both /a and /a/ report
-// "/a"), so served-side keys trim one trailing slash to match. Registered
-// doc paths keep their exact form: /a and /a/ are distinct OpenAPI paths.
-func driftKey(p string) string {
-	p = docPath(p)
-	if len(p) > 1 {
-		return strings.TrimSuffix(p, "/")
-	}
-	return p
-}
-
 // docPath rewrites router regex constraints to plain OpenAPI templates:
 // chi and gorilla report /items/{id:[0-9]+}, OpenAPI only knows {id}.
 func docPath(p string) string {
@@ -417,7 +405,7 @@ func (d *Generator) statusMap(withDefaults bool) (map[RouteKey]map[int]bool, err
 		if rec.full == "" {
 			continue
 		}
-		key := RouteKey{Method: rec.method, Path: driftKey(rec.full)}
+		key := NewRouteKey(rec.method, rec.full)
 		codes := out[key]
 		if codes == nil {
 			codes = make(map[int]bool)

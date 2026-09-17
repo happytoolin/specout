@@ -2,6 +2,7 @@ package specout
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 )
 
@@ -70,14 +71,16 @@ func stdCanonical(p string) string {
 	return strings.TrimSuffix(p, "{$}")
 }
 
-// checkMethod panics on a method token OpenAPI cannot name (finding 17). A
-// path-item object allows only these keys, so a token like CONNECT or a
-// lowercase typo would make the emitted document invalid.
+// openAPIMethods is the path-item key set (finding 17): a token like CONNECT
+// or a lowercase typo would make the emitted document invalid.
+var openAPIMethods = []string{
+	http.MethodGet, http.MethodPut, http.MethodPost, http.MethodDelete,
+	http.MethodOptions, http.MethodHead, http.MethodPatch, http.MethodTrace,
+}
+
+// checkMethod panics on a method token OpenAPI cannot name.
 func checkMethod(method string) {
-	switch method {
-	case http.MethodGet, http.MethodPut, http.MethodPost, http.MethodDelete,
-		http.MethodOptions, http.MethodHead, http.MethodPatch, http.MethodTrace:
-		return
+	if !slices.Contains(openAPIMethods, method) {
+		panic("specout: method must be one of GET/HEAD/POST/PUT/PATCH/DELETE/OPTIONS/TRACE, got " + method)
 	}
-	panic("specout: method must be one of GET/HEAD/POST/PUT/PATCH/DELETE/OPTIONS/TRACE, got " + method)
 }

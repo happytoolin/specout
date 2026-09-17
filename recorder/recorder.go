@@ -2,7 +2,6 @@ package recorder
 
 import (
 	"net/http"
-	"regexp"
 	"strings"
 	"sync"
 
@@ -88,7 +87,7 @@ func (rec *Recorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	key := specout.RouteKey{Method: r.Method, Path: driftKey(pattern)}
+	key := specout.NewRouteKey(r.Method, pattern)
 	rec.mu.Lock()
 	if rec.codes[key] == nil {
 		rec.codes[key] = make(map[int]bool)
@@ -117,18 +116,3 @@ func (w *observingWriter) Write(b []byte) (int, error) {
 }
 
 func (w *observingWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
-
-// paramRe strips router regex constraints, exactly like the root package's
-// docPath so both sides of the drift check agree (duplicated because the root
-// helper is unexported). driftKey then mirrors specout's served-path
-// canonicalization: chi collapses /a and /a/ to one RoutePattern, so trim one
-// trailing slash.
-var paramRe = regexp.MustCompile(`\{([^}:]+)(:[^{}]*(?:\{[^{}]*\}[^{}]*)*)?\}`)
-
-func driftKey(p string) string {
-	p = paramRe.ReplaceAllString(p, "{$1}")
-	if len(p) > 1 {
-		return strings.TrimSuffix(p, "/")
-	}
-	return p
-}
