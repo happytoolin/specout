@@ -86,7 +86,7 @@ func deleteOr404[K comparable, V any](w http.ResponseWriter, s *store, m map[K]V
 		notFound(w, msg)
 		return
 	}
-	w.WriteHeader(200)
+	w.WriteHeader(http.StatusOK)
 }
 
 // pathID is the int64 value of one URL placeholder. A value that is not a

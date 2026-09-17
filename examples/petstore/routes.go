@@ -21,6 +21,12 @@ func op[Req, Res any](id, summary, description string, tags []string, public boo
 
 // petRoutes registers the eight pet operations.
 func petRoutes(b *specout.ChiRouter, s *store) {
+	petCollectionRoutes(b, s)
+	petByIDRoutes(b, s)
+}
+
+// petCollectionRoutes registers the four collection-level pet operations.
+func petCollectionRoutes(b *specout.ChiRouter, s *store) {
 	b.Put("/pet", op[Pet, Pet]("updatePet", "Update an existing pet.", "Update an existing pet by Id.", tagPet, false, jsonXMLForm,
 		func(w http.ResponseWriter, r *http.Request) {
 			storeBody(w, r, s, "Invalid ID supplied", s.pets, func(p *Pet) int64 {
@@ -66,6 +72,10 @@ func petRoutes(b *specout.ChiRouter, s *store) {
 			writeJSON(w, 200, out)
 		},
 		ok("successful operation"), desc(400, "Invalid tag value")))
+}
+
+// petByIDRoutes registers the four /pet/{petId} operations.
+func petByIDRoutes(b *specout.ChiRouter, s *store) {
 	b.Get("/pet/{petId}", op[getPetReq, Pet]("getPetById", "Find pet by ID.", "Returns a single pet.", tagPet, false, nil,
 		func(w http.ResponseWriter, r *http.Request) { show(w, s, s.pets, pathID(r, "petId"), "Pet not found") },
 		ok("successful operation"), invalidID, petNotFound))
@@ -95,7 +105,7 @@ func petRoutes(b *specout.ChiRouter, s *store) {
 	b.Delete("/pet/{petId}", op[deletePetReq, struct{}]("deletePet", "Deletes a pet.", "Delete a pet.", tagPet, false, nil,
 		func(w http.ResponseWriter, r *http.Request) {
 			take(s, s.pets, pathID(r, "petId"))
-			w.WriteHeader(200)
+			w.WriteHeader(http.StatusOK)
 		},
 		desc(200, "Pet deleted"), desc(400, "Invalid pet value")))
 	b.Post("/pet/{petId}/uploadImage", op[uploadImageReq, ApiResponse]("uploadFile", "Uploads an image.", "Upload image of the pet.", tagPet, false, nil,
@@ -110,7 +120,7 @@ func petRoutes(b *specout.ChiRouter, s *store) {
 				writeJSON(w, 400, map[string]any{"message": "No file uploaded"})
 				return
 			}
-			f.Close()
+			_ = f.Close()
 			writeJSON(w, 200, ApiResponse{Code: 200, Type: "ok", Message: "file uploaded"})
 		},
 		okJSON("successful operation"), desc(400, "No file uploaded"), petNotFound))
@@ -120,7 +130,7 @@ func petRoutes(b *specout.ChiRouter, s *store) {
 func storeRoutes(b *specout.ChiRouter, s *store) {
 	b.Get("/store/inventory", op[struct{}, map[string]int32]("getInventory", "Returns pet inventories by status.",
 		"Returns a map of status codes to quantities.", tagStore, false, nil,
-		func(w http.ResponseWriter, r *http.Request) {
+		func(w http.ResponseWriter, _ *http.Request) {
 			out := map[string]int32{}
 			for _, p := range s.petsList() {
 				out[p.Status]++
@@ -184,14 +194,16 @@ func userRoutes(b *specout.ChiRouter, s *store) {
 			w.Header().Set("X-Expires-After", time.Now().Add(time.Hour).UTC().Format(time.RFC3339))
 			writeJSON(w, 200, "logged in user session: "+name)
 		},
-		specout.Response{Status: 200, ContentTypes: jsonOrXML, Raw: map[string]any{"description": "successful operation"},
+		specout.Response{
+			Status: 200, ContentTypes: jsonOrXML, Raw: map[string]any{"description": "successful operation"},
 			Headers: []specout.Header{
 				{Name: "X-Rate-Limit", Type: int32(0)},
 				{Name: "X-Expires-After", Type: time.Time{}},
-			}},
+			},
+		},
 		desc(400, "Invalid username/password supplied")))
 	b.Get("/user/logout", op[struct{}, struct{}]("logoutUser", "Logs out current logged in user session.", "Log user out of the system.", tagUser, true, nil,
-		func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) },
+		func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) },
 		desc(200, "successful operation")))
 	b.Get("/user/{username}", op[getUserReq, User]("getUserByName", "Get user by user name.", "Get user detail based on username.", tagUser, true, nil,
 		func(w http.ResponseWriter, r *http.Request) {
@@ -211,7 +223,7 @@ func userRoutes(b *specout.ChiRouter, s *store) {
 				}
 				s.users[name] = u
 				s.mu.Unlock()
-				w.WriteHeader(200)
+				w.WriteHeader(http.StatusOK)
 			})
 		},
 		desc(200, "successful operation"), desc(400, "bad request"), desc(404, "user not found")))

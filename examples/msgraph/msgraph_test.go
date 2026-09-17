@@ -26,7 +26,11 @@ var publishedGraph = map[string]map[string]string{
 }
 
 // spec builds the example and returns its document.
-func spec(t *testing.T) map[string]any { d, _ := New(); return exampletest.Spec(t, d) }
+func spec(t *testing.T) map[string]any {
+	t.Helper()
+	d, _ := New()
+	return exampletest.Spec(t, d)
+}
 
 // dig walks a decoded document by key path, ending on an object: the shared
 // example walker.
@@ -167,14 +171,14 @@ func TestGraphDemoServesEveryRouteAndNoUndocumentedCode(t *testing.T) {
 
 	do := func(method, path, body string, want int) {
 		t.Helper()
-		req, err := http.NewRequest(method, srv.URL+path, strings.NewReader(body))
+		req, err := http.NewRequestWithContext(t.Context(), method, srv.URL+path, strings.NewReader(body))
 		require.NoError(t, err)
 		if body != "" {
 			req.Header.Set("Content-Type", "application/json")
 		}
 		resp, err := http.DefaultClient.Do(req)
 		require.NoError(t, err)
-		resp.Body.Close()
+		require.NoError(t, resp.Body.Close())
 		assert.Equal(t, want, resp.StatusCode, "%s %s", method, path)
 	}
 

@@ -1,6 +1,7 @@
 package specout_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,13 +16,13 @@ import (
 )
 
 type probeQ struct {
-	Filter map[string]string `query:"filter" jsonschema:"style=deepObject,explode=true"`
+	Filter map[string]string `jsonschema:"style=deepObject,explode=true" query:"filter"`
 	Hdr    string            `header:"X-Req"`
 }
 
 type probeBody struct {
-	Old string `json:"old" jsonschema:"deprecated"`
-	Tag string `json:"tagged" jsonschema_extras:"x-ms-identifiers=id"`
+	Old string `json:"old"     jsonschema:"deprecated"`
+	Tag string `json:"tagged"  jsonschema_extras:"x-ms-identifiers=id"`
 	Ex  string `json:"example" jsonschema:"example=a,example=b"`
 }
 
@@ -49,10 +50,10 @@ func probeRegister(get func(string, specout.Handler[probeQ, probeRes]), post fun
 	get("/things/{id}", specout.Handler[probeQ, probeRes]{
 		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Query().Get("fail") != "" {
-				w.WriteHeader(404)
+				w.WriteHeader(http.StatusNotFound)
 				return
 			}
-			w.WriteHeader(200)
+			w.WriteHeader(http.StatusOK)
 		},
 		Responses:    []specout.Response{{Key: "4XX", Type: probeBody{}}},
 		Tags:         []string{"things"},
@@ -60,7 +61,7 @@ func probeRegister(get func(string, specout.Handler[probeQ, probeRes]), post fun
 		Raw:          map[string]any{"x-rate-limit": 100},
 	})
 	post("/things", specout.Handler[probeBody, probeRes]{
-		HandlerFunc:         func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) },
+		HandlerFunc:         func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) },
 		RequestContentTypes: []string{"application/json", "application/xml"},
 		Responses:           []specout.Response{{Status: 200, ContentTypes: []string{"application/json", "application/xml"}}},
 	})
@@ -88,7 +89,7 @@ func probeAssert(t *testing.T, doc map[string]any) {
 	assert.NotContains(t, resp, "404", "a range key must not fan out into one code")
 	assert.Contains(t, resp, "200", "the Res default 200 stays beside an explicit response")
 	assert.Equal(t, "how it works", op["externalDocs"].(map[string]any)["description"], "op externalDocs")
-	assert.Equal(t, float64(100), op["x-rate-limit"])
+	assert.InEpsilon(t, 100, op["x-rate-limit"], 0.0001, "x-rate-limit")
 
 	postOp := opOf(t, doc, "/things", "post")
 	assert.Contains(t, postOp["requestBody"].(map[string]any)["content"].(map[string]any), "application/xml", "request content")
@@ -141,9 +142,9 @@ func probeInvariant(t *testing.T, d *specout.Generator, doc map[string]any) {
 // probeServe produces the fixture's documented codes through the recorder.
 func probeServe(rec *recorder.Recorder, targets ...string) {
 	for _, target := range targets {
-		rec.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", target, nil))
+		rec.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, target, nil))
 	}
-	rec.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/things", strings.NewReader("{}")))
+	rec.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/things", strings.NewReader("{}")))
 }
 
 // probeCheck asserts the document and the drift view, then requires a clean

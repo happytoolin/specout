@@ -23,20 +23,20 @@ type ErrorDetail struct {
 type InnerError struct {
 	RequestID       string `json:"request-id,omitempty"`
 	ClientRequestID string `json:"client-request-id,omitempty"`
-	Date            string `json:"date,omitempty" jsonschema:"format=date-time,description=Date when the error occured."`
+	Date            string `json:"date,omitempty"              jsonschema:"format=date-time,description=Date when the error occurred."`
 }
 
 // User is the common subset of microsoft.graph.user, which inherits directoryObject.
 type User struct {
-	ID                string `json:"id,omitempty" jsonschema:"description=The unique identifier for the user."`
-	DisplayName       string `json:"displayName,omitempty" jsonschema:"description=The name displayed in the address book for the user."`
-	Mail              string `json:"mail,omitempty" jsonschema:"description=The SMTP address for the user."`
+	ID                string `json:"id,omitempty"                jsonschema:"description=The unique identifier for the user."`
+	DisplayName       string `json:"displayName,omitempty"       jsonschema:"description=The name displayed in the address book for the user."`
+	Mail              string `json:"mail,omitempty"              jsonschema:"description=The SMTP address for the user."`
 	UserPrincipalName string `json:"userPrincipalName,omitempty" jsonschema:"description=The user principal name (UPN) of the user."`
-	GivenName         string `json:"givenName,omitempty" jsonschema:"description=The given name (first name) of the user."`
-	Surname           string `json:"surname,omitempty" jsonschema:"description=The user's surname (family name or last name)."`
-	JobTitle          string `json:"jobTitle,omitempty" jsonschema:"description=The user's job title."`
-	AccountEnabled    bool   `json:"accountEnabled,omitempty" jsonschema:"description=true if the account is enabled; otherwise, false."`
-	CreatedDateTime   string `json:"createdDateTime,omitempty" jsonschema:"format=date-time,description=The date and time the user was created."`
+	GivenName         string `json:"givenName,omitempty"         jsonschema:"description=The given name (first name) of the user."`
+	Surname           string `json:"surname,omitempty"           jsonschema:"description=The user's surname (family name or last name)."`
+	JobTitle          string `json:"jobTitle,omitempty"          jsonschema:"description=The user's job title."`
+	AccountEnabled    bool   `json:"accountEnabled,omitempty"    jsonschema:"description=true if the account is enabled; otherwise, false."`
+	CreatedDateTime   string `json:"createdDateTime,omitempty"   jsonschema:"format=date-time,description=The date and time the user was created."`
 }
 
 // UserCollectionResponse is microsoft.graph.userCollectionResponse: the page
@@ -49,61 +49,61 @@ type UserCollectionResponse struct {
 
 type Message struct {
 	Subject      string      `json:"subject,omitempty"`
-	Body         ItemBody    `json:"body,omitempty"`
+	Body         ItemBody    `json:"body,omitzero"`
 	ToRecipients []Recipient `json:"toRecipients,omitempty"`
 }
 
 type ItemBody struct {
-	Content     string `json:"content,omitempty" jsonschema:"description=The content of the item."`
+	Content     string `json:"content,omitempty"     jsonschema:"description=The content of the item."`
 	ContentType string `json:"contentType,omitempty" jsonschema:"description=The type of the content. Possible values are text and html.,enum=text|html"`
 }
 
 type Recipient struct {
-	EmailAddress EmailAddress `json:"emailAddress,omitempty"`
+	EmailAddress EmailAddress `json:"emailAddress,omitzero"`
 }
 
 type EmailAddress struct {
-	Name    string `json:"name,omitempty" jsonschema:"description=The display name of the person or entity."`
+	Name    string `json:"name,omitempty"    jsonschema:"description=The display name of the person or entity."`
 	Address string `json:"address,omitempty" jsonschema:"description=The email address of the person or entity."`
 }
 
 type (
 	// getMeReq is me.user.GetUser: ConsistencyLevel plus $select/$expand.
 	getMeReq struct {
-		ConsistencyLevel string   `header:"ConsistencyLevel,omitempty" jsonschema:"description=Indicates the requested consistency level."`
-		Select           []string `query:"$select,omitempty" jsonschema:"description=Select properties to be returned"`
-		Expand           []string `query:"$expand,omitempty" jsonschema:"description=Expand related entities"`
+		ConsistencyLevel string   `header:"ConsistencyLevel,omitempty"                       jsonschema:"description=Indicates the requested consistency level."`
+		Select           []string `jsonschema:"description=Select properties to be returned" query:"$select,omitempty"`
+		Expand           []string `jsonschema:"description=Expand related entities"          query:"$expand,omitempty"`
 	}
 	// listUsersReq is users.user.ListUser, in published order.
 	listUsersReq struct {
-		ConsistencyLevel string   `header:"ConsistencyLevel,omitempty" jsonschema:"description=Indicates the requested consistency level."`
-		Top              int32    `query:"$top,omitempty" jsonschema:"description=Show only the first n items,minimum=0,example=50"`
-		Search           string   `query:"$search,omitempty" jsonschema:"description=Search items by search phrases"`
-		Filter           string   `query:"$filter,omitempty" jsonschema:"description=Filter items by property values"`
-		Count            bool     `query:"$count,omitempty" jsonschema:"description=Include count of items"`
-		OrderBy          []string `query:"$orderby,omitempty" jsonschema:"description=Order items by property values"`
-		Select           []string `query:"$select,omitempty" jsonschema:"description=Select properties to be returned"`
-		Expand           []string `query:"$expand,omitempty" jsonschema:"description=Expand related entities"`
+		ConsistencyLevel string   `header:"ConsistencyLevel,omitempty"                                       jsonschema:"description=Indicates the requested consistency level."`
+		Top              int32    `jsonschema:"description=Show only the first n items,minimum=0,example=50" query:"$top,omitempty"`
+		Search           string   `jsonschema:"description=Search items by search phrases"                   query:"$search,omitempty"`
+		Filter           string   `jsonschema:"description=Filter items by property values"                  query:"$filter,omitempty"`
+		Count            bool     `jsonschema:"description=Include count of items"                           query:"$count,omitempty"`
+		OrderBy          []string `jsonschema:"description=Order items by property values"                   query:"$orderby,omitempty"`
+		Select           []string `jsonschema:"description=Select properties to be returned"                 query:"$select,omitempty"`
+		Expand           []string `jsonschema:"description=Expand related entities"                          query:"$expand,omitempty"`
 	}
 	// getUserReq is users.user.GetUser: no body, so user-id rides the Req type.
 	getUserReq struct {
-		UserID string   `path:"user-id" jsonschema:"description=The unique identifier of user"`
-		Select []string `query:"$select,omitempty" jsonschema:"description=Select properties to be returned"`
-		Expand []string `query:"$expand,omitempty" jsonschema:"description=Expand related entities"`
+		UserID string   `jsonschema:"description=The unique identifier of user"    path:"user-id"`
+		Select []string `jsonschema:"description=Select properties to be returned" query:"$select,omitempty"`
+		Expand []string `jsonschema:"description=Expand related entities"          query:"$expand,omitempty"`
 	}
 	deleteUserReq struct {
-		UserID  string `path:"user-id" jsonschema:"description=The unique identifier of user"`
-		IfMatch string `header:"If-Match,omitempty" jsonschema:"description=ETag"`
+		UserID  string `jsonschema:"description=The unique identifier of user" path:"user-id"`
+		IfMatch string `header:"If-Match,omitempty"                            jsonschema:"description=ETag"`
 	}
 	// mediaReq is the profile-photo media operation: path parameter only.
 	mediaReq struct {
-		UserID string `path:"user-id" jsonschema:"description=The unique identifier of user"`
+		UserID string `jsonschema:"description=The unique identifier of user" path:"user-id"`
 	}
 	// sendMailReq is sendMail: the path parameter plus the body properties,
 	// which specout splits out into their own component.
 	sendMailReq struct {
-		UserID          string  `path:"user-id" jsonschema:"description=The unique identifier of user"`
-		Message         Message `json:"Message,omitempty" jsonschema:"description=The message to send."`
-		SaveToSentItems bool    `json:"SaveToSentItems,omitempty" jsonschema:"description=Save the message in Sent Items."`
+		UserID          string  `jsonschema:"description=The unique identifier of user" path:"user-id"`
+		Message         Message `json:"Message,omitzero"                                jsonschema:"description=The message to send."`
+		SaveToSentItems bool    `json:"SaveToSentItems,omitempty"                       jsonschema:"description=Save the message in Sent Items."`
 	}
 )

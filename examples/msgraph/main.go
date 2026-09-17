@@ -54,7 +54,8 @@ func main() {
 		return
 	}
 	fmt.Println("msgraph: http://localhost:8082/   spec: http://localhost:8082/openapi.json")
-	if err := http.ListenAndServe(":8082", Handler(d, r)); err != nil {
+	srv := &http.Server{Addr: ":8082", Handler: Handler(d, r), ReadHeaderTimeout: examplekit.ReadHeaderTimeout}
+	if err := srv.ListenAndServe(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

@@ -1,6 +1,7 @@
 package specout
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -22,39 +23,46 @@ func (c *ChiRouter) source() { c.d.addSource(chiWalkSource{c.r}) }
 
 func (c *ChiRouter) register(method, pattern string, rec routeRecord) {
 	rec.method, rec.pattern = method, pattern
-	c.r.Method(method, pattern, http.HandlerFunc(rec.fn))
+	c.r.Method(method, pattern, rec.fn)
 	c.d.register(rec)
 }
 
-// The eight verbs differ only in the method token.
+// Get registers a GET route on p.
 func (c *ChiRouter) Get[Req, Res any](p string, h Handler[Req, Res]) {
 	c.register(http.MethodGet, p, recOf(h))
 }
 
+// Head registers a HEAD route on p.
 func (c *ChiRouter) Head[Req, Res any](p string, h Handler[Req, Res]) {
 	c.register(http.MethodHead, p, recOf(h))
 }
 
+// Post registers a POST route on p.
 func (c *ChiRouter) Post[Req, Res any](p string, h Handler[Req, Res]) {
 	c.register(http.MethodPost, p, recOf(h))
 }
 
+// Put registers a PUT route on p.
 func (c *ChiRouter) Put[Req, Res any](p string, h Handler[Req, Res]) {
 	c.register(http.MethodPut, p, recOf(h))
 }
 
+// Patch registers a PATCH route on p.
 func (c *ChiRouter) Patch[Req, Res any](p string, h Handler[Req, Res]) {
 	c.register(http.MethodPatch, p, recOf(h))
 }
 
+// Delete registers a DELETE route on p.
 func (c *ChiRouter) Delete[Req, Res any](p string, h Handler[Req, Res]) {
 	c.register(http.MethodDelete, p, recOf(h))
 }
 
+// Options registers an OPTIONS route on p.
 func (c *ChiRouter) Options[Req, Res any](p string, h Handler[Req, Res]) {
 	c.register(http.MethodOptions, p, recOf(h))
 }
 
+// Trace registers a TRACE route on p.
 func (c *ChiRouter) Trace[Req, Res any](p string, h Handler[Req, Res]) {
 	c.register(http.MethodTrace, p, recOf(h))
 }
@@ -69,7 +77,7 @@ func (c *ChiRouter) Adopt(skips ...SkipRule) error {
 		return nil
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("specout: walk chi router: %w", err)
 	}
 	// Adopt is the only place the walk is registered, so it must happen even
 	// when strays are found: otherwise one undocumented route leaves every

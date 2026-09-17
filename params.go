@@ -20,7 +20,7 @@ var pathParamRe = regexp.MustCompile(`{([^}:]+)(:[^{}]*(?:{[^{}]*}[^{}]*)*)?}`)
 
 // pathParams extracts {name} placeholders from a route pattern.
 func pathParams(pattern string) []string {
-	var out []string
+	out := make([]string, 0, strings.Count(pattern, "{"))
 	for _, m := range pathParamRe.FindAllStringSubmatch(pattern, -1) {
 		out = append(out, m[1])
 	}
@@ -29,13 +29,22 @@ func pathParams(pattern string) []string {
 
 // paramTag returns the parameter location and tag value of a Req field:
 // query, header, cookie or path.
-func paramTag(f reflect.StructField) (loc, value string) {
+func paramTag(f reflect.StructField) (string, string) {
 	for _, l := range []string{"query", "header", "cookie", "path"} {
 		if t := f.Tag.Get(l); t != "" {
 			return l, t
 		}
 	}
 	return "", ""
+}
+
+// requiredParam reports whether a parameter field is required: it is optional
+// when the query tag ends in ",omitempty", the json tag says omitempty, or the
+// jsonschema tag supplies a default.
+func requiredParam(f reflect.StructField, qt string) bool {
+	return !strings.Contains(qt, ",omitempty") &&
+		!strings.Contains(f.Tag.Get("json"), "omitempty") &&
+		tagValue(f.Tag.Get("jsonschema"), "default") == ""
 }
 
 // isParamField reports whether an exported Req field is an OpenAPI parameter.
@@ -60,7 +69,7 @@ func hasParamField(t reflect.Type) bool {
 
 // taggedParams reflects Req fields carrying a query/header/cookie tag into
 // OpenAPI parameters.
-func taggedParams(req reflect.Type, sr *schemaRegistry) []any {
+func taggedParams(req reflect.Type) []any {
 	var params []any
 	for _, f := range exportedFields(req) {
 		loc, qt := paramTag(f)
@@ -81,7 +90,7 @@ func taggedParams(req reflect.Type, sr *schemaRegistry) []any {
 		p := newObj().
 			set("name", name).
 			set("in", loc).
-			set("required", !strings.Contains(qt, ",omitempty") && !strings.Contains(f.Tag.Get("json"), "omitempty") && tagValue(f.Tag.Get("jsonschema"), "default") == "").
+			set("required", requiredParam(f, qt)).
 			set("schema", fs)
 		applyParamStyle(p, f)
 		if desc := tagValue(f.Tag.Get("jsonschema"), "description"); desc != "" {
@@ -105,7 +114,8 @@ func applyParamStyle(p *obj, f reflect.StructField) {
 	case "matrix", "label", "form", "simple", "spaceDelimited", "pipeDelimited", "deepObject":
 		p.set("style", st)
 	default:
-		panic("specout: field " + f.Name + " has style=" + st + ", must be matrix, label, form, simple, spaceDelimited, pipeDelimited or deepObject")
+		panic("specout: field " + f.Name + " has style=" + st +
+			", must be matrix, label, form, simple, spaceDelimited, pipeDelimited or deepObject")
 	}
 	if ex := tagValue(tag, "explode"); ex != "" {
 		b, err := strconv.ParseBool(ex)
@@ -223,9 +233,9 @@ func parts0(s string) string {
 
 // tagValue extracts key=value from a jsonschema tag string.
 func tagValue(tag, key string) string {
-	for _, part := range strings.Split(tag, ",") {
-		if strings.HasPrefix(part, key+"=") {
-			return strings.TrimPrefix(part, key+"=")
+	for part := range strings.SplitSeq(tag, ",") {
+		if after, ok := strings.CutPrefix(part, key+"="); ok {
+			return after
 		}
 	}
 	return ""

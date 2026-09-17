@@ -26,8 +26,12 @@ func TestMain(m *testing.M) {
 		if err := d.WriteJSON(&buf); err != nil {
 			panic(err)
 		}
-		os.MkdirAll("testdata", 0o755)
-		os.WriteFile("testdata/openapi.json", buf.Bytes(), 0o644)
+		if err := os.MkdirAll("testdata", 0o750); err != nil {
+			panic(err)
+		}
+		if err := os.WriteFile("testdata/openapi.json", buf.Bytes(), 0o600); err != nil {
+			panic(err)
+		}
 	}
 	os.Exit(m.Run())
 }

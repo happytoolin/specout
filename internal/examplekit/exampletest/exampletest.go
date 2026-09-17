@@ -20,37 +20,37 @@ func (c *CaptureT) Errorf(f string, a ...any) { c.Errs = append(c.Errs, fmt.Spri
 func (c *CaptureT) Fatalf(f string, a ...any) { c.Errs = append(c.Errs, fmt.Sprintf(f, a...)) }
 
 // Spec renders d and returns the parsed document.
-func Spec(t testing.TB, d *specout.Generator) map[string]any {
-	t.Helper()
+func Spec(tb testing.TB, d *specout.Generator) map[string]any {
+	tb.Helper()
 	var buf bytes.Buffer
 	if err := d.WriteJSON(&buf); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	var doc map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &doc); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	return doc
 }
 
 // Dig walks a decoded document by key path and fails the test at the first
 // level the published shape is missing.
-func Dig(t testing.TB, v any, keys ...string) any {
-	t.Helper()
+func Dig(tb testing.TB, v any, keys ...string) any {
+	tb.Helper()
 	for _, k := range keys {
 		m, ok := v.(map[string]any)
 		if !ok {
-			t.Fatalf("no object at %q: %v", k, v)
+			tb.Fatalf("no object at %q: %v", k, v)
 		}
 		if v, ok = m[k]; !ok {
-			t.Fatalf("no %q in %v", k, m)
+			tb.Fatalf("no %q in %v", k, m)
 		}
 	}
 	return v
 }
 
 // Obj is Dig ending on a JSON object.
-func Obj(t testing.TB, v any, keys ...string) map[string]any {
-	t.Helper()
-	return Dig(t, v, keys...).(map[string]any)
+func Obj(tb testing.TB, v any, keys ...string) map[string]any {
+	tb.Helper()
+	return Dig(tb, v, keys...).(map[string]any)
 }

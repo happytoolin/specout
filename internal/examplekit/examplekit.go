@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/happytoolin/specout"
 )
@@ -15,9 +16,14 @@ import (
 // WriteJSON answers v as application/json with code: the one JSON writer both
 // examples share.
 func WriteJSON(w http.ResponseWriter, code int, v any) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(v)
+	_, _ = w.Write(b)
 }
 
 // SwaggerPage is the Swagger UI page for a spec served at specPath.
@@ -44,7 +50,7 @@ func Page(body string, next http.Handler) http.HandlerFunc {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprint(w, body)
+		_, _ = fmt.Fprint(w, body)
 	}
 }
 
@@ -60,3 +66,7 @@ func EmitSpec(d *specout.Generator) bool {
 	}
 	return true
 }
+
+// ReadHeaderTimeout is the header timeout the example and demo binaries set:
+// a stalled client cannot hold a connection open forever.
+const ReadHeaderTimeout = 5 * time.Second

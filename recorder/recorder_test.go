@@ -40,7 +40,7 @@ func TestVerifyPassesOnFullCoverage(t *testing.T) {
 		{http.MethodPost, "/things", `{"slug":"AB"}`},                                                  // 422 (pattern fail)
 		{http.MethodPost, "/channels", `{"kind":"notify_email","data":{"address":"ops@example.com"}}`}, // 204
 	} {
-		req := httptest.NewRequest(c.method, c.target, strings.NewReader(c.body))
+		req := httptest.NewRequestWithContext(t.Context(), c.method, c.target, strings.NewReader(c.body))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer demo-token")
 		rec.ServeHTTP(httptest.NewRecorder(), req)
@@ -54,7 +54,7 @@ func TestVerifyFailsOnDeclaredButUnproduced(t *testing.T) {
 	d, r := router.New()
 	rec := recorder.New(r)
 
-	req := httptest.NewRequest(http.MethodPost, "/onboarding/onb_4f9x/sync", strings.NewReader(`{"expected":5}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/onboarding/onb_4f9x/sync", strings.NewReader(`{"expected":5}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec.ServeHTTP(httptest.NewRecorder(), req)
 

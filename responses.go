@@ -40,10 +40,10 @@ func (d *Generator) responsePlan(rec *routeRecord, withDefaults bool) []respEntr
 		// struct{} Res declares nothing on its own; any explicit Response
 		// replaces it (e.g. {Status:200, ContentType:"application/pdf"}).
 		if !anyExplicit(rec.responses) {
-			put(respEntry{key: "204", code: 204})
+			put(newRespEntry(http.StatusNoContent, nil))
 		}
 	} else {
-		put(respEntry{key: "200", code: 200, typ: rec.res})
+		put(newRespEntry(http.StatusOK, rec.res))
 	}
 
 	for i := range rec.responses {
@@ -60,7 +60,7 @@ func (d *Generator) responsePlan(rec *routeRecord, withDefaults bool) []respEntr
 		}
 		// 204 and 304 carry no body: inheriting Res would emit content the
 		// HTTP spec forbids. An explicit Type still wins.
-		if resp.Type == nil && (key == "204" || key == "304") {
+		if resp.Type == nil && bodyless(resp.Status) {
 			t = nil
 		}
 		put(respEntry{key: key, code: resp.Status, typ: t, resp: resp})
@@ -68,18 +68,7 @@ func (d *Generator) responsePlan(rec *routeRecord, withDefaults bool) []respEntr
 
 	// global defaults, exactly as the drift maps count them
 	if withDefaults {
-		if et := reflect.TypeOf(d.cfg.ErrorType); et != nil {
-			for _, code := range d.cfg.DefaultErrors {
-				key := responseKey(code, "")
-				if omitted[key] {
-					continue
-				}
-				if _, declared := byKey[key]; declared {
-					continue
-				}
-				put(respEntry{key: key, code: code, typ: et})
-			}
-		}
+		d.putDefaultErrors(put, byKey, omitted)
 	}
 
 	out := make([]respEntry, 0, len(order))
@@ -89,6 +78,35 @@ func (d *Generator) responsePlan(rec *routeRecord, withDefaults bool) []respEntr
 		}
 	}
 	return out
+}
+
+// newRespEntry builds a response the route derived rather than declared.
+func newRespEntry(code int, t reflect.Type) respEntry {
+	return respEntry{key: responseKey(code, ""), code: code, typ: t}
+}
+
+// bodyless reports whether a status carries no body.
+func bodyless(code int) bool {
+	return code == http.StatusNoContent || code == http.StatusNotModified
+}
+
+// putDefaultErrors adds the configured error responses for every code the route
+// neither declared nor omitted.
+func (d *Generator) putDefaultErrors(put func(respEntry), byKey map[string]respEntry, omitted map[string]bool) {
+	et := reflect.TypeOf(d.cfg.ErrorType)
+	if et == nil {
+		return
+	}
+	for _, code := range d.cfg.DefaultErrors {
+		key := responseKey(code, "")
+		if omitted[key] {
+			continue
+		}
+		if _, declared := byKey[key]; declared {
+			continue
+		}
+		put(respEntry{key: key, code: code, typ: et})
+	}
 }
 
 // responsesFor renders a route's derived responses as the operation's

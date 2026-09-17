@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"os"
 
 	"github.com/happytoolin/specout/internal/demo/router"
 	"github.com/happytoolin/specout/internal/examplekit"
@@ -34,7 +35,7 @@ const redocBody = `<redoc spec-url="/openapi.json"></redoc>
 func static(body string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprint(w, body)
+		_, _ = fmt.Fprint(w, body)
 	}
 }
 
@@ -50,6 +51,13 @@ func main() {
 	// Swagger UI at /; every other path falls through to the API router.
 	mux.Handle("/", examplekit.Page(examplekit.SwaggerPage("specout demo — Swagger UI", "/openapi.json"), r))
 
-	fmt.Println("swagger ui: http://localhost:8080/   scalar: http://localhost:8080/scalar   redoc: http://localhost:8080/redoc\nspec:        http://localhost:8080/openapi.json")
-	http.ListenAndServe(":8080", mux)
+	fmt.Println("swagger ui: http://localhost:8080/")
+	fmt.Println("scalar:     http://localhost:8080/scalar")
+	fmt.Println("redoc:      http://localhost:8080/redoc")
+	fmt.Println("spec:       http://localhost:8080/openapi.json")
+	srv := &http.Server{Addr: ":8080", Handler: mux, ReadHeaderTimeout: examplekit.ReadHeaderTimeout}
+	if err := srv.ListenAndServe(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 }

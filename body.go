@@ -63,14 +63,14 @@ func bodyFields(req reflect.Type) []reflect.StructField {
 	// a direct field shadows a promoted one of the same name, and StructOf
 	// rejects the duplicate: reserve the direct names before expanding
 	taken := make(map[string]bool, req.NumField())
-	for i := 0; i < req.NumField(); i++ {
-		if f := req.Field(i); !isParamField(f) && !promotes(f) {
+	for f := range req.Fields() {
+		if !isParamField(f) && !promotes(f) {
 			taken[f.Name] = true
 		}
 	}
 	var out []reflect.StructField
-	for i := 0; i < req.NumField(); i++ {
-		if f := req.Field(i); !isParamField(f) {
+	for f := range req.Fields() {
+		if !isParamField(f) {
 			out = bodyField(out, f, taken)
 		}
 	}
@@ -82,8 +82,7 @@ func bodyFields(req reflect.Type) []reflect.StructField {
 func bodyField(out []reflect.StructField, f reflect.StructField, taken map[string]bool) []reflect.StructField {
 	if promotes(f) {
 		et := deref(f.Type)
-		for i := 0; i < et.NumField(); i++ {
-			sub := et.Field(i)
+		for sub := range et.Fields() {
 			if sub.PkgPath != "" && !sub.Anonymous {
 				continue // unexported plain field: never marshaled
 			}

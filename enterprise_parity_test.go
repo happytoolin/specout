@@ -34,8 +34,8 @@ func TestNestedDefsKeepFixups(t *testing.T) {
 		Color string `json:"color" jsonschema:"pattern=^[0-9a-f]{6}$"`
 	}
 	type Issue struct {
-		ID    int64      `json:"id" jsonschema:"readonly"`
-		State string     `json:"state" jsonschema:"enum=open|closed,default=open"`
+		ID    int64      `json:"id"            jsonschema:"readonly"`
+		State string     `json:"state"         jsonschema:"enum=open|closed,default=open"`
 		Label Label      `json:"label"`
 		Due   *time.Time `json:"due,omitempty"`
 	}
@@ -85,8 +85,8 @@ func TestRecursiveNestedDefsFixed(t *testing.T) {
 // top-level as well, and byType wins the name clash.
 func TestNestedOnlyDefsKeepFixups(t *testing.T) {
 	type Inner struct {
-		ID   int64   `json:"id" jsonschema:"readonly"`
-		Note string  `json:"note" jsonschema:"deprecated"`
+		ID   int64   `json:"id"            jsonschema:"readonly"`
+		Note string  `json:"note"          jsonschema:"deprecated"`
 		Due  *string `json:"due,omitempty"`
 	}
 	type Outer struct {
@@ -103,16 +103,16 @@ func TestNestedOnlyDefsKeepFixups(t *testing.T) {
 // tag (enum, min/max, default), not just the bare type.
 func TestParamKeywords(t *testing.T) {
 	type ListReq struct {
-		Limit int    `query:"limit" jsonschema:"default=20,minimum=1,maximum=100"`
-		Sort  string `query:"sort" jsonschema:"enum=created|updated,default=created"`
+		Limit int    `jsonschema:"default=20,minimum=1,maximum=100"     query:"limit"`
+		Sort  string `jsonschema:"enum=created|updated,default=created" query:"sort"`
 	}
 	doc := docOf(t, "GET", "/items", specout.Handler[ListReq, specout.NoContent]{HandlerFunc: noop})
 	p := paramsOf(t, opOf(t, doc, "/items", "get"))
 
 	limit := p["limit"]["schema"].(map[string]any)
-	assert.Equal(t, 1.0, limit["minimum"], "limit minimum")
-	assert.Equal(t, 100.0, limit["maximum"], "limit maximum")
-	assert.Equal(t, 20.0, limit["default"], "limit default")
+	assert.InEpsilon(t, 1, limit["minimum"], 0.0001, "limit minimum")
+	assert.InEpsilon(t, 100, limit["maximum"], 0.0001, "limit maximum")
+	assert.InEpsilon(t, 20, limit["default"], 0.0001, "limit default")
 	assert.Equal(t, []any{"created", "updated"}, p["sort"]["schema"].(map[string]any)["enum"], "sort enum")
 }
 

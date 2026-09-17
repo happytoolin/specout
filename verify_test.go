@@ -20,8 +20,8 @@ func TestRequireDocumentedPasses(t *testing.T) {
 
 func TestRequireDocumentedFailsOnStray(t *testing.T) {
 	d, r := router.New()
-	r.(chi.Router).Get("/debug/vars", func(w http.ResponseWriter, _ *http.Request) {})
-	r.(chi.Router).Get("/debug/hidden", func(w http.ResponseWriter, _ *http.Request) {})
+	r.(chi.Router).Get("/debug/vars", func(http.ResponseWriter, *http.Request) {})
+	r.(chi.Router).Get("/debug/hidden", func(http.ResponseWriter, *http.Request) {})
 
 	capt := &captureT{}
 	specout.Chi(d, r.(chi.Router)).RequireDocumented(capt, specout.Skip("/debug/*"))
@@ -53,7 +53,7 @@ func TestTwoGeneratorsTwoRoots(t *testing.T) {
 	assert.NotEmpty(t, c2.errs, "root two stray not reported")
 }
 
-func strayHandler(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }
+func strayHandler(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }
 
 type captureT struct{ errs []string }
 

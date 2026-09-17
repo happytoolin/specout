@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// recursive type
+// recursive type.
 type Node struct {
 	Val      string `json:"val"`
 	Children []Node `json:"children"`
@@ -22,12 +22,14 @@ type MapWrap struct {
 
 type Page[T any] struct{ Items []T }
 
-type Alpha struct{ V string }
-type Beta struct{ W string }
+type (
+	Alpha struct{ V string }
+	Beta  struct{ W string }
+)
 
 type SliceQueryReq struct {
 	Tags []string `query:"tags"`
-	Ids  []int    `query:"ids"`
+	IDs  []int    `query:"ids"`
 }
 
 type StructQueryReq struct {
@@ -36,7 +38,7 @@ type StructQueryReq struct {
 }
 
 type BothTagReq struct {
-	Limit int `query:"limit" json:"limit"`
+	Limit int `json:"limit" query:"limit"`
 }
 
 type UnregisteredUnionReq struct {
@@ -70,6 +72,7 @@ func TestEdgeCases(t *testing.T) {
 				specout.Document(d, http.MethodPost, "/b", specout.Handler[struct{}, Page[Beta]]{HandlerFunc: noop})
 			},
 			check: func(t *testing.T, doc map[string]any) {
+				t.Helper()
 				// two instantiations of one generic type are two components
 				for _, want := range []string{"PageAlpha", "PageBeta"} {
 					assert.Contains(t, schemas(t, doc), want, "missing component")
@@ -109,6 +112,7 @@ func TestEdgeCases(t *testing.T) {
 				specout.Document(d, http.MethodGet, "/things/{id}", specout.Handler[DupReq, struct{}]{HandlerFunc: noop})
 			},
 			check: func(t *testing.T, doc map[string]any) {
+				t.Helper()
 				// the path {id} and the query id are two parameters, not one,
 				// so count the raw array: paramsOf indexes by name.
 				raw, _ := opOf(t, doc, "/things/{id}", "get")["parameters"].([]any)

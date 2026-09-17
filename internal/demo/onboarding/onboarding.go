@@ -11,12 +11,12 @@ import (
 // Onboarding serves both wire directions: readOnly fields are stripped from
 // requests, writeOnly from responses.
 type Onboarding struct {
-	ID        string     `json:"id"        jsonschema:"readonly,example=onb_4f9x"`
-	CreatedAt time.Time  `json:"createdAt" jsonschema:"readonly"`
-	Owner     string     `json:"owner"     jsonschema:"format=email"`
+	ID        string     `json:"id"               jsonschema:"readonly,example=onb_4f9x"`
+	CreatedAt time.Time  `json:"createdAt"        jsonschema:"readonly"`
+	Owner     string     `json:"owner"            jsonschema:"format=email"`
 	APIKey    string     `json:"apiKey,omitempty" jsonschema:"writeonly"`
-	Stage     string     `json:"stage"     jsonschema:"enum=draft|active|archived,default=draft"`
-	Note      string     `json:"note,omitempty" jsonschema:"maxLength=500"`
+	Stage     string     `json:"stage"            jsonschema:"enum=draft|active|archived,default=draft"`
+	Note      string     `json:"note,omitempty"   jsonschema:"maxLength=500"`
 	Expiry    *time.Time `json:"expiry,omitempty" jsonschema:"description=Optional expiry"`
 }
 
@@ -26,11 +26,11 @@ type UpsertRequest struct {
 }
 
 type ListRequest struct {
-	Session string `cookie:"session"    jsonschema:"description=Session cookie from login"`
-	Limit   int    `query:"limit"      jsonschema:"default=20,minimum=1,maximum=100"`
-	Cursor  string `query:"cursor"     jsonschema:"description=Opaque cursor from a previous page"`
-	Sort    string `query:"sort"       jsonschema:"enum=created|updated,default=created"`
-	Trace   string `header:"X-Trace-Id" jsonschema:"description=Client trace id for debugging"`
+	Session string `cookie:"session"                                            jsonschema:"description=Session cookie from login"`
+	Limit   int    `jsonschema:"default=20,minimum=1,maximum=100"               query:"limit"`
+	Cursor  string `jsonschema:"description=Opaque cursor from a previous page" query:"cursor"`
+	Sort    string `jsonschema:"enum=created|updated,default=created"           query:"sort"`
+	Trace   string `header:"X-Trace-Id"                                         jsonschema:"description=Client trace id for debugging"`
 }
 
 type Page struct {

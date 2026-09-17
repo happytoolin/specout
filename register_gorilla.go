@@ -1,6 +1,7 @@
 package specout
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -11,6 +12,8 @@ import (
 // {id} and {id:re...} params map straight to OpenAPI path params.
 func Gorilla(d *Generator, r *mux.Router) *GorillaRouter { return &GorillaRouter{d: d, r: r} }
 
+// GorillaRouter registers specout handlers on a gorilla/mux router. Templates
+// are absolute, so Register needs no walk.
 type GorillaRouter struct {
 	d *Generator
 	r *mux.Router
@@ -27,35 +30,42 @@ func (g *GorillaRouter) register(method, pattern string, rec routeRecord) {
 	g.d.register(rec)
 }
 
-// The eight verbs differ only in the method token.
+// Get registers a GET route on p.
 func (g *GorillaRouter) Get[Req, Res any](p string, h Handler[Req, Res]) {
 	g.register(http.MethodGet, p, recOf(h))
 }
 
+// Head registers a HEAD route on p.
 func (g *GorillaRouter) Head[Req, Res any](p string, h Handler[Req, Res]) {
 	g.register(http.MethodHead, p, recOf(h))
 }
 
+// Post registers a POST route on p.
 func (g *GorillaRouter) Post[Req, Res any](p string, h Handler[Req, Res]) {
 	g.register(http.MethodPost, p, recOf(h))
 }
 
+// Put registers a PUT route on p.
 func (g *GorillaRouter) Put[Req, Res any](p string, h Handler[Req, Res]) {
 	g.register(http.MethodPut, p, recOf(h))
 }
 
+// Patch registers a PATCH route on p.
 func (g *GorillaRouter) Patch[Req, Res any](p string, h Handler[Req, Res]) {
 	g.register(http.MethodPatch, p, recOf(h))
 }
 
+// Delete registers a DELETE route on p.
 func (g *GorillaRouter) Delete[Req, Res any](p string, h Handler[Req, Res]) {
 	g.register(http.MethodDelete, p, recOf(h))
 }
 
+// Options registers an OPTIONS route on p.
 func (g *GorillaRouter) Options[Req, Res any](p string, h Handler[Req, Res]) {
 	g.register(http.MethodOptions, p, recOf(h))
 }
 
+// Trace registers a TRACE route on p.
 func (g *GorillaRouter) Trace[Req, Res any](p string, h Handler[Req, Res]) {
 	g.register(http.MethodTrace, p, recOf(h))
 }
@@ -68,7 +78,7 @@ func (g *GorillaRouter) Adopt(skips ...SkipRule) error {
 	err := g.r.Walk(func(route *mux.Route, _ *mux.Router, _ []*mux.Route) error {
 		tpl, err := route.GetPathTemplate()
 		if err != nil {
-			return err
+			return fmt.Errorf("specout: read route template: %w", err)
 		}
 		// A route with no handler is a PathPrefix/Subrouter mount, not an
 		// endpoint: skip it like chi skips Mount stubs.
@@ -84,7 +94,7 @@ func (g *GorillaRouter) Adopt(skips ...SkipRule) error {
 		return nil
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("specout: walk gorilla router: %w", err)
 	}
 	return s.err()
 }

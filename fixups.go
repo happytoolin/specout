@@ -74,8 +74,7 @@ func (sr *schemaRegistry) applySchemaFixes(t reflect.Type, s *jsonschema.Schema,
 // parent's schema without marking the embedded type as seen: the type still
 // needs its own pass when it is also reached as a component body elsewhere.
 func (sr *schemaRegistry) fixStructFields(t reflect.Type, s *jsonschema.Schema, seen map[reflect.Type]bool) {
-	for i := 0; i < t.NumField(); i++ {
-		f := t.Field(i)
+	for f := range t.Fields() {
 		if f.Anonymous && parts0(f.Tag.Get("json")) == "" {
 			// invopop flattens an untagged embedded struct into this schema:
 			// its fields are properties of s itself, not of a nested object.
@@ -109,7 +108,7 @@ func (sr *schemaRegistry) fixStructFields(t reflect.Type, s *jsonschema.Schema, 
 			}
 		}
 		applyFormatTag(p, f.Tag)
-		for _, part := range strings.Split(f.Tag.Get("jsonschema"), ",") {
+		for part := range strings.SplitSeq(f.Tag.Get("jsonschema"), ",") {
 			switch part {
 			case "readonly", "readOnly=true":
 				p.ReadOnly = true

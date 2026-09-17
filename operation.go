@@ -33,7 +33,7 @@ func (d *Generator) operationFor(rec *routeRecord, sr *schemaRegistry) *obj {
 		op.set("tags", toAny(rec.tags))
 	}
 	// path params from the resolved pattern, query params from Req tags
-	params := slices.Concat(pathParamObjs(rec.full, rec.req), taggedParams(rec.req, sr))
+	params := slices.Concat(pathParamObjs(rec.full, rec.req), taggedParams(rec.req))
 	if len(params) > 0 {
 		op.set("parameters", params)
 	}
@@ -52,11 +52,11 @@ func (d *Generator) operationFor(rec *routeRecord, sr *schemaRegistry) *obj {
 }
 
 // operationID derives a deterministic id from method+path:
-// GET /onboarding/{id}/sync -> getOnboardingByIdSync
+// GET /onboarding/{id}/sync -> getOnboardingByIdSync.
 func operationID(method, path string) string {
 	var b strings.Builder
 	b.WriteString(strings.ToLower(method))
-	for _, seg := range strings.Split(strings.Trim(path, "/"), "/") {
+	for seg := range strings.SplitSeq(strings.Trim(path, "/"), "/") {
 		if seg == "" {
 			continue
 		}
@@ -86,7 +86,9 @@ func checkOperationIDs(records []*routeRecord) error {
 			continue
 		}
 		if first, dup := seen[id]; dup {
-			return fmt.Errorf("specout: duplicate operationId %s (%s and %s %s) — set OperationID on one route", id, first, rec.method, rec.full)
+			return fmt.Errorf(
+				"specout: duplicate operationId %s (%s and %s %s) — set OperationID on one route",
+				id, first, rec.method, rec.full)
 		}
 		seen[id] = rec.method + " " + rec.full
 	}

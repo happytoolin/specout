@@ -9,6 +9,8 @@ import (
 // "METHOD /path" with method tokens and wildcards; no walk needed.
 func Std(d *Generator, mux *http.ServeMux) *StdRouter { return &StdRouter{d: d, mux: mux} }
 
+// StdRouter registers specout handlers on an http.ServeMux. Patterns are
+// absolute ("METHOD /path"); no walk is needed.
 type StdRouter struct {
 	d   *Generator
 	mux *http.ServeMux
@@ -31,35 +33,42 @@ func (s *StdRouter) Handle[Req, Res any](pattern string, h Handler[Req, Res]) {
 	s.d.register(rec)
 }
 
-// The eight verbs differ only in the method token.
+// Get registers a GET route on p.
 func (s *StdRouter) Get[Req, Res any](p string, h Handler[Req, Res]) {
 	s.Handle(http.MethodGet+" "+p, h)
 }
 
+// Head registers a HEAD route on p.
 func (s *StdRouter) Head[Req, Res any](p string, h Handler[Req, Res]) {
 	s.Handle(http.MethodHead+" "+p, h)
 }
 
+// Post registers a POST route on p.
 func (s *StdRouter) Post[Req, Res any](p string, h Handler[Req, Res]) {
 	s.Handle(http.MethodPost+" "+p, h)
 }
 
+// Put registers a PUT route on p.
 func (s *StdRouter) Put[Req, Res any](p string, h Handler[Req, Res]) {
 	s.Handle(http.MethodPut+" "+p, h)
 }
 
+// Patch registers a PATCH route on p.
 func (s *StdRouter) Patch[Req, Res any](p string, h Handler[Req, Res]) {
 	s.Handle(http.MethodPatch+" "+p, h)
 }
 
+// Delete registers a DELETE route on p.
 func (s *StdRouter) Delete[Req, Res any](p string, h Handler[Req, Res]) {
 	s.Handle(http.MethodDelete+" "+p, h)
 }
 
+// Options registers an OPTIONS route on p.
 func (s *StdRouter) Options[Req, Res any](p string, h Handler[Req, Res]) {
 	s.Handle(http.MethodOptions+" "+p, h)
 }
 
+// Trace registers a TRACE route on p.
 func (s *StdRouter) Trace[Req, Res any](p string, h Handler[Req, Res]) {
 	s.Handle(http.MethodTrace+" "+p, h)
 }

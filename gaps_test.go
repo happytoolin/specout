@@ -20,7 +20,7 @@ func TestGapRangeCode(t *testing.T) {
 	d := newGen()
 	r := chi.NewRouter()
 	specout.Chi(d, r).Get("/partial", specout.Handler[struct{}, gapRes]{
-		HandlerFunc: func(w http.ResponseWriter, req *http.Request) { w.WriteHeader(404) },
+		HandlerFunc: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) },
 		Responses: []specout.Response{
 			{Status: 404, Key: "4XX", Raw: map[string]any{"description": "not found"}},
 			{Status: 200, Omit: true},
@@ -42,7 +42,7 @@ func TestGapNoBodyStatuses(t *testing.T) {
 	d := newGen()
 	r := chi.NewRouter()
 	specout.Chi(d, r).Get("/gone", specout.Handler[struct{}, gapRes]{
-		HandlerFunc: func(w http.ResponseWriter, req *http.Request) { w.WriteHeader(204) },
+		HandlerFunc: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) },
 		Responses:   []specout.Response{{Status: 204}, {Status: 304}},
 	})
 	responses := opOf(t, serveDoc(t, d, r), "/gone", "get")["responses"].(map[string]any)
@@ -58,15 +58,19 @@ func TestGapNoBodyStatuses(t *testing.T) {
 // TestGapOAuth2: an oauth2 flow with no URL is a spec the validator rejects,
 // so it panics at build.
 func TestGapOAuth2(t *testing.T) {
-	bad := specout.New(specout.Config{Title: "t", Version: "1",
-		Auth: []specout.AuthScheme{specout.OAuth2("x", map[string]specout.OAuth2Flow{"implicit": {}})}})
+	bad := specout.New(specout.Config{
+		Title: "t", Version: "1",
+		Auth: []specout.AuthScheme{specout.OAuth2("x", map[string]specout.OAuth2Flow{"implicit": {}})},
+	})
 	require.Panics(t, func() { buildDoc(t, bad) })
 }
 
 // TestGapExternalDocsNeedsURL: url is required by OpenAPI, and an empty one
 // used to emit an object the validator rejects.
 func TestGapExternalDocsNeedsURL(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1",
-		ExternalDocs: &specout.ExternalDocs{Description: "no link"}})
+	d := specout.New(specout.Config{
+		Title: "t", Version: "1",
+		ExternalDocs: &specout.ExternalDocs{Description: "no link"},
+	})
 	require.Panics(t, func() { buildDoc(t, d) })
 }

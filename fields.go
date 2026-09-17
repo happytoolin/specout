@@ -19,8 +19,8 @@ func exportedFields(t reflect.Type) []reflect.StructField {
 		return nil
 	}
 	out := make([]reflect.StructField, 0, t.NumField())
-	for i := 0; i < t.NumField(); i++ {
-		if f := t.Field(i); f.PkgPath == "" {
+	for f := range t.Fields() {
+		if f.PkgPath == "" {
 			out = append(out, f)
 		}
 	}

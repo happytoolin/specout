@@ -33,12 +33,12 @@ func TestDocFields(t *testing.T) {
 	})
 	r := chi.NewRouter()
 	specout.Chi(d, r).Post("/things", specout.Handler[docReq, docRes]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {},
+		HandlerFunc: func(http.ResponseWriter, *http.Request) {},
 		Summary:     "s",
 		Description: "longer description",
 	})
 	specout.Chi(d, r).Get("/ping", specout.Handler[struct{}, docRes]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {},
+		HandlerFunc: func(http.ResponseWriter, *http.Request) {},
 		Public:      true,
 	})
 	doc := serveDoc(t, d, r)

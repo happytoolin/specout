@@ -90,7 +90,7 @@ func (sr *schemaRegistry) refFor(t reflect.Type) string {
 				return ""
 			}
 			if owner, ok := sr.defOwners[name]; ok && owner != t {
-				panic("specout: duplicate component name " + name + " (" + owner.String() + " vs " + t.String() + "), call SchemaName to disambiguate")
+				panicDuplicateName(name, owner, t)
 			}
 			sr.defOwners[name] = t
 			return name
@@ -110,7 +110,7 @@ func (sr *schemaRegistry) refFor(t reflect.Type) string {
 
 	e := &schemaEntry{name: sr.nameFor(t), s: s}
 	if owner, clash := sr.owned[e.name]; clash && owner != t {
-		panic("specout: duplicate component name " + e.name + " (" + owner.String() + " vs " + t.String() + "), call SchemaName to disambiguate")
+		panicDuplicateName(e.name, owner, t)
 	}
 	sr.byType[t] = e
 	sr.order = append(sr.order, t)
@@ -140,8 +140,10 @@ func isBuiltin(t reflect.Type) bool {
 		// PkgPath is empty for the predeclared types only: a named alias
 		// (type Password string) keeps its own component.
 		return t.PkgPath() == ""
+	default:
+		// structs, pointers, interfaces, channels and funcs are never inlined.
+		return false
 	}
-	return false
 }
 
 // schemaFor returns the inline schema for a builtin type and a component
@@ -182,12 +184,20 @@ func sanitizeName(t reflect.Type) string {
 		if t.NumMethod() == 0 {
 			return "Any"
 		}
+	default:
+		// named and predeclared types: t.String() is already a legal name.
 	}
 	// pkg.Page[pkg.T] → PageT
-	if idx := strings.Index(n, "["); idx >= 0 {
-		base := lastSeg(n[:idx])
-		arg := lastSeg(strings.TrimSuffix(n[idx+1:], "]"))
+	if before, after, ok := strings.Cut(n, "["); ok {
+		base := lastSeg(before)
+		arg := lastSeg(strings.TrimSuffix(after, "]"))
 		return base + arg
 	}
 	return lastSeg(n)
+}
+
+// panicDuplicateName fails loud when two Go types claim one component name.
+func panicDuplicateName(name string, owner, t reflect.Type) {
+	panic("specout: duplicate component name " + name +
+		" (" + owner.String() + " vs " + t.String() + "), call SchemaName to disambiguate")
 }

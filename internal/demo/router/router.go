@@ -24,8 +24,10 @@ func New() (*specout.Generator, http.Handler) {
 		ErrorType:     api.Problem{},
 		DefaultErrors: []int{400, 401, 403, 404, 409, 500},
 		// any one of these satisfies auth (OR semantics in security:)
-		Auth: []specout.AuthScheme{specout.Bearer, specout.APIKey("apiKey", "X-API-Key", specout.InHeader),
-			specout.APIKey("session", "session", specout.InCookie)}, // Bearer | X-API-Key | session cookie
+		Auth: []specout.AuthScheme{
+			specout.Bearer, specout.APIKey("apiKey", "X-API-Key", specout.InHeader),
+			specout.APIKey("session", "session", specout.InCookie),
+		}, // Bearer | X-API-Key | session cookie
 		ExternalDocs: &specout.ExternalDocs{URL: "https://docs.example.com/onboarding", Description: "Full guides"},
 		Servers:      []specout.Server{{URL: "http://localhost:8080", Description: "development"}},
 		Tags: []specout.Tag{
@@ -56,7 +58,7 @@ func New() (*specout.Generator, http.Handler) {
 		rc.Put("/onboarding/{id}", handlers.HandleUpsert(deps))
 		rc.Delete("/onboarding/{id}", handlers.HandleDelete(deps))
 		rc.Post("/onboarding/{id}/sync", handlers.HandleSync(deps))
-		rc.Post("/files/import", handlers.HandleImport(deps))
+		rc.Post("/files/import", handlers.HandleImport())
 		rc.Post("/webhooks", handlers.HandleRegisterWebhook(deps))
 		rc.Post("/things", handlers.HandleCreateThing())
 		rc.Post("/channels", handlers.HandleConfigureChannel())
@@ -66,7 +68,7 @@ func New() (*specout.Generator, http.Handler) {
 		rc := specout.Chi(d, r)
 		rc.Get("/onboarding", handlers.HandleList(deps))
 		rc.Get("/onboarding/{id}", handlers.HandleGet(deps))
-		rc.Get("/files/report", handlers.HandleReport(deps))
+		rc.Get("/files/report", handlers.HandleReport())
 		rc.Get("/legacy", handlers.HandleLegacyGet(deps))
 		rc.Get("/things", handlers.HandleSearchThings())
 	})

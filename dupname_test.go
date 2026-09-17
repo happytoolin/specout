@@ -9,8 +9,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type dupA struct{ A string }
-type dupB struct{ B int }
+type (
+	dupA struct{ A string }
+	dupB struct{ B int }
+)
 
 // Contact collides with specout.Contact by name and differs in shape.
 type Contact struct {

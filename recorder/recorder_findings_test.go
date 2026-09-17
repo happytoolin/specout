@@ -24,7 +24,7 @@ func TestDeclaredDefaultNotDrift(t *testing.T) {
 		}{},
 		DefaultErrors: []int{400, 404, 500},
 	})
-	rec := chiRoute(t, d, "GET", "/x", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(404) })
+	rec := chiRoute(t, d, "GET", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) })
 	serve(rec, "GET", "/x")
 	wantNoErr(t, d, rec, "spec does not declare it", "declared default flagged as drift")
 }
@@ -33,7 +33,7 @@ func TestDeclaredDefaultNotDrift(t *testing.T) {
 // probe, and the recorder must not key that as drift against the GET.
 func TestHeadMatchesGet(t *testing.T) {
 	d := gen()
-	rec := chiRoute(t, d, "GET", "/x", hit204)
+	rec := chiRoute(t, d, "GET", hit204)
 	serve(rec, "GET", "/x")
 	serve(rec, "HEAD", "/x")
 	wantNoErr(t, d, rec, "", "HEAD drift")
@@ -42,7 +42,7 @@ func TestHeadMatchesGet(t *testing.T) {
 // A route declared as HEAD stays HEAD: the recorder does not relabel it GET.
 func TestDeclaredHeadNoDrift(t *testing.T) {
 	d := gen()
-	rec := chiRoute(t, d, "HEAD", "/x", hit204)
+	rec := chiRoute(t, d, "HEAD", hit204)
 	serve(rec, "HEAD", "/x")
 	wantNoErr(t, d, rec, "", "declared HEAD drift")
 }
@@ -51,7 +51,7 @@ func TestDeclaredHeadNoDrift(t *testing.T) {
 // produced" half may fire, never a 404 drift.
 func TestUnmatchedRecordsNothing(t *testing.T) {
 	d := gen()
-	rec := chiRoute(t, d, "GET", "/x", hit204)
+	rec := chiRoute(t, d, "GET", hit204)
 	serve(rec, "GET", "/nope")
 	wantNoErr(t, d, rec, "404", "404 keyed as drift")
 }
@@ -64,7 +64,7 @@ func TestResponseControllerThroughRecorder(t *testing.T) {
 		flushed = http.NewResponseController(w).Flush() == nil
 		_, _ = w.Write([]byte("hi"))
 	})
-	recorder.New(r).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/stream", nil))
+	recorder.New(r).ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/stream", nil))
 	assert.True(t, flushed, "ResponseController could not reach the Flusher")
 }
 
@@ -108,14 +108,14 @@ func TestSpecEndpointSkipped(t *testing.T) {
 // path that is not a route.
 func TestSubtreeMountNotKeyed(t *testing.T) {
 	d := gen()
-	rec := chiRoute(t, d, "GET", "/x", hit204)
+	rec := chiRoute(t, d, "GET", hit204)
 	outer := http.NewServeMux()
 	outer.Handle("/api/v3/", http.StripPrefix("/api/v3", rec))
 	for _, c := range []struct{ method, target string }{
 		{"GET", "/api/v3/nope"},
 		{"HEAD", "/api/v3/x"},
 	} {
-		outer.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(c.method, c.target, nil))
+		outer.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), c.method, c.target, nil))
 	}
 	wantNoErr(t, d, rec, "api/v3", "mount keyed as drift")
 }

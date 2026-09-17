@@ -53,10 +53,14 @@ func New() (*specout.Generator, http.Handler) {
 			URL:  "https://www.apache.org/licenses/LICENSE-2.0.html",
 		},
 		Tags: []specout.Tag{
-			{Name: "pet", Description: "Everything about your Pets",
-				ExternalDocs: &specout.ExternalDocs{URL: "https://swagger.io", Description: "Find out more"}},
-			{Name: "store", Description: "Access to Petstore orders",
-				ExternalDocs: &specout.ExternalDocs{URL: "https://swagger.io", Description: "Find out more about our store"}},
+			{
+				Name: "pet", Description: "Everything about your Pets",
+				ExternalDocs: &specout.ExternalDocs{URL: "https://swagger.io", Description: "Find out more"},
+			},
+			{
+				Name: "store", Description: "Access to Petstore orders",
+				ExternalDocs: &specout.ExternalDocs{URL: "https://swagger.io", Description: "Find out more about our store"},
+			},
 			{Name: "user", Description: "Operations about user"},
 		},
 	})
@@ -83,7 +87,7 @@ func New() (*specout.Generator, http.Handler) {
 // Handler wraps the chi router with the demo page and the published server
 // prefix: the document declares servers: [/api/v3], so the API is served
 // there and the Swagger UI "try it out" button hits real routes.
-func Handler(d *specout.Generator, r http.Handler) http.Handler {
+func Handler(r http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/api/v3/", http.StripPrefix("/api/v3", r))
 	page := examplekit.SwaggerPage("specout example — Swagger Petstore", "/api/v3/openapi.json")
@@ -97,7 +101,8 @@ func main() {
 		return
 	}
 	fmt.Println("petstore: http://localhost:8081/   spec: http://localhost:8081/api/v3/openapi.json")
-	if err := http.ListenAndServe(":8081", Handler(d, r)); err != nil {
+	srv := &http.Server{Addr: ":8081", Handler: Handler(r), ReadHeaderTimeout: examplekit.ReadHeaderTimeout}
+	if err := srv.ListenAndServe(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

@@ -95,7 +95,7 @@ func variantRefs(oneOf []*jsonschema.Schema, sr *schemaRegistry) []*jsonschema.S
 			kept = append(kept, sub)
 			continue
 		}
-		for _, name := range strings.Split(sub.Type, "|") {
+		for name := range strings.SplitSeq(sub.Type, "|") {
 			if t, ok := sr.variants[name]; ok {
 				kept = append(kept, &jsonschema.Schema{Ref: sr.refFor(t)})
 			}

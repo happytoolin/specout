@@ -19,6 +19,7 @@ func TestEmbeddedBodyWithParam(t *testing.T) {
 	}
 	type Req struct {
 		base
+
 		Name *string `json:"name,omitempty"`
 		Page int     `query:"page"`
 	}
@@ -50,6 +51,7 @@ func TestEmbeddedFieldsKeepFixups(t *testing.T) {
 	type Res struct {
 		embedded
 		embed
+
 		Name string `json:"name"`
 	}
 
@@ -91,6 +93,7 @@ func TestEmbeddedShadowingField(t *testing.T) {
 	}
 	type Req struct {
 		base
+
 		ID *int64 `json:"id"`
 		Q  string `query:"q"`
 	}

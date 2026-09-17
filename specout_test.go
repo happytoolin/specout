@@ -56,7 +56,7 @@ func TestQuickStartFlow(t *testing.T) {
 
 	fetch := func() []byte {
 		w := httptest.NewRecorder()
-		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
+		r.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/openapi.json", nil))
 		require.Equal(t, 200, w.Code, "openapi.json status")
 		return w.Body.Bytes()
 	}
@@ -117,11 +117,11 @@ func TestServeOnlyGet(t *testing.T) {
 	adopt(t, specout.Chi(d, r))
 
 	rec := httptest.NewRecorder()
-	d.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/openapi.json", nil))
+	d.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/openapi.json", nil))
 	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code, "POST")
 
 	rec = httptest.NewRecorder()
-	d.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
+	d.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/openapi.json", nil))
 	assert.Equal(t, http.StatusOK, rec.Code, "GET")
 	assert.Contains(t, rec.Header().Get("Content-Type"), "application/json")
 }

@@ -13,10 +13,12 @@ import (
 type uploadReq struct {
 	File specout.File `json:"file" jsonschema:"description=CSV"`
 }
-type emptyMarker struct{}
-type item struct {
-	ID string `json:"id"`
-}
+type (
+	emptyMarker struct{}
+	item        struct {
+		ID string `json:"id"`
+	}
+)
 
 // TestMarkerTypes: NoContent reads as 204, File turns the request into
 // multipart with a binary property, Header declares a response header.
@@ -25,10 +27,10 @@ func TestMarkerTypes(t *testing.T) {
 	r := chi.NewRouter()
 	b := specout.Chi(d, r)
 	b.Post("/files", specout.Handler[uploadReq, specout.NoContent]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) },
+		HandlerFunc: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) },
 	})
 	b.Post("/items", specout.Handler[emptyMarker, item]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {},
+		HandlerFunc: func(http.ResponseWriter, *http.Request) {},
 		Responses: []specout.Response{
 			{Status: 201, Headers: []specout.Header{{Name: "Location"}}},
 		},

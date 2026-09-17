@@ -27,7 +27,7 @@ func writeErr(w http.ResponseWriter, d Deps, err error) { api.Error(w, d.Mapper,
 // queryInt reads an int off the raw request (query tags are not auto-bound); malformed input keeps def.
 func queryInt(q url.Values, key string, def int) int {
 	if v := q.Get(key); v != "" {
-		json.Unmarshal([]byte(v), &def)
+		_ = json.Unmarshal([]byte(v), &def)
 	}
 	return def
 }

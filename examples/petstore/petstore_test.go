@@ -35,7 +35,11 @@ var published = map[string]map[string]string{
 }
 
 // spec builds the example and returns its document.
-func spec(t *testing.T) map[string]any { d, _ := New(); return exampletest.Spec(t, d) }
+func spec(t *testing.T) map[string]any {
+	t.Helper()
+	d, _ := New()
+	return exampletest.Spec(t, d)
+}
 
 // dig walks a decoded document by key path: the shared example walker.
 var dig = exampletest.Dig
@@ -120,19 +124,19 @@ type captureT = exampletest.CaptureT
 func TestDemoServesEveryRouteAndNoUndocumentedCode(t *testing.T) {
 	d, r := New()
 	rec := recorder.New(r, specout.Skip("/openapi.json"))
-	srv := httptest.NewServer(Handler(d, rec))
+	srv := httptest.NewServer(Handler(rec))
 	defer srv.Close()
 
 	send := func(req *http.Request, want int) {
 		t.Helper()
 		resp, err := http.DefaultClient.Do(req)
 		require.NoError(t, err)
-		resp.Body.Close()
+		require.NoError(t, resp.Body.Close())
 		assert.Equal(t, want, resp.StatusCode, "%s %s", req.Method, req.URL.Path)
 	}
 	do := func(method, path, body string, want int) {
 		t.Helper()
-		req, err := http.NewRequest(method, srv.URL+"/api/v3"+path, strings.NewReader(body))
+		req, err := http.NewRequestWithContext(t.Context(), method, srv.URL+"/api/v3"+path, strings.NewReader(body))
 		require.NoError(t, err)
 		if body != "" {
 			req.Header.Set("Content-Type", "application/json")
@@ -172,9 +176,10 @@ func TestDemoServesEveryRouteAndNoUndocumentedCode(t *testing.T) {
 	mw := multipart.NewWriter(&buf)
 	fw, err := mw.CreateFormFile("file", "pet.png")
 	require.NoError(t, err)
-	fw.Write([]byte("png"))
-	mw.Close()
-	req, err := http.NewRequest("POST", srv.URL+"/api/v3/pet/2/uploadImage", &buf)
+	_, err = fw.Write([]byte("png"))
+	require.NoError(t, err)
+	require.NoError(t, mw.Close())
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, srv.URL+"/api/v3/pet/2/uploadImage", &buf)
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	send(req, 200)

@@ -1,6 +1,7 @@
 package recorder_test
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -30,19 +31,19 @@ func nc(h http.HandlerFunc) specout.Handler[struct{}, specout.NoContent] {
 }
 
 func serve(h http.Handler, method, target string) {
-	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(method, target, nil))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), method, target, nil))
 }
 
-// chiRoute registers method path on a fresh chi router, adopts it into d, and
-// returns the recorder wrapping that router.
-func chiRoute(t *testing.T, d *specout.Generator, method, path string, h http.HandlerFunc) *recorder.Recorder {
+// chiRoute registers /x on a fresh chi router, adopts it into d, and returns
+// the recorder wrapping that router.
+func chiRoute(t *testing.T, d *specout.Generator, method string, h http.HandlerFunc) *recorder.Recorder {
 	t.Helper()
 	r := chi.NewRouter()
 	b := specout.Chi(d, r)
 	if method == http.MethodHead {
-		b.Head(path, nc(h))
+		b.Head("/x", nc(h))
 	} else {
-		b.Get(path, nc(h))
+		b.Get("/x", nc(h))
 	}
 	require.NoError(t, b.Adopt())
 	return recorder.New(r)

@@ -59,8 +59,9 @@ func opOf(t *testing.T, doc map[string]any, path, method string) map[string]any 
 // adopt runs a router binder's Adopt; fatal on error. The chi and gorilla
 // binders share this method sign.
 func adopt(t *testing.T, b interface {
-	Adopt(...specout.SkipRule) error
-}) {
+	Adopt(skips ...specout.SkipRule) error
+},
+) {
 	t.Helper()
 	require.NoError(t, b.Adopt())
 }
@@ -71,7 +72,7 @@ func serve(t *testing.T, d *specout.Generator, r chi.Router) map[string]any {
 	t.Helper()
 	r.Mount("/openapi.json", d)
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
+	r.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/openapi.json", nil))
 	require.Equal(t, 200, w.Code, "openapi.json status")
 	var doc map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &doc), "invalid json")
@@ -83,16 +84,6 @@ func serveDoc(t *testing.T, d *specout.Generator, r chi.Router) map[string]any {
 	t.Helper()
 	adopt(t, specout.Chi(d, r))
 	return serve(t, d, r)
-}
-
-// getDoc registers one GET route on a fresh chi root and returns the served
-// document. It is the single-route workhorse; a test that needs a second route
-// or another verb builds its own router and calls serveDoc.
-func getDoc[Req, Res any](t *testing.T, pattern string, h specout.Handler[Req, Res]) map[string]any {
-	t.Helper()
-	d, r := newGen(), chi.NewRouter()
-	specout.Chi(d, r).Get(pattern, h)
-	return serveDoc(t, d, r)
 }
 
 // docOf renders routes declared with Document — no router, no walk — and
@@ -112,13 +103,9 @@ func chiDoc(t *testing.T, routes func(d *specout.Generator, r chi.Router)) map[s
 	return serveDoc(t, d, r)
 }
 
-// noGet is a noBody handler on its own func value, distinct from okGet: a test
-// that needs two different handlers on one method uses one of each.
-var noGet = noBody{HandlerFunc: noop}
-
 func noop(http.ResponseWriter, *http.Request) {}
 
-func okBody(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }
+func okBody(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }
 
 // noBody is the metadata type of a documented route with no request fields and
 // no response body: by far the most common handler a test registers.

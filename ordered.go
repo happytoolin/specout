@@ -2,8 +2,9 @@ package specout
 
 import (
 	"bytes"
-
 	"encoding/json/jsontext"
+	"fmt"
+
 	json "encoding/json/v2"
 )
 
@@ -54,15 +55,18 @@ func (o *obj) MarshalJSON() ([]byte, error) {
 
 func (o *obj) write(enc *jsontext.Encoder) error {
 	if err := enc.WriteToken(jsontext.BeginObject); err != nil {
-		return err
+		return fmt.Errorf("specout: encode object: %w", err)
 	}
 	for _, k := range o.keys {
 		if err := enc.WriteToken(jsontext.String(k)); err != nil {
-			return err
+			return fmt.Errorf("specout: encode key %q: %w", k, err)
 		}
 		if err := json.MarshalEncode(enc, o.vals[k]); err != nil {
-			return err
+			return fmt.Errorf("specout: encode value of %q: %w", k, err)
 		}
 	}
-	return enc.WriteToken(jsontext.EndObject)
+	if err := enc.WriteToken(jsontext.EndObject); err != nil {
+		return fmt.Errorf("specout: close object: %w", err)
+	}
+	return nil
 }

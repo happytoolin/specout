@@ -34,7 +34,8 @@ func securitySchemeObj(a AuthScheme) *obj {
 		}
 		o.set("type", "openIdConnect").set("openIdConnectUrl", a.URL)
 	default:
-		panic("specout: AuthScheme " + a.Name + " has type " + a.Type + ", must be httpBearer, apiKey, oauth2 or openIdConnect")
+		panic("specout: AuthScheme " + a.Name + " has type " + a.Type +
+			", must be httpBearer, apiKey, oauth2 or openIdConnect")
 	}
 	return o
 }
@@ -60,7 +61,8 @@ func oauth2Flows(a AuthScheme) *obj {
 			requireURL(a, name, "TokenURL", f.TokenURL)
 			fo.set("authorizationUrl", f.AuthorizationURL).set("tokenUrl", f.TokenURL)
 		default:
-			panic("specout: AuthScheme " + a.Name + " has flow " + name + ", must be implicit, password, clientCredentials or authorizationCode")
+			panic("specout: AuthScheme " + a.Name + " has flow " + name +
+				", must be implicit, password, clientCredentials or authorizationCode")
 		}
 		if f.RefreshURL != "" {
 			fo.set("refreshUrl", f.RefreshURL)

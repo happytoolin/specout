@@ -11,6 +11,7 @@ import (
 // nothing else.
 type Handler[Req, Res any] struct {
 	http.HandlerFunc
+
 	Responses   []Response
 	Tags        []string
 	Summary     string
@@ -32,6 +33,6 @@ type Handler[Req, Res any] struct {
 
 // Types reifies the type parameters, making them visible to reflection at
 // registration time. It is the reification point; no AST analysis, ever.
-func (h Handler[Req, Res]) Types() (req, res reflect.Type) {
+func (h Handler[Req, Res]) Types() (reflect.Type, reflect.Type) {
 	return reflect.TypeFor[Req](), reflect.TypeFor[Res]()
 }

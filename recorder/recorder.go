@@ -1,6 +1,10 @@
+// Package recorder wraps a router and reports the status codes the router
+// actually returned per route, so a test can compare live behaviour against
+// the documented spec.
 package recorder
 
 import (
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -95,6 +99,7 @@ func stdPattern(p string) string {
 // Flusher and Hijacker working through the wrapper.
 type observingWriter struct {
 	http.ResponseWriter
+
 	code int
 }
 
@@ -107,7 +112,11 @@ func (w *observingWriter) Write(b []byte) (int, error) {
 	if w.code == 0 {
 		w.WriteHeader(http.StatusOK)
 	}
-	return w.ResponseWriter.Write(b)
+	n, err := w.ResponseWriter.Write(b)
+	if err != nil {
+		return n, fmt.Errorf("recorder: write response body: %w", err)
+	}
+	return n, nil
 }
 
 func (w *observingWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }

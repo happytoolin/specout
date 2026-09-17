@@ -42,16 +42,16 @@ func hasBinaryField(t reflect.Type) bool {
 	if t.Kind() != reflect.Struct {
 		return false
 	}
-	fileT := reflect.TypeOf(File{})
+	fileT := reflect.TypeFor[File]()
 	if t == fileT {
 		return true
 	}
-	for i := 0; i < t.NumField(); i++ {
-		ft := t.Field(i).Type
+	for field := range t.Fields() {
+		ft := field.Type
 		if ft == fileT || (ft.Kind() == reflect.Slice && ft.Elem() == fileT) {
 			return true
 		}
-		if tagValue(t.Field(i).Tag.Get("jsonschema"), "format") == "binary" {
+		if tagValue(field.Tag.Get("jsonschema"), "format") == "binary" {
 			return true
 		}
 	}

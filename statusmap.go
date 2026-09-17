@@ -57,11 +57,14 @@ func (d *Generator) statusMap(withDefaults bool) (map[RouteKey]map[int]bool, err
 	return out, nil
 }
 
+// statusRangeSpan is the width of one OpenAPI status range: "4XX" is 400-499.
+const statusRangeSpan = 100
+
 // rangeOf parses a range response key ("4XX") into its bounds.
-func rangeOf(key string) (lo, hi int, ok bool) {
+func rangeOf(key string) (int, int, bool) {
 	if len(key) != 3 || key[1] != 'X' || key[2] != 'X' || key[0] < '1' || key[0] > '5' {
 		return 0, 0, false
 	}
-	lo = int(key[0]-'0') * 100
-	return lo, lo + 99, true
+	lo := int(key[0]-'0') * statusRangeSpan
+	return lo, lo + statusRangeSpan - 1, true
 }

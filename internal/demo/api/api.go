@@ -28,9 +28,14 @@ type FieldProblem struct {
 }
 
 func JSON(w http.ResponseWriter, code int, v any) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(v)
+	_, _ = w.Write(b)
 }
 
 func Invalid(w http.ResponseWriter, field, message string) {
@@ -56,7 +61,7 @@ var DefaultMapper Mapper = func(err error) (int, Problem) {
 
 // Error writes the mapped Problem; a wireError bypasses the mapper.
 func Error(w http.ResponseWriter, mapper Mapper, err error) {
-	if we, ok := err.(wireError); ok {
+	if we, ok := errors.AsType[wireError](err); ok {
 		JSON(w, we.HTTPStatus(), we.Payload())
 		return
 	}

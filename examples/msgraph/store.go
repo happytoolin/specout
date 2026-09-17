@@ -70,7 +70,7 @@ func decode[T any](w http.ResponseWriter, r *http.Request) (T, bool) {
 
 func pathUserID(r *http.Request) string { return mux.Vars(r)["user-id"] }
 
-func (s *store) getMe(w http.ResponseWriter, r *http.Request) {
+func (s *store) getMe(w http.ResponseWriter, _ *http.Request) {
 	// no token here, so any user answers /me: Graph resolves one for the caller
 	s.mu.Lock()
 	var u User
@@ -153,7 +153,7 @@ func (s *store) deleteUser(w http.ResponseWriter, r *http.Request) {
 		delete(s.users, u.ID)
 		delete(s.photos, u.ID)
 		s.mu.Unlock()
-		w.WriteHeader(204)
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
 
@@ -168,8 +168,8 @@ func (s *store) getPhoto(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.WriteHeader(200)
-	w.Write(photo)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(photo)
 }
 
 func (s *store) sendMail(w http.ResponseWriter, r *http.Request) {
@@ -181,6 +181,6 @@ func (s *store) sendMail(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		s.sent = append(s.sent, req.Message)
 		s.mu.Unlock()
-		w.WriteHeader(204)
+		w.WriteHeader(http.StatusNoContent)
 	}
 }

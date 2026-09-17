@@ -14,7 +14,7 @@ import (
 // body fields only: a $ref to the whole struct would list petId and dry_run as
 // body properties too.
 type patchReq struct {
-	PetID int64    `path:"petId" jsonschema:"format=int64"`
+	PetID int64    `jsonschema:"format=int64" path:"petId"`
 	Dry   bool     `query:"dry_run"`
 	Name  string   `json:"name"`
 	Tags  []string `json:"tags,omitempty"`

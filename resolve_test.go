@@ -122,7 +122,7 @@ func TestGorillaAdapter(t *testing.T) {
 	assert.NotNil(t, docPaths(t, d)["/items/{id}"], "/items/{id} missing")
 	// live serve check
 	w := httptest.NewRecorder()
-	g.ServeHTTP(w, httptest.NewRequest("GET", "/items/9", nil))
+	g.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/items/9", nil))
 	require.Equal(t, 204, w.Code, "gorilla serve")
 }
 
@@ -157,7 +157,7 @@ func TestDocumentForeignRouterEndToEnd(t *testing.T) {
 	mux.HandleFunc("GET /echo/items/{id}", okGet.HandlerFunc)
 	require.Contains(t, docPaths(t, d), "/echo/items/{id}", "Document path missing from spec")
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/echo/items/7", nil))
+	mux.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/echo/items/7", nil))
 	assert.Equal(t, 204, rec.Code, "foreign mux serve")
 }
 
@@ -178,7 +178,7 @@ func TestGorillaSubrouterPrefixComposed(t *testing.T) {
 	specout.Gorilla(d, root.PathPrefix("/api").Subrouter()).Get("/items", okGet)
 	require.Contains(t, docPaths(t, d), "/api/items", "prefix lost")
 	w := httptest.NewRecorder()
-	root.ServeHTTP(w, httptest.NewRequest("GET", "/api/items", nil))
+	root.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/items", nil))
 	require.Equal(t, 204, w.Code, "serve")
 }
 
@@ -211,7 +211,7 @@ func TestAdoptStraysStillResolve(t *testing.T) {
 	d, r := newGen(), chi.NewRouter()
 	rc := specout.Chi(d, r)
 	rc.Get("/ok", okGet)
-	r.Get("/stray", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) })
+	r.Get("/stray", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	require.ErrorContains(t, rc.Adopt(), "/stray")
 	require.Contains(t, docPaths(t, d), "/ok", "documented route lost to the stray")
 }
@@ -357,8 +357,8 @@ func TestStrayPathFieldFails(t *testing.T) {
 // a stray.
 func TestPathFieldMatchesPattern(t *testing.T) {
 	type req struct {
-		ID   string `path:"id" json:"-"`
-		Skip string `path:"-" json:"skip"`
+		ID   string `json:"-"    path:"id"`
+		Skip string `json:"skip" path:"-"`
 	}
 	d := newGen()
 	specout.Document(d, http.MethodGet, "/x/{id}", specout.Handler[req, specout.NoContent]{HandlerFunc: okBody})
