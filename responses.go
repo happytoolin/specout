@@ -179,7 +179,7 @@ func (d *Generator) statusMap(withDefaults bool) (map[RouteKey]map[int]bool, err
 		return nil, err
 	}
 	out := make(map[RouteKey]map[int]bool)
-	for _, rec := range d.flatRecords() {
+	for _, rec := range d.records {
 		if rec.full == "" {
 			continue
 		}

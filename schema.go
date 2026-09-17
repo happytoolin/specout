@@ -24,7 +24,6 @@ type schemaRegistry struct {
 	owned     map[string]reflect.Type   // component name -> owning Go type
 	bodyViews map[reflect.Type]bodyView // Req type -> request-body-only view
 	closed    bool
-	dialect   Dialect
 }
 
 type schemaEntry struct {
@@ -42,7 +41,6 @@ func newSchemaRegistry(cfg Config) *schemaRegistry {
 		owned:     make(map[string]reflect.Type),
 		bodyViews: make(map[reflect.Type]bodyView),
 		closed:    cfg.ClosedSchemas,
-		dialect:   cfg.JSONDialect,
 	}
 }
 

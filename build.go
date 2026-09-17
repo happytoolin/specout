@@ -13,7 +13,10 @@ func (d *Generator) build() (*obj, error) {
 	if err := d.resolveLocked(); err != nil {
 		return nil, err
 	}
-	records := d.flatRecords()
+	// No sort here: paths come out in the order the code declares them, so the
+	// document reads like the router. Sorting put every DELETE first and
+	// scattered one resource across the paths object.
+	records := slices.Clone(d.records)
 	if err := checkOperationIDs(records); err != nil {
 		return nil, err
 	}
@@ -254,13 +257,6 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(keys)
 	return keys
-}
-
-func (d *Generator) flatRecords() []*routeRecord {
-	// Registration order: paths come out in the order the code declares them,
-	// so the document reads like the router. Sorting here put every DELETE
-	// first and scattered one resource across the paths object.
-	return slices.Clone(d.records)
 }
 
 // docPath rewrites router regex constraints to plain OpenAPI templates:
