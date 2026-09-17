@@ -47,9 +47,9 @@ func requestBody(t *testing.T, op map[string]any) (contentType string, media map
 func TestBodyExcludesParamFields(t *testing.T) {
 	d := specout.New(specout.Config{Title: "t", Version: "1"})
 	r := chi.NewRouter()
-	specout.Chi(d, r).Patch("/pets/{petId}", specout.Handler[patchReq, specout.NoContent]{HandlerFunc: noop2})
+	specout.Chi(d, r).Patch("/pets/{petId}", specout.Handler[patchReq, specout.NoContent]{HandlerFunc: okBody})
 	// one Req type on two routes: one body component, not a name clash
-	specout.Chi(d, r).Post("/pets/{petId}", specout.Handler[patchReq, specout.NoContent]{HandlerFunc: noop3})
+	specout.Chi(d, r).Post("/pets/{petId}", specout.Handler[patchReq, specout.NoContent]{HandlerFunc: noop})
 	doc := serveDoc(t, d, r)
 
 	item := doc["paths"].(map[string]any)["/pets/{petId}"].(map[string]any)
@@ -94,7 +94,7 @@ func TestBodyExcludesParamFields(t *testing.T) {
 func TestAllParamReqHasNoBody(t *testing.T) {
 	d := specout.New(specout.Config{Title: "t", Version: "1"})
 	r := chi.NewRouter()
-	specout.Chi(d, r).Post("/things/{id}", specout.Handler[onlyParams, specout.NoContent]{HandlerFunc: noop2})
+	specout.Chi(d, r).Post("/things/{id}", specout.Handler[onlyParams, specout.NoContent]{HandlerFunc: okBody})
 	doc := serveDoc(t, d, r)
 	op := doc["paths"].(map[string]any)["/things/{id}"].(map[string]any)["post"].(map[string]any)
 	if _, has := op["requestBody"]; has {
@@ -107,8 +107,8 @@ func TestAllParamReqHasNoBody(t *testing.T) {
 func TestNonStructRequestBody(t *testing.T) {
 	d := specout.New(specout.Config{Title: "t", Version: "1"})
 	r := chi.NewRouter()
-	specout.Chi(d, r).Post("/tags", specout.Handler[[]tagBody, specout.NoContent]{HandlerFunc: noop2})
-	specout.Chi(d, r).Post("/upload", specout.Handler[specout.File, specout.NoContent]{HandlerFunc: noop3})
+	specout.Chi(d, r).Post("/tags", specout.Handler[[]tagBody, specout.NoContent]{HandlerFunc: okBody})
+	specout.Chi(d, r).Post("/upload", specout.Handler[specout.File, specout.NoContent]{HandlerFunc: noop})
 	doc := serveDoc(t, d, r)
 	paths := doc["paths"].(map[string]any)
 
@@ -138,7 +138,7 @@ func TestNonStructRequestBody(t *testing.T) {
 func TestBodySchemaJSONShape(t *testing.T) {
 	d := specout.New(specout.Config{Title: "t", Version: "1"})
 	r := chi.NewRouter()
-	specout.Chi(d, r).Post("/mixed/{petId}", specout.Handler[patchReq, specout.NoContent]{HandlerFunc: noop2})
+	specout.Chi(d, r).Post("/mixed/{petId}", specout.Handler[patchReq, specout.NoContent]{HandlerFunc: okBody})
 	doc := serveDoc(t, d, r)
 	body := doc["components"].(map[string]any)["schemas"].(map[string]any)["patchReq"]
 	raw, _ := json.Marshal(body)

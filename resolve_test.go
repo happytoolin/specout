@@ -1,8 +1,6 @@
 package specout_test
 
 import (
-	"bytes"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,41 +11,18 @@ import (
 	"github.com/happytoolin/specout"
 )
 
-func okBody(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }
-
-func docPaths(t *testing.T, d *specout.Generator) map[string]any {
-	t.Helper()
-	var buf bytes.Buffer
-	if err := d.WriteJSON(&buf); err != nil {
-		t.Fatalf("build: %v", err)
-	}
-	var doc map[string]any
-	json.Unmarshal(buf.Bytes(), &doc)
-	return doc["paths"].(map[string]any)
-}
-
 // Registration after one build still resolves on the next build: the
 // resolver is not a one-shot latch (freeze still applies after serve).
 func TestLateRegistrationResolves(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	r := chi.NewRouter()
+	d, r := newGen(), chi.NewRouter()
 	rc := specout.Chi(d, r)
-	rc.Get("/early", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
-	if err := rc.Adopt(); err != nil {
-		t.Fatal(err)
-	}
+	rc.Get("/early", okGet)
+	adopt(t, rc)
 	// no build yet; register a second route, then build once
-	rc.Get("/late", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
-	declared, err := d.DeclaredStatuses()
-	if err != nil {
-		t.Fatal(err)
-	}
+	rc.Get("/late", okGet)
+	declared := declaredStatuses(t, d)
 	if _, ok := declared[specout.RouteKey{Method: "GET", Path: "/late"}]; !ok {
 		t.Fatal("late route unresolved before any build")
-	}
-	var buf bytes.Buffer
-	if err := d.WriteJSON(&buf); err != nil {
-		t.Fatal(err)
 	}
 	if _, ok := docPaths(t, d)["/late"]; !ok {
 		t.Error("late route missing")
@@ -56,34 +31,25 @@ func TestLateRegistrationResolves(t *testing.T) {
 
 // Missing adopt: relative pattern has no composed full path -> build error.
 func TestUnresolvedPatternFails(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	r := chi.NewRouter()
+	d, r := newGen(), chi.NewRouter()
 	r.Route("/api", func(r chi.Router) {
-		specout.Chi(d, r).Get("/x", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
+		specout.Chi(d, r).Get("/x", okGet)
 	})
 	// no Adopt of the root; the inner registration is relative
-	var buf bytes.Buffer
-	err := d.WriteJSON(&buf)
-	if err == nil || !strings.Contains(err.Error(), "never resolved") {
-		t.Fatalf("want unresolved error, got %v", err)
-	}
+	wantBuildErr(t, d, "never resolved")
 }
 
 // One func on two chi routes pairs deterministically across two builds.
 func TestSharedHandlerPairingStable(t *testing.T) {
 	build := func() []string {
-		d := specout.New(specout.Config{Title: "t", Version: "1"})
-		r := chi.NewRouter()
+		d, r := newGen(), chi.NewRouter()
 		rc := specout.Chi(d, r)
-		rc.Get("/a/{id}", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
-		rc.Get("/b/{id}", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
-		if err := rc.Adopt(); err != nil {
-			t.Fatal(err)
-		}
-		return sortedPaths(docPaths(t, d))
+		rc.Get("/a/{id}", okGet)
+		rc.Get("/b/{id}", okGet)
+		adopt(t, rc)
+		return keys(docPaths(t, d))
 	}
-	first := build()
-	second := build()
+	first, second := build(), build()
 	if strings.Join(first, ",") != strings.Join(second, ",") {
 		t.Fatalf("pairing unstable: %v vs %v", first, second)
 	}
@@ -92,62 +58,28 @@ func TestSharedHandlerPairingStable(t *testing.T) {
 	}
 }
 
-func sortedPaths(paths map[string]any) []string {
-	out := make([]string, 0, len(paths))
-	for p := range paths {
-		out = append(out, p)
-	}
-	for i := 0; i < len(out); i++ {
-		for j := i + 1; j < len(out); j++ {
-			if out[j] < out[i] {
-				out[i], out[j] = out[j], out[i]
-			}
-		}
-	}
-	return out
-}
-
 // chi /a and /a/ are distinct walk patterns; their derived operationIds
 // collide, so the build demands an explicit OperationID on one of them.
 func TestChiSlashVariantsDistinct(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	r := chi.NewRouter()
+	d, r := newGen(), chi.NewRouter()
 	rc := specout.Chi(d, r)
-	rc.Get("/a", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
-	rc.Get("/a/", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
-	if err := rc.Adopt(); err != nil {
-		t.Fatal(err)
-	}
-	err := func() error {
-		var buf bytes.Buffer
-		if e := d.WriteJSON(&buf); e != nil {
-			return e
-		}
-		return nil
-	}()
-	if err == nil || !strings.Contains(err.Error(), "operationId") {
-		t.Fatalf("want operationId collision error, got %v", err)
-	}
+	rc.Get("/a", okGet)
+	rc.Get("/a/", okGet)
+	adopt(t, rc)
+	wantBuildErr(t, d, "operationId")
 }
 
 // Catch-alls are omitted from paths but stay in DeclaredStatuses.
 func TestCatchAllOmittedButDeclared(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	r := chi.NewRouter()
+	d, r := newGen(), chi.NewRouter()
 	rc := specout.Chi(d, r)
-	rc.Get("/files/*", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
-	if err := rc.Adopt(); err != nil {
-		t.Fatal(err)
-	}
+	rc.Get("/files/*", okGet)
+	adopt(t, rc)
 	if _, ok := docPaths(t, d)["/files/*"]; ok {
 		t.Error("catch-all leaked into paths")
 	}
-	declared, err := d.DeclaredStatuses()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := declared[specout.RouteKey{Method: "GET", Path: "/files/*"}]; !ok {
-		t.Errorf("catch-all missing from drift keys; have %v", declared)
+	if _, ok := declaredStatuses(t, d)[specout.RouteKey{Method: "GET", Path: "/files/*"}]; !ok {
+		t.Error("catch-all missing from drift keys")
 	}
 }
 
@@ -162,25 +94,18 @@ func TestSpecStatusesIncludesDefaults(t *testing.T) {
 	})
 	r := chi.NewRouter()
 	rc := specout.Chi(d, r)
-	rc.Get("/x", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
-	if err := rc.Adopt(); err != nil {
-		t.Fatal(err)
-	}
+	rc.Get("/x", okGet)
+	adopt(t, rc)
+
 	key := specout.RouteKey{Method: "GET", Path: "/x"}
-	decl, err := d.DeclaredStatuses()
-	if err != nil {
-		t.Fatal(err)
-	}
+	decl := declaredStatuses(t, d)
 	if decl[key][404] {
 		t.Errorf("DeclaredStatuses carries the global envelope: %v", decl[key])
 	}
 	if !decl[key][204] {
 		t.Errorf("DeclaredStatuses missing the route's own 204: %v", decl[key])
 	}
-	spec, err := d.SpecStatuses()
-	if err != nil {
-		t.Fatal(err)
-	}
+	spec := specStatuses(t, d)
 	for _, c := range []int{204, 400, 404, 500} {
 		if !spec[key][c] {
 			t.Errorf("SpecStatuses missing %d: %v", c, spec[key])
@@ -188,13 +113,9 @@ func TestSpecStatusesIncludesDefaults(t *testing.T) {
 	}
 
 	// Omit removes a global default from one route only (both views).
-	rc.Get("/y", specout.Handler[struct{}, specout.NoContent]{
-		HandlerFunc: okBody,
-		Responses:   []specout.Response{{Status: 404, Omit: true}},
-	})
+	rc.Get("/y", noBody{HandlerFunc: okBody, Responses: []specout.Response{{Status: 404, Omit: true}}})
 	key = specout.RouteKey{Method: "GET", Path: "/y"}
-	decl, _ = d.DeclaredStatuses()
-	spec, _ = d.SpecStatuses()
+	decl, spec = declaredStatuses(t, d), specStatuses(t, d)
 	if decl[key][404] || spec[key][404] {
 		t.Errorf("Omit did not remove 404: decl=%v spec=%v", decl[key], spec[key])
 	}
@@ -206,27 +127,20 @@ func TestSpecStatusesIncludesDefaults(t *testing.T) {
 // Duplicate canonical (path, method) from two registrations fails loud:
 // chi /x and /x/ are distinct (both kept); identical paths are the error.
 func TestDuplicateCanonicalFails(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	g := gmux.NewRouter()
-	gc := specout.Gorilla(d, g)
-	gc.Get("/x", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
-	gc.Get("/x", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }})
-	var buf bytes.Buffer
-	err := d.WriteJSON(&buf)
-	if err == nil || !strings.Contains(err.Error(), "duplicate") {
-		t.Fatalf("want duplicate error, got %v", err)
-	}
+	d := newGen()
+	gc := specout.Gorilla(d, gmux.NewRouter())
+	gc.Get("/x", okGet)
+	gc.Get("/x", noBody{HandlerFunc: okBody})
+	wantBuildErr(t, d, "duplicate")
 }
 
 // Gorilla: verbs, path params, template match.
 func TestGorillaAdapter(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	g := gmux.NewRouter()
+	d, g := newGen(), gmux.NewRouter()
 	gc := specout.Gorilla(d, g)
-	gc.Get("/items/{id}", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
-	gc.Post("/items", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
-	paths := docPaths(t, d)
-	if _, ok := paths["/items/{id}"]; !ok {
+	gc.Get("/items/{id}", okGet)
+	gc.Post("/items", okGet)
+	if paths := docPaths(t, d); paths["/items/{id}"] == nil {
 		t.Errorf("/items/{id} missing; have %v", paths)
 	}
 	// live serve check
@@ -239,13 +153,10 @@ func TestGorillaAdapter(t *testing.T) {
 
 // Gorilla Adopt: a plain gorilla route is a stray; a skip suppresses it.
 func TestGorillaAdoptStrayAndSkip(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	g := gmux.NewRouter()
-	specout.Gorilla(d, g).Get("/ok", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
+	d, g := newGen(), gmux.NewRouter()
+	specout.Gorilla(d, g).Get("/ok", okGet)
 	g.HandleFunc("/stray", strayHandler).Methods("GET")
-	if err := specout.Gorilla(d, g).Adopt(); err == nil || !strings.Contains(err.Error(), "/stray") {
-		t.Fatalf("want /stray stray, got %v", err)
-	}
+	wantErr(t, specout.Gorilla(d, g).Adopt(), "/stray")
 	if err := specout.Gorilla(d, g).Adopt(specout.Skip("/stray")); err != nil {
 		t.Fatalf("skip should suppress: %v", err)
 	}
@@ -253,19 +164,15 @@ func TestGorillaAdoptStrayAndSkip(t *testing.T) {
 
 // Gorilla Adopt: method-less route fails loud instead of silently skipping.
 func TestGorillaMethodlessFails(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
 	g := gmux.NewRouter()
 	g.HandleFunc("/x", okBody)
-	err := specout.Gorilla(d, g).Adopt()
-	if err == nil || !strings.Contains(err.Error(), "no method constraint") {
-		t.Fatalf("want methodless error, got %v", err)
-	}
+	wantErr(t, specout.Gorilla(newGen(), g).Adopt(), "no method constraint")
 }
 
 // Document escape hatch records absolute patterns for foreign routers.
 func TestDocument(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	specout.Document(d, http.MethodGet, "/anything", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
+	d := newGen()
+	specout.Document(d, http.MethodGet, "/anything", okGet)
 	if _, ok := docPaths(t, d)["/anything"]; !ok {
 		t.Fatal("documented route missing")
 	}
@@ -274,11 +181,9 @@ func TestDocument(t *testing.T) {
 // Document is the whole integration for a router with no adapter: it records
 // an absolute pattern with no Adopt, and the foreign mux still serves it.
 func TestDocumentForeignRouterEndToEnd(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	mux := http.NewServeMux()
-	h := specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody}
-	specout.Document(d, http.MethodGet, "/echo/items/{id}", h)
-	mux.HandleFunc("GET /echo/items/{id}", h.HandlerFunc)
+	d, mux := newGen(), http.NewServeMux()
+	specout.Document(d, http.MethodGet, "/echo/items/{id}", okGet)
+	mux.HandleFunc("GET /echo/items/{id}", okGet.HandlerFunc)
 	if _, ok := docPaths(t, d)["/echo/items/{id}"]; !ok {
 		t.Fatal("Document path missing from spec")
 	}
@@ -289,46 +194,21 @@ func TestDocumentForeignRouterEndToEnd(t *testing.T) {
 	}
 }
 
-// Bad method tokens panic (std Handle and Document).
+// Bad method tokens and relative std patterns panic (std Handle and Document).
 func TestBadMethodPanics(t *testing.T) {
 	mux := http.NewServeMux()
-	cases := []func(){
-		func() {
-			specout.Std(d2(), mux).Handle("get /x", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
-		},
-		func() {
-			specout.Std(d2(), mux).Handle("GET  /x", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
-		},
-		func() {
-			specout.Std(d2(), mux).Handle("GET x", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
-		},
-		func() {
-			specout.Document(d2(), "get", "/x", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
-		},
-		func() {
-			specout.Document(d2(), "GET", "x", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
-		},
+	for _, bad := range []string{"get /x", "GET  /x", "GET x"} {
+		panics(t, func() { specout.Std(newGen(), mux).Handle(bad, okGet) })
 	}
-	for i, fn := range cases {
-		func() {
-			defer func() {
-				if recover() == nil {
-					t.Errorf("case %d: expected panic", i)
-				}
-			}()
-			fn()
-		}()
-	}
+	panics(t, func() { specout.Document(newGen(), "get", "/x", okGet) })
+	panics(t, func() { specout.Document(newGen(), "GET", "x", okGet) })
 }
-
-func d2() *specout.Generator { return specout.New(specout.Config{Title: "t", Version: "1"}) }
 
 // Gorilla composes subrouter prefixes into the route template, so the spec
 // path is the one the server actually serves.
 func TestGorillaSubrouterPrefixComposed(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	root := gmux.NewRouter()
-	specout.Gorilla(d, root.PathPrefix("/api").Subrouter()).Get("/items", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
+	d, root := newGen(), gmux.NewRouter()
+	specout.Gorilla(d, root.PathPrefix("/api").Subrouter()).Get("/items", okGet)
 	if _, ok := docPaths(t, d)["/api/items"]; !ok {
 		t.Fatalf("prefix lost; have %v", docPaths(t, d))
 	}
@@ -341,32 +221,25 @@ func TestGorillaSubrouterPrefixComposed(t *testing.T) {
 
 // A std multi-segment wildcard is a catch-all: kept for drift, out of paths.
 func TestStdMultiSegmentWildcardOmitted(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	specout.Std(d, http.NewServeMux()).Handle("GET /files/{path...}", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
+	d := newGen()
+	specout.Std(d, http.NewServeMux()).Handle("GET /files/{path...}", okGet)
 	if _, ok := docPaths(t, d)["/files/{path...}"]; ok {
 		t.Error("std {path...} leaked into paths")
 	}
-	declared, err := d.DeclaredStatuses()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := declared[specout.RouteKey{Method: "GET", Path: "/files/{path...}"}]; !ok {
-		t.Errorf("catch-all missing from drift keys; have %v", declared)
+	if _, ok := declaredStatuses(t, d)[specout.RouteKey{Method: "GET", Path: "/files/{path...}"}]; !ok {
+		t.Error("catch-all missing from drift keys")
 	}
 }
 
 // One func on a std mux and a chi router keeps both paths: the absolute
 // record is not overwritten by the chi walk.
 func TestStdAndChiShareFunc(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	h := specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody}
-	specout.Std(d, http.NewServeMux()).Handle("GET /std", h)
+	d := newGen()
+	specout.Std(d, http.NewServeMux()).Handle("GET /std", okGet)
 	r := chi.NewRouter()
 	rc := specout.Chi(d, r)
-	rc.Get("/chi", h)
-	if err := rc.Adopt(); err != nil {
-		t.Fatal(err)
-	}
+	rc.Get("/chi", okGet)
+	adopt(t, rc)
 	paths := docPaths(t, d)
 	for _, p := range []string{"/std", "/chi"} {
 		if _, ok := paths[p]; !ok {
@@ -378,14 +251,11 @@ func TestStdAndChiShareFunc(t *testing.T) {
 // Adopt reports strays without breaking resolution: the walk source is
 // registered even when the router holds undocumented routes.
 func TestAdoptStraysStillResolve(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	r := chi.NewRouter()
+	d, r := newGen(), chi.NewRouter()
 	rc := specout.Chi(d, r)
-	rc.Get("/ok", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
+	rc.Get("/ok", okGet)
 	r.Get("/stray", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) })
-	if err := rc.Adopt(); err == nil || !strings.Contains(err.Error(), "/stray") {
-		t.Fatalf("want /stray stray, got %v", err)
-	}
+	wantErr(t, rc.Adopt(), "/stray")
 	if _, ok := docPaths(t, d)["/ok"]; !ok {
 		t.Fatalf("documented route lost to the stray: %v", docPaths(t, d))
 	}
@@ -393,21 +263,15 @@ func TestAdoptStraysStillResolve(t *testing.T) {
 
 // A shared handler keeps its own metadata: pairing never swaps /a and /b/c.
 func TestSharedHandlerMetadataNotSwapped(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	r := chi.NewRouter()
+	d, r := newGen(), chi.NewRouter()
 	rc := specout.Chi(d, r)
-	h := specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody, Summary: "SHORT"}
+	h := noBody{HandlerFunc: okBody, Summary: "SHORT"}
 	rc.Get("/a", h)
 	h.Summary = "LONG"
 	rc.Get("/b/c", h)
-	if err := rc.Adopt(); err != nil {
-		t.Fatal(err)
-	}
-	want := map[string]string{"/a": "SHORT", "/b/c": "LONG"}
-	for path, summary := range want {
-		item, _ := docPaths(t, d)[path].(map[string]any)
-		op, _ := item["get"].(map[string]any)
-		if got, _ := op["summary"].(string); got != summary {
+	adopt(t, rc)
+	for path, summary := range map[string]string{"/a": "SHORT", "/b/c": "LONG"} {
+		if got := opOf(t, buildDoc(t, d), path, "get")["summary"]; got != summary {
 			t.Errorf("%s summary = %q, want %q", path, got, summary)
 		}
 	}
@@ -416,52 +280,36 @@ func TestSharedHandlerMetadataNotSwapped(t *testing.T) {
 // One route reachable at several paths it never registered is a build
 // error naming every path: documenting one would silently drop the rest.
 func TestDualMountFailsLoud(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	root, sub := chi.NewRouter(), chi.NewRouter()
-	specout.Chi(d, sub).Get("/items", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
+	d, root, sub := newGen(), chi.NewRouter(), chi.NewRouter()
+	specout.Chi(d, sub).Get("/items", okGet)
 	root.Mount("/v1", sub)
 	root.Mount("/v2", sub)
-	if err := specout.Chi(d, root).Adopt(); err != nil {
-		t.Fatal(err)
-	}
-	var buf bytes.Buffer
-	err := d.WriteJSON(&buf)
-	if err == nil || !strings.Contains(err.Error(), "/v2/items") {
-		t.Fatalf("want surplus-path error, got %v", err)
-	}
+	adopt(t, specout.Chi(d, root))
+	wantBuildErr(t, d, "/v2/items")
 }
 
 // Adopting a subrouter and its parent registers two walk sources; the
 // relative view is not a second mount point, so this fails loud too.
 func TestSubAndRootAdoptedFailsLoud(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	root, sub := chi.NewRouter(), chi.NewRouter()
-	specout.Chi(d, sub).Get("/items", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
+	d, root, sub := newGen(), chi.NewRouter(), chi.NewRouter()
+	specout.Chi(d, sub).Get("/items", okGet)
 	root.Mount("/api", sub)
-	if err := specout.Chi(d, sub).Adopt(); err != nil {
-		t.Fatal(err)
-	}
-	if err := specout.Chi(d, root).Adopt(); err != nil {
-		t.Fatal(err)
-	}
-	var buf bytes.Buffer
-	err := d.WriteJSON(&buf)
-	if err == nil || !strings.Contains(err.Error(), "outermost") {
-		t.Fatalf("want outermost-adopt hint, got %v", err)
-	}
+	adopt(t, specout.Chi(d, sub))
+	adopt(t, specout.Chi(d, root))
+	wantBuildErr(t, d, "outermost")
 }
 
 // Router regex constraints are not OpenAPI templates: /items/{id:[0-9]+}
 // documents as /items/{id}, and the derived operationId stays a Go name.
 func TestRegexParamPathNormalized(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	specout.Gorilla(d, gmux.NewRouter()).Get("/items/{id:[0-9]+}", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
+	d := newGen()
+	specout.Gorilla(d, gmux.NewRouter()).Get("/items/{id:[0-9]+}", okGet)
 	paths := docPaths(t, d)
-	if _, ok := paths["/items/{id}"]; !ok {
+	op, ok := paths["/items/{id}"].(map[string]any)
+	if !ok {
 		t.Fatalf("regex constraint leaked into the path: %v", paths)
 	}
-	op := paths["/items/{id}"].(map[string]any)["get"].(map[string]any)
-	if got, _ := op["operationId"].(string); got != "getItemsId" {
+	if got := op["get"].(map[string]any)["operationId"]; got != "getItemsId" {
 		t.Errorf("operationId = %q, want getItemsId", got)
 	}
 }
@@ -469,9 +317,8 @@ func TestRegexParamPathNormalized(t *testing.T) {
 // A gorilla PathPrefix Subrouter parent has no handler and is a mount, not
 // an endpoint: Adopt must not flag it.
 func TestGorillaSubrouterAdoptClean(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	root := gmux.NewRouter()
-	specout.Gorilla(d, root.PathPrefix("/api").Subrouter()).Get("/items", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
+	d, root := newGen(), gmux.NewRouter()
+	specout.Gorilla(d, root.PathPrefix("/api").Subrouter()).Get("/items", okGet)
 	if err := specout.Gorilla(d, root).Adopt(); err != nil {
 		t.Fatalf("subrouter parent flagged as stray: %v", err)
 	}
@@ -481,54 +328,44 @@ func TestGorillaSubrouterAdoptClean(t *testing.T) {
 // not leak a stray brace into the documented path or the operationId.
 func TestBraceQuantifierParamNormalized(t *testing.T) {
 	const pat = "/x/{id:[0-9]{4}}"
-	h := specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody}
 	check := func(name string, d *specout.Generator) {
 		t.Helper()
-		paths := docPaths(t, d)
-		op, ok := paths["/x/{id}"].(map[string]any)
+		op, ok := docPaths(t, d)["/x/{id}"].(map[string]any)
 		if !ok {
-			t.Errorf("%s: want /x/{id}; have %v", name, paths)
+			t.Errorf("%s: want /x/{id}", name)
 			return
 		}
-		if got, _ := op["get"].(map[string]any)["operationId"].(string); got != "getXId" {
+		if got := op["get"].(map[string]any)["operationId"]; got != "getXId" {
 			t.Errorf("%s: operationId = %q, want getXId", name, got)
 		}
 	}
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	specout.Gorilla(d, gmux.NewRouter()).Get(pat, h)
+	d := newGen()
+	specout.Gorilla(d, gmux.NewRouter()).Get(pat, okGet)
 	check("gorilla", d)
-	d = specout.New(specout.Config{Title: "t", Version: "1"})
-	r := chi.NewRouter()
-	specout.Chi(d, r).Get(pat, h)
-	if err := specout.Chi(d, r).Adopt(); err != nil {
-		t.Fatal(err)
-	}
+	d, r := newGen(), chi.NewRouter()
+	specout.Chi(d, r).Get(pat, okGet)
+	adopt(t, specout.Chi(d, r))
 	check("chi", d)
-	d = specout.New(specout.Config{Title: "t", Version: "1"})
-	specout.Document(d, http.MethodGet, pat, h)
+	d = newGen()
+	specout.Document(d, http.MethodGet, pat, okGet)
 	check("document", d)
 }
 
 // Two routes with different regex but one documented path are a real
 // collision: the second would silently overwrite the first.
 func TestDocPathCollisionFails(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
+	d := newGen()
 	gc := specout.Gorilla(d, gmux.NewRouter())
-	gc.Get("/x/{id:[0-9]+}", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody, OperationID: "alpha"})
-	gc.Get("/x/{id:[a-z]+}", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody, OperationID: "beta"})
-	var buf bytes.Buffer
-	err := d.WriteJSON(&buf)
-	if err == nil || !strings.Contains(err.Error(), "/x/{id}") {
-		t.Fatalf("want doc-path collision error, got %v", err)
-	}
+	gc.Get("/x/{id:[0-9]+}", noBody{HandlerFunc: okBody, OperationID: "alpha"})
+	gc.Get("/x/{id:[a-z]+}", noBody{HandlerFunc: okBody, OperationID: "beta"})
+	wantBuildErr(t, d, "/x/{id}")
 }
 
 // Serving the spec from the same gorilla router it documents is a mount, not
 // an endpoint: Adopt must stay quiet.
 func TestGorillaSpecMountNotStray(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	g := gmux.NewRouter()
-	specout.Gorilla(d, g).Get("/ok", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
+	d, g := newGen(), gmux.NewRouter()
+	specout.Gorilla(d, g).Get("/ok", okGet)
 	g.Handle("/openapi.json", d)
 	if err := specout.Gorilla(d, g).Adopt(); err != nil {
 		t.Fatalf("spec mount flagged as stray: %v", err)
@@ -538,50 +375,25 @@ func TestGorillaSpecMountNotStray(t *testing.T) {
 // A zero Handler has no func: the binder must refuse it at registration
 // instead of documenting an endpoint that panics when served.
 func TestNilHandlerPanics(t *testing.T) {
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Fatal("want panic for a nil HandlerFunc")
-		}
-		if s, _ := r.(string); !strings.Contains(s, "nil HandlerFunc") {
-			t.Errorf("panic = %v", r)
-		}
-	}()
-	specout.Gorilla(d2(), gmux.NewRouter()).Get("/x", specout.Handler[struct{}, specout.NoContent]{
-		Summary: "documents a segfault",
+	panics(t, func() {
+		specout.Gorilla(newGen(), gmux.NewRouter()).Get("/x",
+			noBody{Summary: "documents a segfault"})
 	})
 }
 
 // A method OpenAPI cannot name (CONNECT) would emit an invalid path-item
 // key, so the binder panics instead of writing an invalid document.
 func TestNonOpenAPIMethodPanics(t *testing.T) {
-	cases := []func(){
-		func() {
-			specout.Document(d2(), "CONNECT", "/x", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
-		},
-		func() {
-			specout.Std(d2(), http.NewServeMux()).Handle("CONNECT /x", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
-		},
-	}
-	for i, fn := range cases {
-		func() {
-			defer func() {
-				if recover() == nil {
-					t.Errorf("case %d: expected panic", i)
-				}
-			}()
-			fn()
-		}()
-	}
+	panics(t, func() { specout.Document(newGen(), "CONNECT", "/x", okGet) })
+	panics(t, func() { specout.Std(newGen(), http.NewServeMux()).Handle("CONNECT /x", okGet) })
 }
 
 // A repeated path param name (/x/{id}/y/{id}) is one OpenAPI parameter:
 // OpenAPI forbids two entry names in one operation.
 func TestDuplicatePathParamEmittedOnce(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	specout.Document(d, http.MethodGet, "/x/{id}/y/{id}", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: okBody})
-	op := docPaths(t, d)["/x/{id}/y/{id}"].(map[string]any)["get"].(map[string]any)
-	params, _ := op["parameters"].([]any)
+	d := newGen()
+	specout.Document(d, http.MethodGet, "/x/{id}/y/{id}", okGet)
+	params, _ := opOf(t, buildDoc(t, d), "/x/{id}/y/{id}", "get")["parameters"].([]any)
 	if len(params) != 1 {
 		t.Fatalf("want 1 path param, got %d: %v", len(params), params)
 	}
@@ -598,13 +410,9 @@ type strayPathReq struct {
 }
 
 func TestStrayPathFieldFails(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
+	d := newGen()
 	specout.Document(d, http.MethodGet, "/x/{id}", specout.Handler[strayPathReq, specout.NoContent]{HandlerFunc: okBody})
-	var buf bytes.Buffer
-	err := d.WriteJSON(&buf)
-	if err == nil || !strings.Contains(err.Error(), `path:"Id"`) {
-		t.Fatalf("want a stray path field error, got %v", err)
-	}
+	wantBuildErr(t, d, `path:"Id"`)
 }
 
 // The same tag on the matching pattern builds, and a path:"-" opt-out is not
@@ -614,20 +422,9 @@ func TestPathFieldMatchesPattern(t *testing.T) {
 		ID   string `path:"id" json:"-"`
 		Skip string `path:"-" json:"skip"`
 	}
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
+	d := newGen()
 	specout.Document(d, http.MethodGet, "/x/{id}", specout.Handler[req, specout.NoContent]{HandlerFunc: okBody})
-	if _, err := docPathsErr(t, d); err != nil {
-		t.Fatalf("build: %v", err)
+	if _, ok := docPaths(t, d)["/x/{id}"]; !ok {
+		t.Fatal("path-typed route missing")
 	}
-}
-
-func docPathsErr(t *testing.T, d *specout.Generator) (map[string]any, error) {
-	t.Helper()
-	var buf bytes.Buffer
-	if err := d.WriteJSON(&buf); err != nil {
-		return nil, err
-	}
-	var doc map[string]any
-	json.Unmarshal(buf.Bytes(), &doc)
-	return doc["paths"].(map[string]any), nil
 }

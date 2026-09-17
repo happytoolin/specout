@@ -1,5 +1,4 @@
-// Package router wires the demo service: generator config, route groups,
-// subrouters, the spec mount, and Adopt for full-path resolution.
+// Package router wires the demo service: config, route groups, spec mount, Adopt.
 package router
 
 import (
@@ -14,11 +13,9 @@ import (
 	"github.com/happytoolin/specout/internal/demo/handlers"
 	"github.com/happytoolin/specout/internal/demo/onboarding"
 	"github.com/happytoolin/specout/internal/demo/validators"
-	"github.com/happytoolin/specout/internal/demo/webhooks"
 )
 
-// New builds the whole service. Returns the generator (for tests and CI
-// export) and the http.Handler to serve.
+// New returns the generator (for tests and CI export) and the handler to serve.
 func New() (*specout.Generator, http.Handler) {
 	d := specout.New(specout.Config{
 		Title:         "Onboarding API",
@@ -27,11 +24,8 @@ func New() (*specout.Generator, http.Handler) {
 		ErrorType:     api.Problem{},
 		DefaultErrors: []int{400, 401, 403, 404, 409, 500},
 		// any one of these satisfies auth (OR semantics in security:)
-		Auth: []specout.AuthScheme{
-			specout.Bearer, // Authorization: Bearer <token>
-			specout.APIKey("apiKey", "X-API-Key", specout.InHeader), // X-API-Key header
-			specout.APIKey("session", "session", specout.InCookie),  // session cookie
-		},
+		Auth: []specout.AuthScheme{specout.Bearer, specout.APIKey("apiKey", "X-API-Key", specout.InHeader),
+			specout.APIKey("session", "session", specout.InCookie)}, // Bearer | X-API-Key | session cookie
 		ExternalDocs: &specout.ExternalDocs{URL: "https://docs.example.com/onboarding", Description: "Full guides"},
 		Servers:      []specout.Server{{URL: "http://localhost:8080", Description: "development"}},
 		Tags: []specout.Tag{
@@ -44,20 +38,15 @@ func New() (*specout.Generator, http.Handler) {
 	})
 
 	// union variants — reflection can't discover interface implementations
-	d.Register[webhooks.EmailConfig]("email")
-	d.Register[webhooks.SlackConfig]("slack")
+	d.Register[validators.EmailConfig]("email")
+	d.Register[validators.SlackConfig]("slack")
 	d.Register[validators.EmailChannel]("notify_email")
 	d.Register[validators.SlackChannel]("notify_slack")
 
-	deps := handlers.Deps{
-		Store:  onboarding.NewStore(),
-		Mapper: api.DefaultMapper,
-	}
+	deps := handlers.Deps{Store: onboarding.NewStore(), Mapper: api.DefaultMapper}
 
 	r := chi.NewRouter()
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
-	// enforcement is app code; the spec only declares the schemes.
+	r.Use(middleware.Logger, middleware.Recoverer)
 	// Bind inside each group: a binder captured on the root registers on the
 	// root, so the group's middleware would silently never run.
 	r.Group(func(r chi.Router) {
@@ -73,7 +62,6 @@ func New() (*specout.Generator, http.Handler) {
 		rc.Post("/channels", handlers.HandleConfigureChannel())
 	})
 
-	// public: no credentials needed
 	r.Group(func(r chi.Router) {
 		rc := specout.Chi(d, r)
 		rc.Get("/onboarding", handlers.HandleList(deps))

@@ -3,7 +3,6 @@ package specout_test
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -70,8 +69,6 @@ type UnregisteredUnionReq struct {
 type WildcardReq struct {
 	Rest string `query:"rest"`
 }
-
-func noop(w http.ResponseWriter, r *http.Request) {}
 
 func TestEdgeCases(t *testing.T) {
 	t.Run("recursive", func(t *testing.T) {
@@ -173,12 +170,4 @@ func TestEdgeCases(t *testing.T) {
 		params := get["parameters"].([]any)
 		t.Logf("params: %d", len(params))
 	})
-}
-
-func keys(m map[string]any) []string {
-	out := []string{}
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -13,26 +14,16 @@ import (
 	"github.com/happytoolin/specout/recorder"
 )
 
-// publishedGraph is the path -> method set of the eight operations this
-// example takes from the live document (graph.microsoft.com/v1.0, 11546
-// paths). Every deviation is listed in examples/README.md.
-var publishedGraph = map[string][]string{
-	"/me":                           {"get"},
-	"/users":                        {"get", "post"},
-	"/users/{user-id}":              {"get", "patch", "delete"},
-	"/users/{user-id}/photo/$value": {"get"},
-	"/users/{user-id}/sendMail":     {"post"},
-}
-
-var publishedGraphIDs = []string{
-	"me.user.GetUser",
-	"users.user.ListUser",
-	"users.user.CreateUser",
-	"users.user.GetUser",
-	"users.user.UpdateUser",
-	"users.user.DeleteUser",
-	"users.GetPhotoContent",
-	"users.user.sendMail",
+// publishedGraph is the path -> method -> operationId map of the eight
+// operations this example takes from the live document
+// (graph.microsoft.com/v1.0, 11546 paths). Every deviation is listed in
+// examples/README.md.
+var publishedGraph = map[string]map[string]string{
+	"/me":                           {"get": "me.user.GetUser"},
+	"/users":                        {"get": "users.user.ListUser", "post": "users.user.CreateUser"},
+	"/users/{user-id}":              {"get": "users.user.GetUser", "patch": "users.user.UpdateUser", "delete": "users.user.DeleteUser"},
+	"/users/{user-id}/photo/$value": {"get": "users.GetPhotoContent"},
+	"/users/{user-id}/sendMail":     {"post": "users.user.sendMail"},
 }
 
 func buildGraphSpec(t *testing.T) map[string]any {
@@ -49,21 +40,25 @@ func buildGraphSpec(t *testing.T) map[string]any {
 	return doc
 }
 
+// dig walks a nested JSON object, failing the test at the first missing key.
+func dig(t *testing.T, v any, keys ...string) map[string]any {
+	t.Helper()
+	for _, k := range keys {
+		m, ok := v.(map[string]any)
+		if !ok {
+			t.Fatalf("no %q in %v", k, v)
+		}
+		v, ok = m[k]
+		if !ok {
+			t.Fatalf("missing %q", k)
+		}
+	}
+	return v.(map[string]any)
+}
+
 func graphOp(t *testing.T, doc map[string]any, path, method string) map[string]any {
 	t.Helper()
-	paths, ok := doc["paths"].(map[string]any)
-	if !ok {
-		t.Fatal("no paths object")
-	}
-	item, ok := paths[path].(map[string]any)
-	if !ok {
-		t.Fatalf("missing path %s", path)
-	}
-	op, ok := item[method].(map[string]any)
-	if !ok {
-		t.Fatalf("missing %s %s", method, path)
-	}
-	return op
+	return dig(t, doc, "paths", path, method)
 }
 
 func paramNamed(t *testing.T, op map[string]any, name, in string) map[string]any {
@@ -79,47 +74,45 @@ func paramNamed(t *testing.T, op map[string]any, name, in string) map[string]any
 	return nil
 }
 
+// eq fails when a published field is not what the document says.
+func eq(t *testing.T, label string, got, want any) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("%s = %v, want %v", label, got, want)
+	}
+}
+
+// haveKeys fails when any published property is absent; absent fails when a
+// published omission is present. Label names the context of the last.
+func haveKeys(t *testing.T, m map[string]any, keys ...string) {
+	t.Helper()
+	for _, k := range keys {
+		if _, ok := m[k]; !ok {
+			t.Errorf("missing %q in %v", k, m)
+		}
+	}
+}
+
+func absent(t *testing.T, label string, m map[string]any, key string) {
+	t.Helper()
+	if v, ok := m[key]; ok {
+		t.Errorf("%s: %q is present (%v)", label, key, v)
+	}
+}
+
 func TestSpecMatchesPublishedDocument(t *testing.T) {
-	doc := buildGraphSpec(t)
-	paths := doc["paths"].(map[string]any)
-	if len(paths) != len(publishedGraph) {
-		t.Errorf("paths = %d, want %d", len(paths), len(publishedGraph))
-	}
-	ids := []string{}
+	paths := dig(t, buildGraphSpec(t), "paths")
+	eq(t, "paths", len(paths), len(publishedGraph))
+	ids := 0
 	for p, methods := range publishedGraph {
-		item, ok := paths[p].(map[string]any)
-		if !ok {
-			t.Errorf("missing path %s", p)
-			continue
-		}
-		if len(item) != len(methods) {
-			t.Errorf("%s has %d operations, want %d", p, len(item), len(methods))
-		}
-		for _, m := range methods {
-			op, ok := item[m].(map[string]any)
-			if !ok {
-				t.Errorf("missing %s %s", m, p)
-				continue
-			}
-			id, _ := op["operationId"].(string)
-			if id == "" {
-				t.Errorf("%s %s has no operationId", m, p)
-			}
-			ids = append(ids, id)
+		item := dig(t, paths, p)
+		eq(t, p+" operations", len(item), len(methods))
+		for m, id := range methods {
+			eq(t, p+" "+m+" operationId", dig(t, item, m)["operationId"], id)
+			ids++
 		}
 	}
-	if len(ids) != 8 {
-		t.Errorf("operations = %d, want 8", len(ids))
-	}
-	for _, want := range publishedGraphIDs {
-		found := false
-		for _, id := range ids {
-			found = found || id == want
-		}
-		if !found {
-			t.Errorf("missing operationId %s", want)
-		}
-	}
+	eq(t, "operation count", ids, 8)
 }
 
 // TestSpecKeepsPublishedShapes pins the Graph shapes the example exists to
@@ -128,151 +121,81 @@ func TestSpecMatchesPublishedDocument(t *testing.T) {
 // a binary media response, and a request body split out of Req.
 func TestSpecKeepsPublishedShapes(t *testing.T) {
 	doc := buildGraphSpec(t)
-	comps := doc["components"].(map[string]any)
-	schemas := comps["schemas"].(map[string]any)
+	comps := dig(t, doc, "components")
+	schemas := dig(t, comps, "schemas")
 
 	// the published document declares no securitySchemes
-	if _, ok := comps["securitySchemes"]; ok {
-		t.Error("the published document has no securitySchemes")
-	}
+	absent(t, "components", comps, "securitySchemes")
 
 	// every operation carries the ODataError envelope under the document's own
 	// range keys: 4XX and 5XX, described "error", not a fan-out per code
 	for path, methods := range publishedGraph {
-		for _, m := range methods {
-			responses := graphOp(t, doc, path, m)["responses"].(map[string]any)
+		for m := range methods {
+			responses := dig(t, graphOp(t, doc, path, m), "responses")
 			for _, code := range []string{"4XX", "5XX"} {
-				resp, found := responses[code].(map[string]any)
-				if !found {
-					t.Errorf("%s %s: missing %s", m, path, code)
-					continue
-				}
-				if resp["description"] != "error" {
-					t.Errorf("%s %s %s description = %v", m, path, code, resp["description"])
-				}
-				media := resp["content"].(map[string]any)["application/json"].(map[string]any)
-				schema := media["schema"].(map[string]any)
-				if schema["$ref"] != "#/components/schemas/ODataError" {
-					t.Errorf("%s %s %s schema = %v", m, path, code, schema)
-				}
+				resp := dig(t, responses, code)
+				eq(t, m+" "+path+" "+code+" description", resp["description"], "error")
+				eq(t, m+" "+path+" "+code+" schema",
+					dig(t, resp, "content", "application/json", "schema")["$ref"], "#/components/schemas/ODataError")
 			}
 			// the successes the document ranges are keyed 2XX; the operations
 			// that answer 204 keep the concrete code
-			if _, ok := responses["2XX"]; !ok {
-				if _, is204 := responses["204"]; !is204 {
+			if _, ok2XX := responses["2XX"]; !ok2XX {
+				if _, ok204 := responses["204"]; !ok204 {
 					t.Errorf("%s %s: neither a 2XX nor a 204 response", m, path)
 				}
 			}
-			if _, fanned := responses["404"]; fanned {
-				t.Errorf("%s %s: a range must not fan out into per-code entries", m, path)
-			}
+			absent(t, m+" "+path, responses, "404")
 		}
-	}
-
-	// operation externalDocs: the published learn.microsoft.com link
-	me := graphOp(t, doc, "/me", "get")
-	if url := me["externalDocs"].(map[string]any)["url"]; url != "https://learn.microsoft.com/graph/api/user-get?view=graph-rest-1.0" {
-		t.Errorf("me externalDocs = %v", url)
 	}
 
 	// the envelope, including the hyphenated innerError property names
-	inner := schemas["InnerError"].(map[string]any)["properties"].(map[string]any)
-	for _, name := range []string{"request-id", "client-request-id", "date"} {
-		if _, ok := inner[name]; !ok {
-			t.Errorf("InnerError is missing %s", name)
-		}
-	}
+	haveKeys(t, dig(t, schemas, "InnerError", "properties"), "request-id", "client-request-id", "date")
 
 	// InnerError is reached only through MainError's pointer field, so it is
 	// nested-only: the pointer must still widen to [InnerError, null].
 	// Regression — the pointer field kept invopop's bare $ref.
-	main := schemas["MainError"].(map[string]any)["properties"].(map[string]any)["innerError"].(map[string]any)
-	arms, _ := main["oneOf"].([]any)
+	arms, _ := dig(t, schemas, "MainError", "properties", "innerError")["oneOf"].([]any)
 	if len(arms) != 2 || arms[1].(map[string]any)["type"] != "null" {
-		t.Errorf("MainError.innerError = %v, want a $ref and a null arm", main)
+		t.Errorf("MainError.innerError = %v, want a $ref and a null arm", arms)
 	}
 
-	// a hyphenated path template name keeps its published spelling
-	pathParam := paramNamed(t, graphOp(t, doc, "/users/{user-id}", "get"), "user-id", "path")
-	if pathParam["required"] != true {
-		t.Errorf("user-id param = %v", pathParam)
-	}
-	if pathParam["description"] != "The unique identifier of user" {
-		t.Errorf("user-id description = %v", pathParam["description"])
-	}
-
-	// ConsistencyLevel is a header, not a query parameter
-	cl := paramNamed(t, graphOp(t, doc, "/me", "get"), "ConsistencyLevel", "header")
-	if cl["required"] != false {
-		t.Errorf("ConsistencyLevel required = %v", cl["required"])
-	}
-
-	// OData query parameters: $select is an array, $top is a bounded integer
+	me := graphOp(t, doc, "/me", "get")
 	list := graphOp(t, doc, "/users", "get")
-	selectSchema := paramNamed(t, list, "$select", "query")["schema"].(map[string]any)
-	if selectSchema["type"] != "array" {
-		t.Errorf("$select schema = %v", selectSchema)
-	}
-	topSchema := paramNamed(t, list, "$top", "query")["schema"].(map[string]any)
-	if topSchema["minimum"] != float64(0) {
-		t.Errorf("$top minimum = %v", topSchema["minimum"])
-	}
-	examples, _ := topSchema["examples"].([]any)
-	if len(examples) != 1 || examples[0] != float64(50) {
-		t.Errorf("$top examples = %v", topSchema["examples"])
-	}
-
-	// DELETE: an If-Match header and a description-only 204
 	del := graphOp(t, doc, "/users/{user-id}", "delete")
-	ifMatch := paramNamed(t, del, "If-Match", "header")
-	if ifMatch["schema"].(map[string]any)["type"] != "string" {
-		t.Errorf("If-Match = %v", ifMatch)
-	}
-	resp204 := del["responses"].(map[string]any)["204"].(map[string]any)
-	if _, hasContent := resp204["content"]; hasContent {
-		t.Errorf("204 should carry no content: %v", resp204)
-	}
-
-	// media response: application/octet-stream, binary
-	photo := graphOp(t, doc, "/users/{user-id}/photo/$value", "get")
-	photoOK := photo["responses"].(map[string]any)["2XX"].(map[string]any)
-	content := photoOK["content"].(map[string]any)
-	if _, ok := content["application/octet-stream"]; !ok {
-		t.Fatalf("photo content = %v", content)
-	}
-	binary := content["application/octet-stream"].(map[string]any)["schema"].(map[string]any)
-	if binary["type"] != "string" || binary["format"] != "binary" {
-		t.Errorf("photo schema = %v", binary)
-	}
-
-	// sendMail: the published path parameter plus a body split into its own
-	// component, under the published property names
 	mail := graphOp(t, doc, "/users/{user-id}/sendMail", "post")
-	paramNamed(t, mail, "user-id", "path")
-	bodyRef := mail["requestBody"].(map[string]any)["content"].(map[string]any)
-	ref := bodyRef["application/json"].(map[string]any)["schema"].(map[string]any)["$ref"].(string)
-	body := schemas[strings.TrimPrefix(ref, "#/components/schemas/")].(map[string]any)["properties"].(map[string]any)
-	for _, name := range []string{"Message", "SaveToSentItems"} {
-		if _, ok := body[name]; !ok {
-			t.Errorf("sendMail body is missing %s: %v", name, body)
-		}
-	}
-	if _, leaked := body["user-id"]; leaked {
-		t.Error("the path parameter must not leak into the body component")
+	photo := graphOp(t, doc, "/users/{user-id}/photo/$value", "get")
+	userParam := paramNamed(t, graphOp(t, doc, "/users/{user-id}", "get"), "user-id", "path")
+	mailSchema := dig(t, mail, "requestBody", "content", "application/json", "schema")
+	bodyProps := dig(t, schemas, strings.TrimPrefix(mailSchema["$ref"].(string), "#/components/schemas/"), "properties")
+
+	// the published facts, one line each
+	for _, c := range []struct {
+		label     string
+		got, want any
+	}{
+		{"me externalDocs", dig(t, me, "externalDocs")["url"], "https://learn.microsoft.com/graph/api/user-get?view=graph-rest-1.0"},
+		{"user-id required", userParam["required"], true},
+		{"user-id description", userParam["description"], "The unique identifier of user"},
+		{"ConsistencyLevel required", paramNamed(t, me, "ConsistencyLevel", "header")["required"], false},
+		{"$select type", paramNamed(t, list, "$select", "query")["schema"].(map[string]any)["type"], "array"},
+		{"$top minimum", paramNamed(t, list, "$top", "query")["schema"].(map[string]any)["minimum"], float64(0)},
+		{"$top examples", paramNamed(t, list, "$top", "query")["schema"].(map[string]any)["examples"], []any{float64(50)}},
+		{"If-Match type", paramNamed(t, del, "If-Match", "header")["schema"].(map[string]any)["type"], "string"},
+		{"photo type", dig(t, photo, "responses", "2XX", "content", "application/octet-stream", "schema")["type"], "string"},
+		{"photo format", dig(t, photo, "responses", "2XX", "content", "application/octet-stream", "schema")["format"], "binary"},
+		{"contentType enum", dig(t, schemas, "ItemBody", "properties", "contentType")["enum"], []any{"text", "html"}},
+	} {
+		eq(t, c.label, c.got, c.want)
 	}
 
-	// the OData collection annotations, and the enum body field
-	collection := schemas["UserCollectionResponse"].(map[string]any)["properties"].(map[string]any)
-	for _, name := range []string{"@odata.count", "@odata.nextLink", "value"} {
-		if _, ok := collection[name]; !ok {
-			t.Errorf("UserCollectionResponse is missing %s", name)
-		}
-	}
-	item := schemas["ItemBody"].(map[string]any)["properties"].(map[string]any)["contentType"].(map[string]any)
-	enum, _ := item["enum"].([]any)
-	if len(enum) != 2 || enum[0] != "text" || enum[1] != "html" {
-		t.Errorf("contentType enum = %v", item["enum"])
-	}
+	// DELETE keeps a description-only 204; sendMail's body is its own component
+	// under the published property names, without the path parameter
+	absent(t, "DELETE 204", dig(t, del, "responses", "204"), "content")
+	paramNamed(t, mail, "user-id", "path")
+	haveKeys(t, bodyProps, "Message", "SaveToSentItems")
+	absent(t, "sendMail body", bodyProps, "user-id")
+	haveKeys(t, dig(t, schemas, "UserCollectionResponse", "properties"), "@odata.count", "@odata.nextLink", "value")
 }
 
 // TestGraphDemoServesEveryRouteAndNoUndocumentedCode drives the gorilla demo
@@ -306,39 +229,36 @@ func TestGraphDemoServesEveryRouteAndNoUndocumentedCode(t *testing.T) {
 	}
 
 	alice := "48d31887-5fad-4d73-a9f5-3c356e68a038"
-	do("GET", "/me", "", 200)
-	do("GET", "/users", "", 200)
-	do("GET", "/users?$top=1&$select=id,displayName", "", 200)
-	do("POST", "/users", "{\"displayName\":\"Carol\"}", 200)
-	do("GET", "/users/"+alice, "", 200)
-	do("GET", "/users/"+alice+"?$expand=photo", "", 200)
-	do("PATCH", "/users/"+alice, "{\"jobTitle\":\"Lead\"}", 200)
-	do("GET", "/users/"+alice+"/photo/$value", "", 200)
-	do("POST", "/users/"+alice+"/sendMail", "{\"Message\":{\"subject\":\"hi\"},\"SaveToSentItems\":true}", 204)
-	do("DELETE", "/users/"+alice, "", 204)
-
-	// the declared 404 and 400 a handler can reach
-	do("GET", "/users/nope", "", 404)
-	do("POST", "/users/nope/sendMail", "{}", 404)
-	do("GET", "/users/nope/photo/$value", "", 404)
-	do("POST", "/users", "{bad", 400)
-
-	// an undeclared method on a declared route: gorilla answers 405, which is
-	// no operation, so the recorder must key nothing for it
-	do("HEAD", "/users/"+alice, "", 405)
+	for _, c := range []struct {
+		m, p, body string
+		want       int
+	}{
+		{"GET", "/me", "", 200},
+		{"GET", "/users", "", 200},
+		{"GET", "/users?$top=1&$select=id,displayName", "", 200},
+		{"POST", "/users", "{\"displayName\":\"Carol\"}", 200},
+		{"GET", "/users/" + alice, "", 200},
+		{"GET", "/users/" + alice + "?$expand=photo", "", 200},
+		{"PATCH", "/users/" + alice, "{\"jobTitle\":\"Lead\"}", 200},
+		{"GET", "/users/" + alice + "/photo/$value", "", 200},
+		{"POST", "/users/" + alice + "/sendMail", "{\"Message\":{\"subject\":\"hi\"},\"SaveToSentItems\":true}", 204},
+		{"DELETE", "/users/" + alice, "", 204},
+		// the declared 404 and 400 a handler can reach
+		{"GET", "/users/nope", "", 404},
+		{"POST", "/users/nope/sendMail", "{}", 404},
+		{"GET", "/users/nope/photo/$value", "", 404},
+		{"POST", "/users", "{bad", 400},
+		// an undeclared method on a declared route: gorilla answers 405, which is
+		// no operation, so the recorder must key nothing for it
+		{"HEAD", "/users/" + alice, "", 405},
+		// an unmatched path is not drift: the recorder keys nothing for it
+		{"GET", "/nope", "", 404},
+	} {
+		do(c.m, c.p, c.body, c.want)
+	}
 
 	// the spec is served, and its own request is a skip
-	sresp, err := http.Get(srv.URL + "/openapi.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	sresp.Body.Close()
-	if sresp.StatusCode != 200 {
-		t.Errorf("spec = %d, want 200", sresp.StatusCode)
-	}
-
-	// an unmatched path is not drift: the recorder keys nothing for it
-	do("GET", "/nope", "", 404)
+	do("GET", "/openapi.json", "", 200)
 
 	ft := &captureT{}
 	recorder.Verify(ft, d, rec)
@@ -346,9 +266,6 @@ func TestGraphDemoServesEveryRouteAndNoUndocumentedCode(t *testing.T) {
 		if strings.Contains(e, "but spec does not declare it") {
 			t.Errorf("drift: %s", e)
 		}
-	}
-	if len(ft.errs) == 0 {
-		t.Log("no drift at all: the demo produced every declared code")
 	}
 }
 

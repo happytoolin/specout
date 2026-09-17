@@ -38,7 +38,6 @@ type Page struct {
 	Next  string       `json:"next,omitempty" jsonschema:"description=Cursor for the next page, empty on last"`
 }
 
-// SyncConflict is the rich 409 body for the sync endpoint.
 type SyncConflict struct {
 	Resource   string `json:"resource"   jsonschema:"example=onboarding"`
 	Expected   int    `json:"expected"   jsonschema:"description=Version the client sent"`
@@ -56,12 +55,11 @@ type SyncResult struct {
 
 var ErrNotFound = errors.New("onboarding: not found")
 
-// ConflictError is a DetailedError: it knows its own status and wire shape,
-// bypassing the generic mapper (api-reference §05).
+// ConflictError knows its own status and wire shape, so the generic mapper
+// never sees it.
 type ConflictError struct {
-	ID       string
-	Expected int
-	Actual   int
+	ID               string
+	Expected, Actual int
 }
 
 func (c *ConflictError) Error() string   { return "onboarding: version conflict on " + c.ID }
@@ -78,10 +76,7 @@ type Store struct {
 
 func NewStore() *Store {
 	return &Store{rows: map[string]Onboarding{
-		"onb_4f9x": {
-			ID: "onb_4f9x", CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-			Owner: "owner@example.com", Stage: "draft",
-		},
+		"onb_4f9x": {ID: "onb_4f9x", CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Owner: "owner@example.com", Stage: "draft"},
 	}}
 }
 
@@ -109,16 +104,13 @@ func (s *Store) List() []Onboarding {
 func (s *Store) Upsert(id string, req UpsertRequest) (Onboarding, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	existing, ok := s.rows[id]
+	ob, ok := s.rows[id]
 	if !ok {
-		ob := Onboarding{ID: id, CreatedAt: time.Now(), Owner: req.Owner, Stage: req.Stage, APIKey: "sk_demo"}
-		s.rows[id] = ob
-		return ob, true, nil
+		ob = Onboarding{ID: id, CreatedAt: time.Now(), APIKey: "sk_demo"}
 	}
-	existing.Owner = req.Owner
-	existing.Stage = req.Stage
-	s.rows[id] = existing
-	return existing, false, nil
+	ob.Owner, ob.Stage = req.Owner, req.Stage
+	s.rows[id] = ob
+	return ob, !ok, nil
 }
 
 func (s *Store) Delete(id string) error {
@@ -137,8 +129,7 @@ func (s *Store) Sync(id string, expected int) (SyncResult, error) {
 	if err != nil {
 		return SyncResult{}, err
 	}
-	actual := int(ob.CreatedAt.Unix() % 10)
-	if expected != actual {
+	if actual := int(ob.CreatedAt.Unix() % 10); expected != actual {
 		return SyncResult{}, &ConflictError{ID: id, Expected: expected, Actual: actual}
 	}
 	return SyncResult{Count: 1}, nil

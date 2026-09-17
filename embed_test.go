@@ -1,46 +1,10 @@
 package specout_test
 
 import (
-	"bytes"
-	"encoding/json"
-	"net/http"
 	"testing"
 
 	"github.com/happytoolin/specout"
 )
-
-// oneDoc renders a single Document-registered route into its whole document.
-func oneDoc[Req, Res any](t *testing.T, h specout.Handler[Req, Res]) map[string]any {
-	t.Helper()
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	specout.Document(d, "POST", "/x", h)
-	var buf bytes.Buffer
-	if err := d.WriteJSON(&buf); err != nil {
-		t.Fatal(err)
-	}
-	var doc map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &doc); err != nil {
-		t.Fatal(err)
-	}
-	return doc
-}
-
-func docProps(t *testing.T, doc map[string]any, name string) map[string]any {
-	t.Helper()
-	s, ok := doc["components"].(map[string]any)["schemas"].(map[string]any)[name].(map[string]any)
-	if !ok {
-		t.Fatalf("no component %s", name)
-	}
-	return s["properties"].(map[string]any)
-}
-
-func isNullable(p map[string]any) bool {
-	if arms, _ := p["oneOf"].([]any); len(arms) == 2 {
-		return true
-	}
-	typ, _ := p["type"].([]any)
-	return len(typ) == 2 && typ[1] == "null"
-}
 
 // Regression: a body struct that embeds a base type and also carries a query
 // parameter used to panic in reflect.StructOf (the body view copies fields
@@ -57,29 +21,22 @@ func TestEmbeddedBodyWithParam(t *testing.T) {
 		Page int     `query:"page"`
 	}
 
-	doc := oneDoc[Req, specout.NoContent](t, specout.Handler[Req, specout.NoContent]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {},
-	})
-	props := docProps(t, doc, "Req")
-	if len(props) != 3 {
-		t.Fatalf("body props = %v, want id, flags, name", props)
+	doc := docOf(t, "POST", "/x", specout.Handler[Req, specout.NoContent]{HandlerFunc: noop})
+	p := props(t, doc, "Req")
+	if len(p) != 3 {
+		t.Fatalf("body props = %v, want id, flags, name", p)
 	}
-	if props["flags"].(map[string]any)["readOnly"] != true {
-		t.Errorf("embedded readOnly lost: %v", props["flags"])
+	if p["flags"].(map[string]any)["readOnly"] != true {
+		t.Errorf("embedded readOnly lost: %v", p["flags"])
 	}
-	if !isNullable(props["id"].(map[string]any)) {
-		t.Errorf("embedded pointer not nullable: %v", props["id"])
+	if !isNullable(p["id"].(map[string]any)) {
+		t.Errorf("embedded pointer not nullable: %v", p["id"])
 	}
-	if _, ok := props["page"]; ok {
+	if _, ok := p["page"]; ok {
 		t.Error("query param leaked into the body")
 	}
-	op := doc["paths"].(map[string]any)["/x"].(map[string]any)["post"].(map[string]any)
-	var names []string
-	for _, p := range op["parameters"].([]any) {
-		names = append(names, p.(map[string]any)["name"].(string))
-	}
-	if len(names) != 1 || names[0] != "page" {
-		t.Errorf("parameters = %v, want [page]", names)
+	if params := paramsOf(t, opOf(t, doc, "/x", "post")); len(params) != 1 || params["page"] == nil {
+		t.Errorf("parameters = %v, want [page]", params)
 	}
 }
 
@@ -101,21 +58,18 @@ func TestEmbeddedFieldsKeepFixups(t *testing.T) {
 		Name string `json:"name"`
 	}
 
-	doc := oneDoc[struct{}, Res](t, specout.Handler[struct{}, Res]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {},
-	})
-	props := docProps(t, doc, "Res")
-	for _, p := range []string{"id", "flags", "score", "name"} {
-		if _, ok := props[p]; !ok {
-			t.Fatalf("promoted property %s missing: %v", p, props)
+	p := props(t, docOf(t, "POST", "/x", specout.Handler[struct{}, Res]{HandlerFunc: noop}), "Res")
+	for _, name := range []string{"id", "flags", "score", "name"} {
+		if _, ok := p[name]; !ok {
+			t.Fatalf("promoted property %s missing: %v", name, p)
 		}
 	}
-	if props["flags"].(map[string]any)["readOnly"] != true {
-		t.Errorf("promoted readOnly lost: %v", props["flags"])
+	if p["flags"].(map[string]any)["readOnly"] != true {
+		t.Errorf("promoted readOnly lost: %v", p["flags"])
 	}
-	for _, p := range []string{"id", "score"} {
-		if !isNullable(props[p].(map[string]any)) {
-			t.Errorf("promoted pointer %s not nullable: %v", p, props[p])
+	for _, name := range []string{"id", "score"} {
+		if !isNullable(p[name].(map[string]any)) {
+			t.Errorf("promoted pointer %s not nullable: %v", name, p[name])
 		}
 	}
 }
@@ -131,16 +85,11 @@ func TestPointerElementsNullable(t *testing.T) {
 		Map   map[string]*Item `json:"map"`
 	}
 
-	doc := oneDoc[struct{}, Res](t, specout.Handler[struct{}, Res]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {},
-	})
-	props := docProps(t, doc, "Res")
-	items := props["slice"].(map[string]any)["items"].(map[string]any)
-	if !isNullable(items) {
+	p := props(t, docOf(t, "POST", "/x", specout.Handler[struct{}, Res]{HandlerFunc: noop}), "Res")
+	if items := p["slice"].(map[string]any)["items"].(map[string]any); !isNullable(items) {
 		t.Errorf("slice element not nullable: %v", items)
 	}
-	add := props["map"].(map[string]any)["additionalProperties"].(map[string]any)
-	if !isNullable(add) {
+	if add := p["map"].(map[string]any)["additionalProperties"].(map[string]any); !isNullable(add) {
 		t.Errorf("map value not nullable: %v", add)
 	}
 }
@@ -159,15 +108,12 @@ func TestEmbeddedShadowingField(t *testing.T) {
 		Q  string `query:"q"`
 	}
 
-	doc := oneDoc[Req, specout.NoContent](t, specout.Handler[Req, specout.NoContent]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {},
-	})
-	props := docProps(t, doc, "Req")
-	if len(props) != 1 {
-		t.Fatalf("body props = %v, want only the shadowing id", props)
+	p := props(t, docOf(t, "POST", "/x", specout.Handler[Req, specout.NoContent]{HandlerFunc: noop}), "Req")
+	if len(p) != 1 {
+		t.Fatalf("body props = %v, want only the shadowing id", p)
 	}
-	typ, _ := props["id"].(map[string]any)["type"].([]any)
+	typ, _ := p["id"].(map[string]any)["type"].([]any)
 	if len(typ) != 2 || typ[0] != "integer" {
-		t.Errorf("id = %v, want the direct *int64 field to win", props["id"])
+		t.Errorf("id = %v, want the direct *int64 field to win", p["id"])
 	}
 }

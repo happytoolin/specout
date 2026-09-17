@@ -2,15 +2,12 @@ package specout
 
 import (
 	"net/http"
-	"slices"
 	"strings"
 )
 
 // Std returns the std-mux binder for d on mux. Patterns are absolute
 // "METHOD /path" with method tokens and wildcards; no walk needed.
-func Std(d *Generator, mux *http.ServeMux) *StdRouter {
-	return &StdRouter{d: d, mux: mux}
-}
+func Std(d *Generator, mux *http.ServeMux) *StdRouter { return &StdRouter{d: d, mux: mux} }
 
 type StdRouter struct {
 	d   *Generator
@@ -29,58 +26,40 @@ func (s *StdRouter) Handle[Req, Res any](pattern string, h Handler[Req, Res]) {
 	s.mux.HandleFunc(pattern, h.HandlerFunc)
 	rec := recOf(h)
 	rec.method, rec.pattern = method, path
-	rec.full = stdCanonical(path)
+	rec.full = canonicalPath(path)
 	rec.absolute = true
 	s.d.register(rec)
 }
 
-func (s *StdRouter) Get[Req, Res any](pattern string, h Handler[Req, Res]) {
-	s.Handle(http.MethodGet+" "+pattern, h)
+// The eight verbs differ only in the method token.
+func (s *StdRouter) Get[Req, Res any](p string, h Handler[Req, Res]) {
+	s.Handle(http.MethodGet+" "+p, h)
 }
 
-func (s *StdRouter) Head[Req, Res any](pattern string, h Handler[Req, Res]) {
-	s.Handle(http.MethodHead+" "+pattern, h)
+func (s *StdRouter) Head[Req, Res any](p string, h Handler[Req, Res]) {
+	s.Handle(http.MethodHead+" "+p, h)
 }
 
-func (s *StdRouter) Post[Req, Res any](pattern string, h Handler[Req, Res]) {
-	s.Handle(http.MethodPost+" "+pattern, h)
+func (s *StdRouter) Post[Req, Res any](p string, h Handler[Req, Res]) {
+	s.Handle(http.MethodPost+" "+p, h)
 }
 
-func (s *StdRouter) Put[Req, Res any](pattern string, h Handler[Req, Res]) {
-	s.Handle(http.MethodPut+" "+pattern, h)
+func (s *StdRouter) Put[Req, Res any](p string, h Handler[Req, Res]) {
+	s.Handle(http.MethodPut+" "+p, h)
 }
 
-func (s *StdRouter) Patch[Req, Res any](pattern string, h Handler[Req, Res]) {
-	s.Handle(http.MethodPatch+" "+pattern, h)
+func (s *StdRouter) Patch[Req, Res any](p string, h Handler[Req, Res]) {
+	s.Handle(http.MethodPatch+" "+p, h)
 }
 
-func (s *StdRouter) Delete[Req, Res any](pattern string, h Handler[Req, Res]) {
-	s.Handle(http.MethodDelete+" "+pattern, h)
+func (s *StdRouter) Delete[Req, Res any](p string, h Handler[Req, Res]) {
+	s.Handle(http.MethodDelete+" "+p, h)
 }
 
-func (s *StdRouter) Options[Req, Res any](pattern string, h Handler[Req, Res]) {
-	s.Handle(http.MethodOptions+" "+pattern, h)
+func (s *StdRouter) Options[Req, Res any](p string, h Handler[Req, Res]) {
+	s.Handle(http.MethodOptions+" "+p, h)
 }
 
-func (s *StdRouter) Trace[Req, Res any](pattern string, h Handler[Req, Res]) {
-	s.Handle(http.MethodTrace+" "+pattern, h)
-}
-
-// stdCanonical maps std wildcard forms to OpenAPI paths: {$} becomes /.
-func stdCanonical(p string) string {
-	return strings.TrimSuffix(p, "{$}")
-}
-
-// openAPIMethods is the path-item key set (finding 17): a token like CONNECT
-// or a lowercase typo would make the emitted document invalid.
-var openAPIMethods = []string{
-	http.MethodGet, http.MethodPut, http.MethodPost, http.MethodDelete,
-	http.MethodOptions, http.MethodHead, http.MethodPatch, http.MethodTrace,
-}
-
-// checkMethod panics on a method token OpenAPI cannot name.
-func checkMethod(method string) {
-	if !slices.Contains(openAPIMethods, method) {
-		panic("specout: method must be one of GET/HEAD/POST/PUT/PATCH/DELETE/OPTIONS/TRACE, got " + method)
-	}
+func (s *StdRouter) Trace[Req, Res any](p string, h Handler[Req, Res]) {
+	s.Handle(http.MethodTrace+" "+p, h)
 }

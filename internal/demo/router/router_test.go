@@ -7,9 +7,8 @@ import (
 	"testing"
 )
 
-// The published spec declares security for the protected routes, so the app
-// must actually enforce it. A binder captured on the root and used inside a
-// group registers outside that group's middleware, silently dropping auth.
+// The spec declares security for the protected routes, so the app must enforce
+// it: a root-captured binder registers outside a group's middleware, dropping auth.
 func TestProtectedRoutesRequireAuth(t *testing.T) {
 	_, h := New()
 	do := func(req *http.Request) int {

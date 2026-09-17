@@ -1,6 +1,7 @@
 package recorder
 
 import (
+	"maps"
 	"net/http"
 
 	"github.com/happytoolin/specout"
@@ -13,30 +14,25 @@ type TestingT interface {
 	Fatalf(format string, args ...any)
 }
 
-// Verify fails the test when declared and observed status codes disagree
-// in either direction, naming the route and code. Resolution failures in
-// the generator are reported, not swallowed.
+// Verify fails the test when declared and observed status codes disagree in
+// either direction, naming the route and code. required is what each route
+// declares for itself, so a code never produced there is a coverage gap;
+// allowed adds the global error envelope, so a handler that returns a declared
+// default is not drift.
 func Verify(t TestingT, d *specout.Generator, rec *Recorder) {
 	t.Helper()
-	// required: what each route declares for itself; a code never produced
-	// there is a coverage gap.
 	required, err := d.DeclaredStatuses()
 	if err != nil {
 		t.Errorf("%v", err)
 		return
 	}
-	// allowed: the full spec set, including the global error envelope; a
-	// handler that returns a declared default is not drift.
 	allowed, err := d.SpecStatuses()
 	if err != nil {
 		t.Errorf("%v", err)
 		return
 	}
 	rec.mu.Lock()
-	observed := make(map[specout.RouteKey]map[int]bool, len(rec.codes))
-	for k, v := range rec.codes {
-		observed[k] = v
-	}
+	observed := maps.Clone(rec.codes)
 	rec.mu.Unlock()
 
 	for key, codes := range required {
@@ -48,9 +44,9 @@ func Verify(t TestingT, d *specout.Generator, rec *Recorder) {
 		}
 	}
 	for key, codes := range observed {
-		want := lookupKey(allowed, key)
 		// a declared "default" response (status 0) means any code is in the
 		// spec for that route, so nothing the handler writes is drift.
+		want := lookupKey(allowed, key)
 		if want[0] {
 			continue
 		}

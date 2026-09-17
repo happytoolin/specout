@@ -1,33 +1,12 @@
 package specout_test
 
 import (
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/happytoolin/specout"
 )
-
-func serveDoc(t *testing.T, d *specout.Generator, r chi.Router) map[string]any {
-	t.Helper()
-	if err := specout.Chi(d, r).Adopt(); err != nil {
-		t.Fatalf("adopt: %v", err)
-	}
-	r.Mount("/openapi.json", d)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
-	if w.Code != 200 {
-		t.Fatalf("openapi.json status %d", w.Code)
-	}
-	var doc map[string]any
-	json.Unmarshal(w.Body.Bytes(), &doc)
-	return doc
-}
-
-func noop2(http.ResponseWriter, *http.Request) {}
 
 // recA and recB recurse through each other; package-level because local type
 // declarations are scoped from the point of declaration, so neither can name
@@ -62,30 +41,21 @@ func TestNestedDefsKeepFixups(t *testing.T) {
 		Items []Issue `json:"items"`
 	}
 
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	r := chi.NewRouter()
-	specout.Chi(d, r).Get("/issues", specout.Handler[struct{}, Page]{HandlerFunc: noop2})
-	specout.Chi(d, r).Post("/issues", specout.Handler[struct {
-		Title string `json:"title"`
-	}, Issue]{HandlerFunc: noop2})
-
-	doc := serveDoc(t, d, r)
-	schemas := doc["components"].(map[string]any)["schemas"].(map[string]any)
-
-	issue := schemas["Issue"].(map[string]any)
-	props := issue["properties"].(map[string]any)
-	state := props["state"].(map[string]any)
-	enum, _ := state["enum"].([]any)
-	if len(enum) != 2 || enum[0] != "open" || enum[1] != "closed" {
-		t.Fatalf("state enum = %v, want [open closed]", state["enum"])
+	doc := chiDoc(t, func(d *specout.Generator, r chi.Router) {
+		specout.Chi(d, r).Get("/issues", specout.Handler[struct{}, Page]{HandlerFunc: noop})
+		specout.Chi(d, r).Post("/issues", specout.Handler[struct {
+			Title string `json:"title"`
+		}, Issue]{HandlerFunc: noop})
+	})
+	p := props(t, doc, "Issue")
+	if enum, _ := p["state"].(map[string]any)["enum"].([]any); len(enum) != 2 || enum[0] != "open" || enum[1] != "closed" {
+		t.Fatalf("state enum = %v, want [open closed]", p["state"].(map[string]any)["enum"])
 	}
-	if props["id"].(map[string]any)["readOnly"] != true {
+	if p["id"].(map[string]any)["readOnly"] != true {
 		t.Error("id readOnly lost")
 	}
-	due := props["due"].(map[string]any)
-	typ, _ := due["type"].([]any)
-	if len(typ) != 2 || typ[1] != "null" {
-		t.Errorf("due type = %v, want [string null]", due["type"])
+	if !isNullable(p["due"].(map[string]any)) {
+		t.Errorf("due schema = %v, want [string null]", p["due"])
 	}
 }
 
@@ -100,28 +70,17 @@ func TestRecursiveNestedDefsFixed(t *testing.T) {
 	type Tree struct {
 		Root Node `json:"root"`
 	}
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	r := chi.NewRouter()
-	specout.Chi(d, r).Get("/tree", specout.Handler[struct{}, Tree]{HandlerFunc: noop2})
-	specout.Chi(d, r).Get("/pair", specout.Handler[struct{}, recPair]{HandlerFunc: noop2})
-	doc := serveDoc(t, d, r)
-
-	wantNullable := func(name, prop string) {
-		t.Helper()
-		schemas := doc["components"].(map[string]any)["schemas"].(map[string]any)
-		p := schemas[name].(map[string]any)["properties"].(map[string]any)[prop].(map[string]any)
-		if arms, _ := p["oneOf"].([]any); len(arms) == 2 {
-			return
+	doc := chiDoc(t, func(d *specout.Generator, r chi.Router) {
+		specout.Chi(d, r).Get("/tree", specout.Handler[struct{}, Tree]{HandlerFunc: noop})
+		specout.Chi(d, r).Get("/pair", specout.Handler[struct{}, recPair]{HandlerFunc: noop})
+	})
+	for _, c := range []struct{ name, prop string }{
+		{"Node", "next"}, {"recA", "b"}, {"recA", "id"}, {"recB", "a"},
+	} {
+		if !isNullable(props(t, doc, c.name)[c.prop].(map[string]any)) {
+			t.Errorf("%s.%s has no null arm", c.name, c.prop)
 		}
-		if typ, _ := p["type"].([]any); len(typ) == 2 && typ[1] == "null" {
-			return
-		}
-		t.Errorf("%s.%s = %v, want a null arm", name, prop, p)
 	}
-	wantNullable("Node", "next")
-	wantNullable("recA", "b")
-	wantNullable("recA", "id")
-	wantNullable("recB", "a")
 }
 
 // Regression: a nested-only type — never a top-level Req or Res — is hoisted
@@ -140,20 +99,15 @@ func TestNestedOnlyDefsKeepFixups(t *testing.T) {
 		Items []Inner `json:"items"`
 	}
 
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	r := chi.NewRouter()
-	specout.Chi(d, r).Get("/outer", specout.Handler[struct{}, Outer]{HandlerFunc: noop2})
-
-	doc := serveDoc(t, d, r)
-	inner := doc["components"].(map[string]any)["schemas"].(map[string]any)["Inner"].(map[string]any)["properties"].(map[string]any)
-	if inner["id"].(map[string]any)["readOnly"] != true {
-		t.Errorf("nested readOnly lost: %v", inner["id"])
+	p := props(t, docOf(t, "GET", "/outer", specout.Handler[struct{}, Outer]{HandlerFunc: noop}), "Inner")
+	if p["id"].(map[string]any)["readOnly"] != true {
+		t.Errorf("nested readOnly lost: %v", p["id"])
 	}
-	if inner["note"].(map[string]any)["deprecated"] != true {
-		t.Errorf("nested deprecated lost: %v", inner["note"])
+	if p["note"].(map[string]any)["deprecated"] != true {
+		t.Errorf("nested deprecated lost: %v", p["note"])
 	}
-	if typ, _ := inner["due"].(map[string]any)["type"].([]any); len(typ) != 2 || typ[1] != "null" {
-		t.Errorf("nested nullable lost: %v", inner["due"])
+	if !isNullable(p["due"].(map[string]any)) {
+		t.Errorf("nested nullable lost: %v", p["due"])
 	}
 }
 
@@ -164,42 +118,30 @@ func TestParamKeywords(t *testing.T) {
 		Limit int    `query:"limit" jsonschema:"default=20,minimum=1,maximum=100"`
 		Sort  string `query:"sort" jsonschema:"enum=created|updated,default=created"`
 	}
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	r := chi.NewRouter()
-	specout.Chi(d, r).Get("/items", specout.Handler[ListReq, specout.NoContent]{HandlerFunc: noop2})
-	doc := serveDoc(t, d, r)
-	op := doc["paths"].(map[string]any)["/items"].(map[string]any)["get"].(map[string]any)
+	doc := docOf(t, "GET", "/items", specout.Handler[ListReq, specout.NoContent]{HandlerFunc: noop})
+	p := paramsOf(t, opOf(t, doc, "/items", "get"))
 
-	schemas := map[string]map[string]any{}
-	for _, raw := range op["parameters"].([]any) {
-		p := raw.(map[string]any)
-		schemas[p["name"].(string)] = p["schema"].(map[string]any)
-	}
-	limit := schemas["limit"]
+	limit := p["limit"]["schema"].(map[string]any)
 	if limit["minimum"].(float64) != 1 || limit["maximum"].(float64) != 100 || limit["default"].(float64) != 20 {
 		t.Errorf("limit schema = %v", limit)
 	}
-	sortS := schemas["sort"]
-	enum, _ := sortS["enum"].([]any)
-	if len(enum) != 2 || enum[0] != "created" || enum[1] != "updated" {
-		t.Errorf("sort schema = %v", sortS)
+	if enum, _ := p["sort"]["schema"].(map[string]any)["enum"].([]any); len(enum) != 2 || enum[0] != "created" || enum[1] != "updated" {
+		t.Errorf("sort schema = %v", p["sort"]["schema"])
 	}
 }
 
 // Regression: anonymous Req/Res struct types must get clean deterministic
 // component names, not the raw Go struct literal.
 func TestAnonymousComponentNames(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	r := chi.NewRouter()
-	specout.Chi(d, r).Post("/a", specout.Handler[struct {
-		A string `json:"a"`
-	}, specout.NoContent]{HandlerFunc: noop2})
-	specout.Chi(d, r).Post("/b", specout.Handler[struct {
-		B string `json:"b"`
-	}, specout.NoContent]{HandlerFunc: noop2})
-	doc := serveDoc(t, d, r)
-
-	for name := range doc["components"].(map[string]any)["schemas"].(map[string]any) {
+	doc := chiDoc(t, func(d *specout.Generator, r chi.Router) {
+		specout.Chi(d, r).Post("/a", specout.Handler[struct {
+			A string `json:"a"`
+		}, specout.NoContent]{HandlerFunc: noop})
+		specout.Chi(d, r).Post("/b", specout.Handler[struct {
+			B string `json:"b"`
+		}, specout.NoContent]{HandlerFunc: noop})
+	})
+	for name := range schemas(t, doc) {
 		if len(name) >= 6 && name[:6] == "struct" {
 			t.Errorf("raw struct literal leaked as component name: %s", name)
 		}

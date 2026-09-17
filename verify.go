@@ -39,3 +39,12 @@ func matchSkip(pattern, route string) bool {
 	}
 	return pattern == route
 }
+
+// requireDocumented is the shared body of every adapter's RequireDocumented:
+// an Adopt error is a test failure, never a panic.
+func requireDocumented(t TestingT, err error) {
+	t.Helper()
+	if err != nil {
+		t.Errorf("%v", err)
+	}
+}

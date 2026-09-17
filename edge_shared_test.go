@@ -2,7 +2,6 @@ package specout_test
 
 import (
 	"encoding/json"
-	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -12,14 +11,12 @@ import (
 
 type S1 struct{ V string }
 
-func noop3(w http.ResponseWriter, r *http.Request) {}
-
 // shared handler, same relative pattern inside two different groups —
 // the suffix-match trap. /a/x and /b/x must both appear, with the right ops.
 func TestSharedHandlerTwoGroups(t *testing.T) {
 	d := specout.New(specout.Config{Title: "t", Version: "1"})
 	r := chi.NewRouter()
-	h := specout.Handler[struct{}, S1]{HandlerFunc: noop3, Summary: "shared"}
+	h := specout.Handler[struct{}, S1]{HandlerFunc: noop, Summary: "shared"}
 	r.Route("/a", func(r chi.Router) { specout.Chi(d, r).Get("/x", h) })
 	r.Route("/b", func(r chi.Router) { specout.Chi(d, r).Get("/x", h) })
 	if err := specout.Chi(d, r).Adopt(); err != nil {

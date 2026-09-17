@@ -14,23 +14,23 @@ import (
 	"github.com/happytoolin/specout/recorder"
 )
 
-// published is the path -> method set of the live document
+// published is the path -> method -> operationId map of the live document
 // (petstore.swagger.io/v3/openapi.json, 3.0.4). The example must emit it
 // exactly; every deviation is listed in examples/README.md.
-var published = map[string][]string{
-	"/pet":                     {"put", "post"},
-	"/pet/findByStatus":        {"get"},
-	"/pet/findByTags":          {"get"},
-	"/pet/{petId}":             {"get", "post", "delete"},
-	"/pet/{petId}/uploadImage": {"post"},
-	"/store/inventory":         {"get"},
-	"/store/order":             {"post"},
-	"/store/order/{orderId}":   {"get", "delete"},
-	"/user":                    {"post"},
-	"/user/createWithList":     {"post"},
-	"/user/login":              {"get"},
-	"/user/logout":             {"get"},
-	"/user/{username}":         {"get", "put", "delete"},
+var published = map[string]map[string]string{
+	"/pet":                     {"put": "updatePet", "post": "addPet"},
+	"/pet/findByStatus":        {"get": "findPetsByStatus"},
+	"/pet/findByTags":          {"get": "findPetsByTags"},
+	"/pet/{petId}":             {"get": "getPetById", "post": "updatePetWithForm", "delete": "deletePet"},
+	"/pet/{petId}/uploadImage": {"post": "uploadFile"},
+	"/store/inventory":         {"get": "getInventory"},
+	"/store/order":             {"post": "placeOrder"},
+	"/store/order/{orderId}":   {"get": "getOrderById", "delete": "deleteOrder"},
+	"/user":                    {"post": "createUser"},
+	"/user/createWithList":     {"post": "createUsersWithListInput"},
+	"/user/login":              {"get": "loginUser"},
+	"/user/logout":             {"get": "logoutUser"},
+	"/user/{username}":         {"get": "getUserByName", "put": "updateUser", "delete": "deleteUser"},
 }
 
 func buildSpec(t *testing.T) map[string]any {
@@ -41,79 +41,52 @@ func buildSpec(t *testing.T) map[string]any {
 		t.Fatal(err)
 	}
 	var doc map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &doc); err != nil {
+	if err := json.NewDecoder(&buf).Decode(&doc); err != nil {
 		t.Fatal(err)
 	}
 	return doc
 }
 
-func pathItem(t *testing.T, doc map[string]any, path string) map[string]any {
+// dig walks a decoded document by key path and fails the test at the first
+// level the published shape is missing.
+func dig(t *testing.T, v any, keys ...string) any {
 	t.Helper()
-	p, ok := doc["paths"].(map[string]any)
-	if !ok {
-		t.Fatal("no paths object")
+	for _, k := range keys {
+		m, ok := v.(map[string]any)
+		if !ok {
+			t.Fatalf("no object at %q: %v", k, v)
+		}
+		if v, ok = m[k]; !ok {
+			t.Fatalf("no %q in %v", k, m)
+		}
 	}
-	item, ok := p[path].(map[string]any)
-	if !ok {
-		t.Fatalf("missing path %s", path)
-	}
-	return item
-}
-
-func operation(t *testing.T, doc map[string]any, path, method string) map[string]any {
-	t.Helper()
-	op, ok := pathItem(t, doc, path)[method].(map[string]any)
-	if !ok {
-		t.Fatalf("missing %s %s", method, path)
-	}
-	return op
+	return v
 }
 
 func TestSpecMatchesPublishedDocument(t *testing.T) {
-	doc := buildSpec(t)
-	paths := doc["paths"].(map[string]any)
+	paths := dig(t, buildSpec(t), "paths").(map[string]any)
 	if len(paths) != len(published) {
 		t.Errorf("paths = %d, want %d", len(paths), len(published))
 	}
 	for p, methods := range published {
-		item, ok := paths[p].(map[string]any)
-		if !ok {
+		item, _ := paths[p].(map[string]any)
+		if item == nil {
 			t.Errorf("missing path %s", p)
 			continue
-		}
-		for _, m := range methods {
-			if _, ok := item[m]; !ok {
-				t.Errorf("missing %s %s", m, p)
-			}
 		}
 		if len(item) != len(methods) {
 			t.Errorf("%s has %d operations, want %d", p, len(item), len(methods))
 		}
-	}
-	// the 19 published operationIds, no more, no fewer
-	ids := []string{}
-	for p, raw := range paths {
-		for m, op := range raw.(map[string]any) {
-			id, _ := op.(map[string]any)["operationId"].(string)
-			if id == "" {
-				t.Errorf("%s %s has no operationId", m, p)
+		// the 19 published operationIds, no more, no fewer, on the right route
+		for m, wantID := range methods {
+			op, _ := item[m].(map[string]any)
+			if op == nil {
+				t.Errorf("missing %s %s", m, p)
+				continue
 			}
-			ids = append(ids, id)
-		}
-	}
-	if len(ids) != 19 {
-		t.Errorf("operations = %d, want 19", len(ids))
-	}
-	for _, want := range []string{"updatePet", "addPet", "findPetsByStatus", "findPetsByTags",
-		"getPetById", "updatePetWithForm", "deletePet", "uploadFile", "getInventory",
-		"placeOrder", "getOrderById", "deleteOrder", "createUser", "createUsersWithListInput",
-		"loginUser", "logoutUser", "getUserByName", "updateUser", "deleteUser"} {
-		found := false
-		for _, id := range ids {
-			found = found || id == want
-		}
-		if !found {
-			t.Errorf("missing operationId %s", want)
+			if op["operationId"] != wantID {
+				t.Errorf("%s %s operationId = %v, want %s", m, p, op["operationId"], wantID)
+			}
 		}
 	}
 }
@@ -126,48 +99,43 @@ func TestSpecKeepsPublishedShapes(t *testing.T) {
 	doc := buildSpec(t)
 
 	// int64 path param with its published description
-	params := operation(t, doc, "/pet/{petId}", "get")["parameters"].([]any)
-	first := params[0].(map[string]any)
-	schema := first["schema"].(map[string]any)
-	if first["name"] != "petId" || schema["type"] != "integer" || schema["format"] != "int64" {
-		t.Errorf("petId param = %v", first)
+	param := dig(t, doc, "paths", "/pet/{petId}", "get", "parameters").([]any)[0].(map[string]any)
+	if param["name"] != "petId" || dig(t, param, "schema", "type") != "integer" || dig(t, param, "schema", "format") != "int64" {
+		t.Errorf("petId param = %v", param)
 	}
 
 	// response headers, scalar and time
-	resp200 := operation(t, doc, "/user/login", "get")["responses"].(map[string]any)["200"].(map[string]any)
-	headers := resp200["headers"].(map[string]any)
-	if headers["X-Rate-Limit"].(map[string]any)["schema"].(map[string]any)["type"] != "integer" {
+	headers := dig(t, doc, "paths", "/user/login", "get", "responses", "200", "headers").(map[string]any)
+	if dig(t, headers, "X-Rate-Limit", "schema", "type") != "integer" {
 		t.Errorf("X-Rate-Limit = %v", headers["X-Rate-Limit"])
 	}
-	if headers["X-Expires-After"].(map[string]any)["schema"].(map[string]any)["format"] != "date-time" {
+	if dig(t, headers, "X-Expires-After", "schema", "format") != "date-time" {
 		t.Errorf("X-Expires-After = %v", headers["X-Expires-After"])
 	}
 
 	// map[string]int32 body is inlined, not $ref'd
-	inv := operation(t, doc, "/store/inventory", "get")["responses"].(map[string]any)["200"].(map[string]any)
-	invSchema := inv["content"].(map[string]any)["application/json"].(map[string]any)["schema"].(map[string]any)
-	if invSchema["type"] != "object" || invSchema["additionalProperties"] == nil {
-		t.Errorf("inventory schema = %v", invSchema)
+	inv := dig(t, doc, "paths", "/store/inventory", "get", "responses", "200", "content", "application/json", "schema").(map[string]any)
+	if inv["type"] != "object" || inv["additionalProperties"] == nil {
+		t.Errorf("inventory schema = %v", inv)
 	}
 
 	// security opt-out on a published public operation, none on a protected one
-	if _, ok := operation(t, doc, "/user/logout", "get")["security"]; !ok {
+	if _, ok := dig(t, doc, "paths", "/user/logout", "get").(map[string]any)["security"]; !ok {
 		t.Error("logout should carry security: []")
 	}
-	if _, ok := operation(t, doc, "/pet/{petId}", "get")["security"]; ok {
+	if _, ok := dig(t, doc, "paths", "/pet/{petId}", "get").(map[string]any)["security"]; ok {
 		t.Error("getPetById should inherit the global requirement")
 	}
 
 	// uploadImage: multipart with the renamed, required file field
-	body := operation(t, doc, "/pet/{petId}/uploadImage", "post")["requestBody"].(map[string]any)
-	content := body["content"].(map[string]any)
+	content := dig(t, doc, "paths", "/pet/{petId}/uploadImage", "post", "requestBody", "content").(map[string]any)
 	if _, ok := content["multipart/form-data"]; !ok {
 		t.Fatalf("uploadImage content = %v", content)
 	}
 
 	// the File marker must not leak into components, and required must name
 	// the property, not the Go field
-	schemas := doc["components"].(map[string]any)["schemas"].(map[string]any)
+	schemas := dig(t, doc, "components", "schemas").(map[string]any)
 	if _, leaked := schemas["File"]; leaked {
 		t.Error("File marker leaked into components.schemas")
 	}
@@ -176,8 +144,8 @@ func TestSpecKeepsPublishedShapes(t *testing.T) {
 	if len(required) != 1 || required[0] != "file" {
 		t.Errorf("uploadImageReq required = %v, want [file]", required)
 	}
-	if _, ok := req["properties"].(map[string]any)["file"].(map[string]any)["format"]; !ok {
-		t.Errorf("file field = %v", req["properties"])
+	if _, ok := dig(t, req, "properties", "file").(map[string]any)["format"]; !ok {
+		t.Errorf("file field = %v", dig(t, req, "properties"))
 	}
 
 	// Tag and Category are reached only through Pet, so invopop hoists them
@@ -185,9 +153,8 @@ func TestSpecKeepsPublishedShapes(t *testing.T) {
 	// the nested component. Regression — the format= tag used to survive on
 	// Pet but vanish on Tag.
 	for _, name := range []string{"Pet", "Tag", "Category"} {
-		id := schemas[name].(map[string]any)["properties"].(map[string]any)["id"].(map[string]any)
-		if id["format"] != "int64" {
-			t.Errorf("%s.id = %v, want format int64", name, id)
+		if dig(t, schemas, name, "properties", "id", "format") != "int64" {
+			t.Errorf("%s.id missing format int64", name)
 		}
 	}
 }
@@ -211,6 +178,17 @@ func TestDemoServesEveryRouteAndNoUndocumentedCode(t *testing.T) {
 	srv := httptest.NewServer(Handler(d, rec))
 	defer srv.Close()
 
+	send := func(req *http.Request, want int) {
+		t.Helper()
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != want {
+			t.Errorf("%s %s = %d, want %d", req.Method, req.URL.Path, resp.StatusCode, want)
+		}
+	}
 	do := func(method, path, body string, want int) {
 		t.Helper()
 		req, err := http.NewRequest(method, srv.URL+"/api/v3"+path, strings.NewReader(body))
@@ -220,14 +198,7 @@ func TestDemoServesEveryRouteAndNoUndocumentedCode(t *testing.T) {
 		if body != "" {
 			req.Header.Set("Content-Type", "application/json")
 		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
-		if resp.StatusCode != want {
-			t.Errorf("%s %s = %d, want %d", method, path, resp.StatusCode, want)
-		}
+		send(req, want)
 	}
 
 	do("PUT", "/pet", `{"name":"doggie","photoUrls":["a"],"status":"available"}`, 200)
@@ -252,6 +223,10 @@ func TestDemoServesEveryRouteAndNoUndocumentedCode(t *testing.T) {
 	// chi answers HEAD on a GET-only route with 405: not an operation, so
 	// the recorder must key nothing for it (no drift either way)
 	do("HEAD", "/pet/2", "", 405)
+	// the spec is served under the declared server prefix
+	do("GET", "/openapi.json", "", 200)
+	// an unmatched path is not drift: the recorder keys nothing for it
+	do("GET", "/nope", "", 404)
 
 	// multipart upload: the one body the example does not send as JSON
 	var buf bytes.Buffer
@@ -264,27 +239,7 @@ func TestDemoServesEveryRouteAndNoUndocumentedCode(t *testing.T) {
 	mw.Close()
 	req, _ := http.NewRequest("POST", srv.URL+"/api/v3/pet/2/uploadImage", &buf)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != 200 {
-		t.Errorf("uploadImage = %d, want 200", resp.StatusCode)
-	}
-
-	// the spec is served under the declared server prefix
-	sresp, err := http.Get(srv.URL + "/api/v3/openapi.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	sresp.Body.Close()
-	if sresp.StatusCode != 200 {
-		t.Errorf("spec = %d, want 200", sresp.StatusCode)
-	}
-
-	// an unmatched path is not drift: the recorder keys nothing for it
-	do("GET", "/nope", "", 404)
+	send(req, 200)
 
 	ft := &captureT{}
 	recorder.Verify(ft, d, rec)

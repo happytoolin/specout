@@ -7,8 +7,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -17,6 +19,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/happytoolin/specout"
+	"github.com/happytoolin/specout/internal/examplekit"
 )
 
 // ---- components.schemas, field for field ----
@@ -118,36 +121,43 @@ type (
 	}
 )
 
-// ---- responses: the published descriptions, one helper per shape ----
+// ---- responses: the published media types and descriptions ----
 
-// ok overrides the description of the Res-derived 200 response.
+// ok and okJSON override the description of the Res-derived 200: ok is the
+// published JSON + XML pair, okJSON the operations that answer JSON only.
 func ok(description string) specout.Response {
-	return specout.Response{Status: 200, ContentTypes: jsonOrXML,
-		Raw: map[string]any{"description": description}}
+	return specout.Response{Status: 200, ContentTypes: jsonOrXML, Raw: map[string]any{"description": description}}
 }
 
-// okJSON is the published 200 for the four operations that answer JSON only.
 func okJSON(description string) specout.Response {
 	return specout.Response{Status: 200, Raw: map[string]any{"description": description}}
 }
 
-// jsonOrXML is the published pair on a pet, order or user body.
-var jsonOrXML = []string{"application/json", "application/xml"}
-
-// jsonXMLForm is the published request body of the operations that take a
-// pet, order or user as JSON, XML or form fields.
-var jsonXMLForm = []string{"application/json", "application/xml", "application/x-www-form-urlencoded"}
-
 // desc is a description-only response: the published document declares its
-// errors and its few body-less 200s this way.
+// errors and its few body-less 200s this way; def is its "default" catch-all.
 func desc(code int, description string) specout.Response {
 	return specout.Response{Status: code, Type: struct{}{}, Raw: map[string]any{"description": description}}
 }
 
-// def is the "default" catch-all response.
-func def(description string) specout.Response {
-	return desc(0, description)
-}
+func def(description string) specout.Response { return desc(0, description) }
+
+var (
+	jsonOrXML   = []string{"application/json", "application/xml"}
+	jsonXMLForm = []string{"application/json", "application/xml", "application/x-www-form-urlencoded"}
+
+	// The published tag of each group, then the answers more than one operation
+	// declares: one variable per published description.
+	tagPet, tagStore, tagUser = []string{"pet"}, []string{"store"}, []string{"user"}
+
+	unexpected      = def("Unexpected error")
+	invalidInput    = desc(400, "Invalid input")
+	invalidID       = desc(400, "Invalid ID supplied")
+	invalidUsername = desc(400, "Invalid username supplied")
+	validation      = desc(422, "Validation exception")
+	petNotFound     = desc(404, "Pet not found")
+	orderNotFound   = desc(404, "Order not found")
+	userNotFound    = desc(404, "User not found")
+)
 
 // ---- the service ----
 
@@ -165,6 +175,32 @@ func newStore() *store {
 
 func (s *store) nextID() int64 { s.seq++; return s.seq }
 
+// petsList snapshots the pet map, so the filter operations iterate a stable
+// slice without holding the lock.
+func (s *store) petsList() []Pet {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Collect(maps.Values(s.pets))
+}
+
+// get reads m[k] and take removes it, both under the store lock; the bool says
+// whether the key was there. A handler keeps its own lock only when it mutates
+// a value in place.
+func get[K comparable, V any](s *store, m map[K]V, k K) (V, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, ok := m[k]
+	return v, ok
+}
+
+func take[K comparable, V any](s *store, m map[K]V, k K) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := m[k]
+	delete(m, k)
+	return ok
+}
+
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
@@ -173,96 +209,100 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 func notFound(w http.ResponseWriter, msg string) { writeJSON(w, 404, map[string]any{"message": msg}) }
 
-func petID(r *http.Request) int64 {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "petId"), 10, 64)
+// withBody decodes the JSON request body into T, or answers the published 400
+// with msg; act runs only on a decoded body.
+func withBody[T any](w http.ResponseWriter, r *http.Request, msg string, act func(T)) {
+	var v T
+	if json.NewDecoder(r.Body).Decode(&v) != nil {
+		writeJSON(w, 400, map[string]any{"message": msg})
+		return
+	}
+	act(v)
+}
+
+// storeBody decodes the request body, lets key assign the identity the store
+// keys on, and answers the stored value; msg is the published 400.
+func storeBody[K comparable, V any](w http.ResponseWriter, r *http.Request, s *store, msg string, m map[K]V, key func(*V) K) {
+	withBody(w, r, msg, func(v V) {
+		s.mu.Lock()
+		m[key(&v)] = v
+		s.mu.Unlock()
+		writeJSON(w, 200, v)
+	})
+}
+
+// deleteOr404 removes m[k] and answers the published 200, or msg as 404.
+func deleteOr404[K comparable, V any](w http.ResponseWriter, s *store, m map[K]V, k K, msg string) {
+	if !take(s, m, k) {
+		notFound(w, msg)
+		return
+	}
+	w.WriteHeader(200)
+}
+
+// pathID is the int64 value of one URL placeholder. A value that is not a
+// number reads as 0, which no route stores under: the published 404 answer.
+func pathID(r *http.Request, name string) int64 {
+	id, _ := strconv.ParseInt(chi.URLParam(r, name), 10, 64)
 	return id
 }
 
-func updatePet(s *store) specout.Handler[Pet, Pet] {
-	return specout.Handler[Pet, Pet]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
-			var p Pet
-			if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-				writeJSON(w, 400, map[string]any{"message": "Invalid ID supplied"})
-				return
-			}
-			s.mu.Lock()
-			if p.ID == 0 {
-				p.ID = s.nextID()
-			}
-			s.pets[p.ID] = p
-			s.mu.Unlock()
-			writeJSON(w, 200, p)
-		},
-		Summary:     "Update an existing pet.",
-		Description: "Update an existing pet by Id.",
-		OperationID: "updatePet",
-		Tags:        []string{"pet"},
-		Responses: []specout.Response{
-			ok("Successful operation"), desc(400, "Invalid ID supplied"),
-			desc(404, "Pet not found"), desc(422, "Validation exception"), def("Unexpected error"),
-		},
-		RequestContentTypes: jsonXMLForm,
+// op builds one operation: its published metadata, the two fields the
+// operations vary on, and its http body. Every published operation ends with
+// the same "Unexpected error" default, so op adds it.
+func op[Req, Res any](id, summary, description string, tags []string, public bool, requestTypes []string, fn http.HandlerFunc, responses ...specout.Response) specout.Handler[Req, Res] {
+	return specout.Handler[Req, Res]{
+		OperationID: id, Summary: summary, Description: description, Tags: tags, Public: public,
+		RequestContentTypes: requestTypes, HandlerFunc: fn, Responses: append(responses, unexpected),
 	}
 }
 
-func addPet(s *store) specout.Handler[Pet, Pet] {
-	return specout.Handler[Pet, Pet]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
-			var p Pet
-			if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-				writeJSON(w, 400, map[string]any{"message": "Invalid input"})
-				return
-			}
-			s.mu.Lock()
-			p.ID = s.nextID()
-			s.pets[p.ID] = p
-			s.mu.Unlock()
-			writeJSON(w, 200, p)
-		},
-		Summary:     "Add a new pet to the store.",
-		Description: "Add a new pet to the store.",
-		OperationID: "addPet",
-		Tags:        []string{"pet"},
-		Responses: []specout.Response{
-			ok("Successful operation"), desc(400, "Invalid input"),
-			desc(422, "Validation exception"), def("Unexpected error"),
-		},
-		RequestContentTypes: jsonXMLForm,
+// show answers the stored value as JSON 200, or msg as the published 404 when
+// the key is absent.
+func show[K comparable, V any](w http.ResponseWriter, s *store, m map[K]V, k K, msg string) {
+	if v, ok := get(s, m, k); ok {
+		writeJSON(w, 200, v)
+		return
 	}
+	notFound(w, msg)
 }
 
-func findPetsByStatus(s *store) specout.Handler[findPetsByStatusReq, []Pet] {
-	return specout.Handler[findPetsByStatusReq, []Pet]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
+// petRoutes registers the eight pet operations.
+func petRoutes(b *specout.ChiRouter, s *store) {
+	b.Put("/pet", op[Pet, Pet]("updatePet", "Update an existing pet.", "Update an existing pet by Id.", tagPet, false, jsonXMLForm,
+		func(w http.ResponseWriter, r *http.Request) {
+			storeBody(w, r, s, "Invalid ID supplied", s.pets, func(p *Pet) int64 {
+				if p.ID == 0 {
+					p.ID = s.nextID()
+				}
+				return p.ID
+			})
+		},
+		ok("Successful operation"), invalidID, petNotFound, validation))
+	b.Post("/pet", op[Pet, Pet]("addPet", "Add a new pet to the store.", "Add a new pet to the store.", tagPet, false, jsonXMLForm,
+		func(w http.ResponseWriter, r *http.Request) {
+			storeBody(w, r, s, "Invalid input", s.pets, func(p *Pet) int64 { p.ID = s.nextID(); return p.ID })
+		},
+		ok("Successful operation"), invalidInput, validation))
+	b.Get("/pet/findByStatus", op[findPetsByStatusReq, []Pet]("findPetsByStatus", "Finds Pets by status.",
+		"Multiple status values can be provided with comma separated strings.", tagPet, false, nil,
+		func(w http.ResponseWriter, r *http.Request) {
 			want := r.URL.Query().Get("status")
-			s.mu.Lock()
 			out := []Pet{}
-			for _, p := range s.pets {
+			for _, p := range s.petsList() {
 				if want == "" || p.Status == want {
 					out = append(out, p)
 				}
 			}
-			s.mu.Unlock()
 			writeJSON(w, 200, out)
 		},
-		Summary:     "Finds Pets by status.",
-		Description: "Multiple status values can be provided with comma separated strings.",
-		OperationID: "findPetsByStatus",
-		Tags:        []string{"pet"},
-		Responses: []specout.Response{
-			ok("successful operation"), desc(400, "Invalid status value"), def("Unexpected error"),
-		},
-	}
-}
-
-func findPetsByTags(s *store) specout.Handler[findPetsByTagsReq, []Pet] {
-	return specout.Handler[findPetsByTagsReq, []Pet]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
+		ok("successful operation"), desc(400, "Invalid status value")))
+	b.Get("/pet/findByTags", op[findPetsByTagsReq, []Pet]("findPetsByTags", "Finds Pets by tags.",
+		"Multiple tags can be provided with comma separated strings. Use tag1, tag2, tag3 for testing.", tagPet, false, nil,
+		func(w http.ResponseWriter, r *http.Request) {
 			want := r.URL.Query()["tags"]
-			s.mu.Lock()
 			out := []Pet{}
-			for _, p := range s.pets {
+			for _, p := range s.petsList() {
 				for _, t := range p.Tags {
 					for _, wt := range want {
 						if t.Name == wt {
@@ -271,46 +311,16 @@ func findPetsByTags(s *store) specout.Handler[findPetsByTagsReq, []Pet] {
 					}
 				}
 			}
-			s.mu.Unlock()
 			writeJSON(w, 200, out)
 		},
-		Summary:     "Finds Pets by tags.",
-		Description: "Multiple tags can be provided with comma separated strings. Use tag1, tag2, tag3 for testing.",
-		OperationID: "findPetsByTags",
-		Tags:        []string{"pet"},
-		Responses: []specout.Response{
-			ok("successful operation"), desc(400, "Invalid tag value"), def("Unexpected error"),
-		},
-	}
-}
-
-func getPetByID(s *store) specout.Handler[getPetReq, Pet] {
-	return specout.Handler[getPetReq, Pet]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
-			s.mu.Lock()
-			p, found := s.pets[petID(r)]
-			s.mu.Unlock()
-			if !found {
-				notFound(w, "Pet not found")
-				return
-			}
-			writeJSON(w, 200, p)
-		},
-		Summary:     "Find pet by ID.",
-		Description: "Returns a single pet.",
-		OperationID: "getPetById",
-		Tags:        []string{"pet"},
-		Responses: []specout.Response{
-			ok("successful operation"), desc(400, "Invalid ID supplied"),
-			desc(404, "Pet not found"), def("Unexpected error"),
-		},
-	}
-}
-
-func updatePetWithForm(s *store) specout.Handler[updatePetFormReq, Pet] {
-	return specout.Handler[updatePetFormReq, Pet]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
-			id := petID(r)
+		ok("successful operation"), desc(400, "Invalid tag value")))
+	b.Get("/pet/{petId}", op[getPetReq, Pet]("getPetById", "Find pet by ID.", "Returns a single pet.", tagPet, false, nil,
+		func(w http.ResponseWriter, r *http.Request) { show(w, s, s.pets, pathID(r, "petId"), "Pet not found") },
+		ok("successful operation"), invalidID, petNotFound))
+	b.Post("/pet/{petId}", op[updatePetFormReq, Pet]("updatePetWithForm", "Updates a pet in the store with form data.",
+		"Updates a pet resource based on the form data.", tagPet, false, nil,
+		func(w http.ResponseWriter, r *http.Request) {
+			id := pathID(r, "petId")
 			s.mu.Lock()
 			p, found := s.pets[id]
 			if found {
@@ -329,41 +339,16 @@ func updatePetWithForm(s *store) specout.Handler[updatePetFormReq, Pet] {
 			}
 			writeJSON(w, 200, p)
 		},
-		Summary:     "Updates a pet in the store with form data.",
-		Description: "Updates a pet resource based on the form data.",
-		OperationID: "updatePetWithForm",
-		Tags:        []string{"pet"},
-		Responses: []specout.Response{
-			ok("successful operation"), desc(400, "Invalid input"), def("Unexpected error"),
-		},
-	}
-}
-
-func deletePet(s *store) specout.Handler[deletePetReq, struct{}] {
-	return specout.Handler[deletePetReq, struct{}]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
-			s.mu.Lock()
-			delete(s.pets, petID(r))
-			s.mu.Unlock()
+		ok("successful operation"), invalidInput))
+	b.Delete("/pet/{petId}", op[deletePetReq, struct{}]("deletePet", "Deletes a pet.", "Delete a pet.", tagPet, false, nil,
+		func(w http.ResponseWriter, r *http.Request) {
+			take(s, s.pets, pathID(r, "petId"))
 			w.WriteHeader(200)
 		},
-		Summary:     "Deletes a pet.",
-		Description: "Delete a pet.",
-		OperationID: "deletePet",
-		Tags:        []string{"pet"},
-		Responses: []specout.Response{
-			desc(200, "Pet deleted"), desc(400, "Invalid pet value"), def("Unexpected error"),
-		},
-	}
-}
-
-func uploadFile(s *store) specout.Handler[uploadImageReq, ApiResponse] {
-	return specout.Handler[uploadImageReq, ApiResponse]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
-			s.mu.Lock()
-			_, found := s.pets[petID(r)]
-			s.mu.Unlock()
-			if !found {
+		desc(200, "Pet deleted"), desc(400, "Invalid pet value")))
+	b.Post("/pet/{petId}/uploadImage", op[uploadImageReq, ApiResponse]("uploadFile", "Uploads an image.", "Upload image of the pet.", tagPet, false, nil,
+		func(w http.ResponseWriter, r *http.Request) {
+			if _, found := get(s, s.pets, pathID(r, "petId")); !found {
 				notFound(w, "Pet not found")
 				return
 			}
@@ -376,179 +361,70 @@ func uploadFile(s *store) specout.Handler[uploadImageReq, ApiResponse] {
 			f.Close()
 			writeJSON(w, 200, ApiResponse{Code: 200, Type: "ok", Message: "file uploaded"})
 		},
-		Summary:     "Uploads an image.",
-		Description: "Upload image of the pet.",
-		OperationID: "uploadFile",
-		Tags:        []string{"pet"},
-		Responses: []specout.Response{
-			okJSON("successful operation"), desc(400, "No file uploaded"),
-			desc(404, "Pet not found"), def("Unexpected error"),
-		},
-	}
+		okJSON("successful operation"), desc(400, "No file uploaded"), petNotFound))
 }
 
-func getInventory(s *store) specout.Handler[struct{}, map[string]int32] {
-	return specout.Handler[struct{}, map[string]int32]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
-			s.mu.Lock()
+// storeRoutes registers the four store operations.
+func storeRoutes(b *specout.ChiRouter, s *store) {
+	b.Get("/store/inventory", op[struct{}, map[string]int32]("getInventory", "Returns pet inventories by status.",
+		"Returns a map of status codes to quantities.", tagStore, false, nil,
+		func(w http.ResponseWriter, r *http.Request) {
 			out := map[string]int32{}
-			for _, p := range s.pets {
+			for _, p := range s.petsList() {
 				out[p.Status]++
 			}
-			s.mu.Unlock()
 			writeJSON(w, 200, out)
 		},
-		Summary:     "Returns pet inventories by status.",
-		Description: "Returns a map of status codes to quantities.",
-		OperationID: "getInventory",
-		Tags:        []string{"store"},
-		Responses: []specout.Response{
-			okJSON("successful operation"), def("Unexpected error"),
+		okJSON("successful operation")))
+	b.Post("/store/order", op[Order, Order]("placeOrder", "Place an order for a pet.", "Place a new order in the store.", tagStore, true, jsonXMLForm,
+		func(w http.ResponseWriter, r *http.Request) {
+			storeBody(w, r, s, "Invalid input", s.orders, func(o *Order) int64 { o.ID = s.nextID(); return o.ID })
 		},
-	}
+		okJSON("successful operation"), invalidInput, validation))
+	b.Get("/store/order/{orderId}", op[getOrderReq, Order]("getOrderById", "Find purchase order by ID.",
+		"For valid response try integer IDs with value <= 5 or > 10. Other values will generate exceptions.",
+		tagStore, true, nil,
+		func(w http.ResponseWriter, r *http.Request) {
+			show(w, s, s.orders, pathID(r, "orderId"), "Order not found")
+		},
+		ok("successful operation"), invalidID, orderNotFound))
+	b.Delete("/store/order/{orderId}", op[deleteOrderReq, struct{}]("deleteOrder", "Delete purchase order by identifier.",
+		"For valid response try integer IDs with value < 1000. Anything above 1000 or non-integers will generate API errors.",
+		tagStore, true, nil,
+		func(w http.ResponseWriter, r *http.Request) {
+			deleteOr404(w, s, s.orders, pathID(r, "orderId"), "Order not found")
+		},
+		desc(200, "order deleted"), invalidID, orderNotFound))
 }
 
-func placeOrder(s *store) specout.Handler[Order, Order] {
-	return specout.Handler[Order, Order]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
-			var o Order
-			if err := json.NewDecoder(r.Body).Decode(&o); err != nil {
-				writeJSON(w, 400, map[string]any{"message": "Invalid input"})
-				return
-			}
-			s.mu.Lock()
-			o.ID = s.nextID()
-			s.orders[o.ID] = o
-			s.mu.Unlock()
-			writeJSON(w, 200, o)
+// userRoutes registers the seven user operations.
+func userRoutes(b *specout.ChiRouter, s *store) {
+	b.Post("/user", op[User, User]("createUser", "Create user.", "This can only be done by the logged in user.", tagUser, true, jsonXMLForm,
+		func(w http.ResponseWriter, r *http.Request) {
+			storeBody(w, r, s, "Invalid input", s.users, func(u *User) string { return u.Username })
 		},
-		Summary:     "Place an order for a pet.",
-		Description: "Place a new order in the store.",
-		OperationID: "placeOrder",
-		Tags:        []string{"store"},
-		Public:      true,
-		Responses: []specout.Response{
-			okJSON("successful operation"), desc(400, "Invalid input"),
-			desc(422, "Validation exception"), def("Unexpected error"),
+		ok("successful operation")))
+	b.Post("/user/createWithList", op[[]User, User]("createUsersWithListInput", "Creates list of users with given input array.",
+		"Creates list of users with given input array.", tagUser, true, nil,
+		func(w http.ResponseWriter, r *http.Request) {
+			withBody(w, r, "Invalid input", func(us []User) {
+				s.mu.Lock()
+				for _, u := range us {
+					s.users[u.Username] = u
+				}
+				s.mu.Unlock()
+				if len(us) == 0 {
+					writeJSON(w, 200, User{})
+					return
+				}
+				writeJSON(w, 200, us[0])
+			})
 		},
-		RequestContentTypes: jsonXMLForm,
-	}
-}
-
-func getOrderByID(s *store) specout.Handler[getOrderReq, Order] {
-	return specout.Handler[getOrderReq, Order]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
-			id, _ := strconv.ParseInt(chi.URLParam(r, "orderId"), 10, 64)
-			s.mu.Lock()
-			o, found := s.orders[id]
-			s.mu.Unlock()
-			if !found {
-				notFound(w, "Order not found")
-				return
-			}
-			writeJSON(w, 200, o)
-		},
-		Summary:     "Find purchase order by ID.",
-		Description: "For valid response try integer IDs with value <= 5 or > 10. Other values will generate exceptions.",
-		OperationID: "getOrderById",
-		Tags:        []string{"store"},
-		Public:      true,
-		Responses: []specout.Response{
-			ok("successful operation"), desc(400, "Invalid ID supplied"),
-			desc(404, "Order not found"), def("Unexpected error"),
-		},
-	}
-}
-
-func deleteOrder(s *store) specout.Handler[deleteOrderReq, struct{}] {
-	return specout.Handler[deleteOrderReq, struct{}]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
-			id, _ := strconv.ParseInt(chi.URLParam(r, "orderId"), 10, 64)
-			s.mu.Lock()
-			_, found := s.orders[id]
-			delete(s.orders, id)
-			s.mu.Unlock()
-			if !found {
-				notFound(w, "Order not found")
-				return
-			}
-			w.WriteHeader(200)
-		},
-		Summary:     "Delete purchase order by identifier.",
-		Description: "For valid response try integer IDs with value < 1000. Anything above 1000 or non-integers will generate API errors.",
-		OperationID: "deleteOrder",
-		Tags:        []string{"store"},
-		Public:      true,
-		Responses: []specout.Response{
-			desc(200, "order deleted"), desc(400, "Invalid ID supplied"),
-			desc(404, "Order not found"), def("Unexpected error"),
-		},
-	}
-}
-
-func createUser(s *store) specout.Handler[User, User] {
-	return specout.Handler[User, User]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
-			var u User
-			if err := json.NewDecoder(r.Body).Decode(&u); err != nil {
-				writeJSON(w, 400, map[string]any{"message": "Invalid input"})
-				return
-			}
-			s.mu.Lock()
-			s.users[u.Username] = u
-			s.mu.Unlock()
-			writeJSON(w, 200, u)
-		},
-		Summary:     "Create user.",
-		Description: "This can only be done by the logged in user.",
-		OperationID: "createUser",
-		Tags:        []string{"user"},
-		Public:      true,
-		Responses: []specout.Response{
-			ok("successful operation"), def("Unexpected error"),
-		},
-		RequestContentTypes: jsonXMLForm,
-	}
-}
-
-func createUsersWithListInput(s *store) specout.Handler[[]User, User] {
-	return specout.Handler[[]User, User]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
-			var u []User
-			if err := json.NewDecoder(r.Body).Decode(&u); err != nil {
-				writeJSON(w, 400, map[string]any{"message": "Invalid input"})
-				return
-			}
-			s.mu.Lock()
-			for _, one := range u {
-				s.users[one.Username] = one
-			}
-			s.mu.Unlock()
-			if len(u) == 0 {
-				writeJSON(w, 200, User{})
-				return
-			}
-			writeJSON(w, 200, u[0])
-		},
-		Summary:     "Creates list of users with given input array.",
-		Description: "Creates list of users with given input array.",
-		OperationID: "createUsersWithListInput",
-		Tags:        []string{"user"},
-		Public:      true,
-		Responses: []specout.Response{
-			ok("Successful operation"), def("Unexpected error"),
-		},
-	}
-}
-
-func loginUser(s *store) specout.Handler[loginUserReq, string] {
-	return specout.Handler[loginUserReq, string]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
+		ok("Successful operation")))
+	b.Get("/user/login", op[loginUserReq, string]("loginUser", "Logs user into the system.", "Log into the system.", tagUser, true, nil,
+		func(w http.ResponseWriter, r *http.Request) {
 			name := r.URL.Query().Get("username")
-			s.mu.Lock()
-			_, found := s.users[name]
-			s.mu.Unlock()
-			if !found {
+			if _, found := get(s, s.users, name); !found {
 				writeJSON(w, 400, map[string]any{"message": "Invalid username/password supplied"})
 				return
 			}
@@ -556,117 +432,43 @@ func loginUser(s *store) specout.Handler[loginUserReq, string] {
 			w.Header().Set("X-Expires-After", time.Now().Add(time.Hour).UTC().Format(time.RFC3339))
 			writeJSON(w, 200, "logged in user session: "+name)
 		},
-		Summary:     "Logs user into the system.",
-		Description: "Log into the system.",
-		OperationID: "loginUser",
-		Tags:        []string{"user"},
-		Public:      true,
-		Responses: []specout.Response{
-			{Status: 200, ContentTypes: jsonOrXML, Raw: map[string]any{"description": "successful operation"}, Headers: []specout.Header{
+		specout.Response{Status: 200, ContentTypes: jsonOrXML, Raw: map[string]any{"description": "successful operation"},
+			Headers: []specout.Header{
 				{Name: "X-Rate-Limit", Type: int32(0)},
 				{Name: "X-Expires-After", Type: time.Time{}},
 			}},
-			desc(400, "Invalid username/password supplied"), def("Unexpected error"),
+		desc(400, "Invalid username/password supplied")))
+	b.Get("/user/logout", op[struct{}, struct{}]("logoutUser", "Logs out current logged in user session.", "Log user out of the system.", tagUser, true, nil,
+		func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) },
+		desc(200, "successful operation")))
+	b.Get("/user/{username}", op[getUserReq, User]("getUserByName", "Get user by user name.", "Get user detail based on username.", tagUser, true, nil,
+		func(w http.ResponseWriter, r *http.Request) {
+			show(w, s, s.users, chi.URLParam(r, "username"), "User not found")
 		},
-	}
-}
-
-func logoutUser() specout.Handler[struct{}, struct{}] {
-	return specout.Handler[struct{}, struct{}]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(200)
+		ok("successful operation"), invalidUsername, userNotFound))
+	// updateUser takes the body as Req and no path tag: the {username}
+	// placeholder stays a plain string, as in the published document.
+	b.Put("/user/{username}", op[User, struct{}]("updateUser", "Update user resource.", "This can only be done by the logged in user.",
+		tagUser, true, jsonXMLForm,
+		func(w http.ResponseWriter, r *http.Request) {
+			withBody(w, r, "bad request", func(u User) {
+				name := chi.URLParam(r, "username")
+				s.mu.Lock()
+				if u.Username == "" {
+					u.Username = name
+				}
+				s.users[name] = u
+				s.mu.Unlock()
+				w.WriteHeader(200)
+			})
 		},
-		Summary:     "Logs out current logged in user session.",
-		Description: "Log user out of the system.",
-		OperationID: "logoutUser",
-		Tags:        []string{"user"},
-		Public:      true,
-		Responses: []specout.Response{
-			desc(200, "successful operation"), def("Unexpected error"),
+		desc(200, "successful operation"), desc(400, "bad request"), desc(404, "user not found")))
+	b.Delete("/user/{username}", op[deleteUserReq, struct{}]("deleteUser", "Delete user resource.",
+		"This can only be done by the logged in user.", tagUser, true, nil,
+		func(w http.ResponseWriter, r *http.Request) {
+			deleteOr404(w, s, s.users, chi.URLParam(r, "username"), "User not found")
 		},
-	}
-}
-
-func getUserByName(s *store) specout.Handler[getUserReq, User] {
-	return specout.Handler[getUserReq, User]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
-			s.mu.Lock()
-			u, found := s.users[chi.URLParam(r, "username")]
-			s.mu.Unlock()
-			if !found {
-				notFound(w, "User not found")
-				return
-			}
-			writeJSON(w, 200, u)
-		},
-		Summary:     "Get user by user name.",
-		Description: "Get user detail based on username.",
-		OperationID: "getUserByName",
-		Tags:        []string{"user"},
-		Public:      true,
-		Responses: []specout.Response{
-			ok("successful operation"), desc(400, "Invalid username supplied"),
-			desc(404, "User not found"), def("Unexpected error"),
-		},
-	}
-}
-
-// updateUser takes the body as Req and no path tag: the {username} placeholder
-// stays a plain string, as in the published document.
-func updateUser(s *store) specout.Handler[User, struct{}] {
-	return specout.Handler[User, struct{}]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
-			var u User
-			if err := json.NewDecoder(r.Body).Decode(&u); err != nil {
-				writeJSON(w, 400, map[string]any{"message": "bad request"})
-				return
-			}
-			name := chi.URLParam(r, "username")
-			s.mu.Lock()
-			if u.Username == "" {
-				u.Username = name
-			}
-			s.users[name] = u
-			s.mu.Unlock()
-			w.WriteHeader(200)
-		},
-		Summary:     "Update user resource.",
-		Description: "This can only be done by the logged in user.",
-		OperationID: "updateUser",
-		Tags:        []string{"user"},
-		Public:      true,
-		Responses: []specout.Response{
-			desc(200, "successful operation"), desc(400, "bad request"),
-			desc(404, "user not found"), def("Unexpected error"),
-		},
-		RequestContentTypes: jsonXMLForm,
-	}
-}
-
-func deleteUser(s *store) specout.Handler[deleteUserReq, struct{}] {
-	return specout.Handler[deleteUserReq, struct{}]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
-			name := chi.URLParam(r, "username")
-			s.mu.Lock()
-			_, found := s.users[name]
-			delete(s.users, name)
-			s.mu.Unlock()
-			if !found {
-				notFound(w, "User not found")
-				return
-			}
-			w.WriteHeader(200)
-		},
-		Summary:     "Delete user resource.",
-		Description: "This can only be done by the logged in user.",
-		OperationID: "deleteUser",
-		Tags:        []string{"user"},
-		Public:      true,
-		Responses: []specout.Response{
-			desc(200, "User deleted"), desc(400, "Invalid username supplied"),
-			desc(404, "User not found"), def("Unexpected error"),
-		},
-	}
+		desc(200, "User deleted"), invalidUsername, userNotFound))
 }
 
 // petstoreDescription is info.description of the published document.
@@ -721,25 +523,9 @@ func New() (*specout.Generator, http.Handler) {
 	// One binder on the root router with the published absolute patterns: a
 	// group root would document "/pet/" where the published document has "/pet".
 	b := specout.Chi(d, r)
-	b.Put("/pet", updatePet(s))
-	b.Post("/pet", addPet(s))
-	b.Get("/pet/findByStatus", findPetsByStatus(s))
-	b.Get("/pet/findByTags", findPetsByTags(s))
-	b.Get("/pet/{petId}", getPetByID(s))
-	b.Post("/pet/{petId}", updatePetWithForm(s))
-	b.Delete("/pet/{petId}", deletePet(s))
-	b.Post("/pet/{petId}/uploadImage", uploadFile(s))
-	b.Get("/store/inventory", getInventory(s))
-	b.Post("/store/order", placeOrder(s))
-	b.Get("/store/order/{orderId}", getOrderByID(s))
-	b.Delete("/store/order/{orderId}", deleteOrder(s))
-	b.Post("/user", createUser(s))
-	b.Post("/user/createWithList", createUsersWithListInput(s))
-	b.Get("/user/login", loginUser(s))
-	b.Get("/user/logout", logoutUser())
-	b.Get("/user/{username}", getUserByName(s))
-	b.Put("/user/{username}", updateUser(s))
-	b.Delete("/user/{username}", deleteUser(s))
+	petRoutes(b, s)
+	storeRoutes(b, s)
+	userRoutes(b, s)
 
 	r.Mount("/openapi.json", d)
 	// Adopt registers the build-time walk and fails on undocumented routes.
@@ -749,44 +535,20 @@ func New() (*specout.Generator, http.Handler) {
 	return d, r
 }
 
-// Swagger UI over the generated spec.
-const swaggerPage = `<!DOCTYPE html>
-<html>
-<head>
-  <title>specout example — Swagger Petstore</title>
-  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
-</head>
-<body>
-<div id="swagger-ui"></div>
-<script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
-<script>window.ui = SwaggerUIBundle({ url: '/api/v3/openapi.json', dom_id: '#swagger-ui' })</script>
-</body>
-</html>`
-
 // Handler wraps the chi router with the demo page and the published server
 // prefix: the document declares servers: [/api/v3], so the API is served
 // there and the Swagger UI "try it out" button hits real routes.
 func Handler(d *specout.Generator, r http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/api/v3/", http.StripPrefix("/api/v3", r))
-	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
-		if req.URL.Path != "/" {
-			http.NotFound(w, req)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprint(w, swaggerPage)
-	})
+	page := examplekit.SwaggerPage("specout example — Swagger Petstore", "/api/v3/openapi.json")
+	mux.HandleFunc("/", examplekit.Page(page, http.NotFoundHandler()))
 	return mux
 }
 
 func main() {
 	d, r := New()
-	if os.Getenv("GO_SPEC_ONLY") != "" {
-		if err := d.WriteJSON(os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
+	if examplekit.EmitSpec(d) {
 		return
 	}
 	fmt.Println("petstore: http://localhost:8081/   spec: http://localhost:8081/api/v3/openapi.json")

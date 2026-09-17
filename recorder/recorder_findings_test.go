@@ -3,7 +3,6 @@ package recorder_test
 import (
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -13,114 +12,58 @@ import (
 	"github.com/happytoolin/specout/recorder"
 )
 
-func hit204(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }
-
-type errBody struct {
-	Msg string `json:"msg"`
-}
-
 // A handler returning a global-default code the spec declares (404) is not
-// drift. Regression: DeclaredStatuses is route-specific, SpecStatuses adds
-// the DefaultErrors envelope, and Verify must use the latter for this check.
+// drift: DeclaredStatuses is route-specific, SpecStatuses adds the
+// DefaultErrors envelope, and Verify must use the latter for this check.
 func TestDeclaredDefaultNotDrift(t *testing.T) {
 	d := specout.New(specout.Config{
 		Title: "t", Version: "1",
-		ErrorType: errBody{}, DefaultErrors: []int{400, 404, 500},
+		ErrorType: struct {
+			Msg string `json:"msg"`
+		}{},
+		DefaultErrors: []int{400, 404, 500},
 	})
-	r := chi.NewRouter()
-	rc := specout.Chi(d, r)
-	rc.Get("/x", specout.Handler[struct{}, specout.NoContent]{
-		HandlerFunc: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(404) },
-	})
-	if err := rc.Adopt(); err != nil {
-		t.Fatal(err)
-	}
-	rec := recorder.New(r)
-	rec.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/x", nil))
-	ft := &failT{}
-	recorder.Verify(ft, d, rec)
-	for _, e := range ft.errs {
-		if strings.Contains(e, "spec does not declare it") {
-			t.Errorf("declared default flagged as drift: %s", e)
-		}
-	}
+	rec := chiRoute(t, d, "GET", "/x", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(404) })
+	serve(rec, "GET", "/x")
+	wantNoErr(t, d, rec, "spec does not declare it", "declared default flagged as drift")
 }
 
-// HEAD against a GET-only route counts as the GET (finding 11).
+// HEAD against a GET-only route counts as the GET (finding 11): chi 405s the
+// probe, and the recorder must not key that as drift against the GET.
 func TestHeadMatchesGet(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	r := chi.NewRouter()
-	rc := specout.Chi(d, r)
-	rc.Get("/x", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: hit204})
-	if err := rc.Adopt(); err != nil {
-		t.Fatal(err)
-	}
-	rec := recorder.New(r)
-	rec.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/x", nil))
-	// HEAD probe on a GET-only route: chi 405s it; the recorder must not
-	// key it as drift against the declared GET.
-	rec.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("HEAD", "/x", nil))
-	ft := &failT{}
-	recorder.Verify(ft, d, rec)
-	if len(ft.errs) > 0 {
-		t.Fatalf("HEAD drift: %s", strings.Join(ft.errs, "; "))
-	}
+	d := gen()
+	rec := chiRoute(t, d, "GET", "/x", hit204)
+	serve(rec, "GET", "/x")
+	serve(rec, "HEAD", "/x")
+	wantNoErr(t, d, rec, "", "HEAD drift")
 }
 
-// Unmatched requests record nothing (finding 12).
 // A route declared as HEAD stays HEAD: the recorder does not relabel it GET.
 func TestDeclaredHeadNoDrift(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	r := chi.NewRouter()
-	rc := specout.Chi(d, r)
-	rc.Head("/x", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: hit204})
-	if err := rc.Adopt(); err != nil {
-		t.Fatal(err)
-	}
-	rec := recorder.New(r)
-	rec.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("HEAD", "/x", nil))
-	ft := &failT{}
-	recorder.Verify(ft, d, rec)
-	if len(ft.errs) > 0 {
-		t.Fatalf("declared HEAD drift: %s", strings.Join(ft.errs, "; "))
-	}
+	d := gen()
+	rec := chiRoute(t, d, "HEAD", "/x", hit204)
+	serve(rec, "HEAD", "/x")
+	wantNoErr(t, d, rec, "", "declared HEAD drift")
 }
 
+// Unmatched requests record nothing (finding 12): only the "declared never
+// produced" half may fire, never a 404 drift.
 func TestUnmatchedRecordsNothing(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	r := chi.NewRouter()
-	rc := specout.Chi(d, r)
-	rc.Get("/x", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: hit204})
-	if err := rc.Adopt(); err != nil {
-		t.Fatal(err)
-	}
-	rec := recorder.New(r)
-	rec.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/nope", nil))
-	ft := &failT{}
-	recorder.Verify(ft, d, rec)
-	// only the "declared never produced" half may fire; the 404 must not
-	for _, e := range ft.errs {
-		if strings.Contains(e, "404") {
-			t.Errorf("404 keyed as drift: %s", e)
-		}
-	}
+	d := gen()
+	rec := chiRoute(t, d, "GET", "/x", hit204)
+	serve(rec, "GET", "/nope")
+	wantNoErr(t, d, rec, "404", "404 keyed as drift")
 }
 
 // Unwrap lets http.ResponseController reach the real writer (finding 13).
 func TestResponseControllerThroughRecorder(t *testing.T) {
-	var flushed bool
-	done := make(chan struct{})
+	flushed := false
 	r := chi.NewRouter()
-	r.Get("/stream", func(w http.ResponseWriter, req *http.Request) {
-		rc := http.NewResponseController(w)
-		flushed = rc.Flush() == nil
-		close(done)
+	r.Get("/stream", func(w http.ResponseWriter, _ *http.Request) {
+		flushed = http.NewResponseController(w).Flush() == nil
 		_, _ = w.Write([]byte("hi"))
 	})
-	rec := recorder.New(r)
-	w := httptest.NewRecorder()
-	rec.ServeHTTP(w, httptest.NewRequest("GET", "/stream", nil))
-	<-done
+	recorder.New(r).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/stream", nil))
 	if !flushed {
 		t.Error("ResponseController could not reach the Flusher")
 	}
@@ -129,34 +72,26 @@ func TestResponseControllerThroughRecorder(t *testing.T) {
 // gorilla carries the matched route on a request copy, so the recorder has
 // to match itself: a plain and a regex template both key without drift.
 func TestGorillaPatternCaptured(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
+	d := gen()
 	g := gmux.NewRouter()
 	gc := specout.Gorilla(d, g)
-	gc.Get("/a/{id}", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: hit204})
-	gc.Get("/b/{id:[0-9]+}", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: hit204})
+	gc.Get("/a/{id}", nc(hit204))
+	gc.Get("/b/{id:[0-9]+}", nc(hit204))
 	rec := recorder.New(g)
-	rec.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/a/7", nil))
-	rec.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/b/7", nil))
-	ft := &failT{}
-	recorder.Verify(ft, d, rec)
-	if len(ft.errs) > 0 {
-		t.Fatalf("gorilla patterns not captured: %s", strings.Join(ft.errs, "; "))
-	}
+	serve(rec, "GET", "/a/7")
+	serve(rec, "GET", "/b/7")
+	wantNoErr(t, d, rec, "", "gorilla patterns not captured")
 }
 
 // A brace regex quantifier nests braces: the recorder must key it the same
 // way the spec does, or a served request drifts against a path that exists.
 func TestGorillaBraceQuantifierNoDrift(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
+	d := gen()
 	g := gmux.NewRouter()
-	specout.Gorilla(d, g).Get("/x/{id:[0-9]{4}}", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: hit204})
+	specout.Gorilla(d, g).Get("/x/{id:[0-9]{4}}", nc(hit204))
 	rec := recorder.New(g)
-	rec.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/x/2024", nil))
-	ft := &failT{}
-	recorder.Verify(ft, d, rec)
-	if len(ft.errs) > 0 {
-		t.Fatalf("brace quantifier drifted: %s", strings.Join(ft.errs, "; "))
-	}
+	serve(rec, "GET", "/x/2024")
+	wantNoErr(t, d, rec, "", "brace quantifier drifted")
 }
 
 // The spec endpoint lives on the app router but is not an operation: a skip
@@ -164,14 +99,8 @@ func TestGorillaBraceQuantifierNoDrift(t *testing.T) {
 func TestSpecEndpointSkipped(t *testing.T) {
 	d, r := router.New()
 	rec := recorder.New(r, specout.Skip("/openapi.json"))
-	rec.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/openapi.json", nil))
-	ft := &failT{}
-	recorder.Verify(ft, d, rec)
-	for _, e := range ft.errs {
-		if strings.Contains(e, "openapi.json") {
-			t.Fatalf("spec endpoint flagged as drift: %s", e)
-		}
-	}
+	serve(rec, "GET", "/openapi.json")
+	wantNoErr(t, d, rec, "openapi.json", "spec endpoint flagged as drift")
 }
 
 // An outer http.ServeMux subtree mount ("/api/v3/") is not an operation. A
@@ -179,23 +108,26 @@ func TestSpecEndpointSkipped(t *testing.T) {
 // carries that mount as r.Pattern; keying it would report drift against a
 // path that is not a route.
 func TestSubtreeMountNotKeyed(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1"})
-	r := chi.NewRouter()
-	rc := specout.Chi(d, r)
-	rc.Get("/x", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: hit204})
-	if err := rc.Adopt(); err != nil {
-		t.Fatal(err)
-	}
-	rec := recorder.New(r)
+	d := gen()
+	rec := chiRoute(t, d, "GET", "/x", hit204)
 	outer := http.NewServeMux()
 	outer.Handle("/api/v3/", http.StripPrefix("/api/v3", rec))
-	outer.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/api/v3/nope", nil))
-	outer.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("HEAD", "/api/v3/x", nil))
-	ft := &failT{}
-	recorder.Verify(ft, d, rec)
-	for _, e := range ft.errs {
-		if strings.Contains(e, "api/v3") {
-			t.Errorf("mount keyed as drift: %s", e)
-		}
+	for _, c := range []struct{ method, target string }{
+		{"GET", "/api/v3/nope"},
+		{"HEAD", "/api/v3/x"},
+	} {
+		outer.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(c.method, c.target, nil))
 	}
+	wantNoErr(t, d, rec, "api/v3", "mount keyed as drift")
+}
+
+// Std ServeMux apps: r.Pattern is set during ServeHTTP; the recorder must
+// read it after dispatch, not before.
+func TestStdMuxPatternCaptured(t *testing.T) {
+	mux := http.NewServeMux()
+	d := gen()
+	specout.Std(d, mux).Handle("GET /items/{id}", nc(hit204))
+	rec := recorder.New(mux)
+	serve(rec, "GET", "/items/9")
+	wantNoErr(t, d, rec, "", "verify errors")
 }

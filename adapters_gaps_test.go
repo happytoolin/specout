@@ -1,8 +1,6 @@
 package specout_test
 
 import (
-	"bytes"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -36,11 +34,15 @@ func probeCfg() specout.Config {
 		License: &specout.License{Name: "MIT", URL: "https://x.example/mit"},
 		Tags:    []specout.Tag{{Name: "things", ExternalDocs: &specout.ExternalDocs{URL: "https://x.example/things"}}},
 		Auth: []specout.AuthScheme{specout.OAuth2("oauth", map[string]specout.OAuth2Flow{
-			"implicit": {AuthorizationURL: "https://x.example/auth", Scopes: map[string]string{"read": "read"}},
+			"implicit": {
+				AuthorizationURL: "https://x.example/auth",
+				Scopes:           map[string]string{"write:pets": "modify pets", "read:pets": "read pets"},
+			},
 		}), specout.APIKey("api_key", "X-Key", "header")},
 	}
 }
 
+// probeRegister puts the fixture routes on one adapter's verb binders.
 func probeRegister(get func(string, specout.Handler[probeQ, probeRes]), post func(string, specout.Handler[probeBody, probeRes])) {
 	get("/things/{id}", specout.Handler[probeQ, probeRes]{
 		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
@@ -62,35 +64,39 @@ func probeRegister(get func(string, specout.Handler[probeQ, probeRes]), post fun
 	})
 }
 
-// probeAssert is the whole former-gap matrix against one adapter's document.
-// probeAssert is the whole former-gap matrix against one adapter's document.
+// probeAssert is the whole gap matrix against one adapter's document. The
+// features are registration and rendering, so the document must not depend on
+// which adapter found the route: this one assertion set runs on all three.
 func probeAssert(t *testing.T, doc map[string]any) {
 	t.Helper()
-	paths := doc["paths"].(map[string]any)
-	for _, p := range []string{"/things/{id}", "/things"} {
-		if _, ok := paths[p]; !ok {
-			t.Fatalf("missing path %s", p)
-		}
+	op := opOf(t, doc, "/things/{id}", "get")
+	params := map[string]map[string]any{}
+	for _, raw := range op["parameters"].([]any) {
+		p := raw.(map[string]any)
+		params[p["name"].(string)] = p
 	}
-
-	op := paths["/things/{id}"].(map[string]any)["get"].(map[string]any)
-	got := map[string]map[string]any{}
-	for _, p := range op["parameters"].([]any) {
-		m := p.(map[string]any)
-		got[m["name"].(string)] = m
+	if params["filter"]["style"] != "deepObject" || params["filter"]["explode"] != true {
+		t.Errorf("filter param = %v", params["filter"])
 	}
-	if got["filter"]["style"] != "deepObject" || got["filter"]["explode"] != true {
-		t.Errorf("filter param = %v", got["filter"])
+	// a parameter keyword, not a schema keyword: the schema must not grow one
+	if sch := params["filter"]["schema"].(map[string]any); sch["style"] != nil || sch["explode"] != nil {
+		t.Errorf("style/explode belong to the parameter, not its schema: %v", sch)
 	}
-	if got["X-Req"]["in"] != "header" {
-		t.Errorf("header param = %v", got["X-Req"])
+	if params["X-Req"]["in"] != "header" {
+		t.Errorf("header param = %v", params["X-Req"])
 	}
-	if got["id"]["in"] != "path" || got["id"]["required"] != true {
-		t.Errorf("path param = %v", got["id"])
+	if id := params["id"]; id["in"] != "path" || id["required"] != true {
+		t.Errorf("path param = %v", id)
 	}
 	resp := op["responses"].(map[string]any)
 	if _, ok := resp["4XX"]; !ok {
 		t.Errorf("responses = %v, want 4XX", resp)
+	}
+	if _, ok := resp["404"]; ok {
+		t.Error("a range key must not fan out into one code")
+	}
+	if _, ok := resp["200"]; !ok {
+		t.Error("the Res default 200 stays beside an explicit response")
 	}
 	if op["externalDocs"].(map[string]any)["description"] != "how it works" {
 		t.Errorf("op externalDocs = %v", op["externalDocs"])
@@ -99,27 +105,43 @@ func probeAssert(t *testing.T, doc map[string]any) {
 		t.Errorf("x-rate-limit = %v", op["x-rate-limit"])
 	}
 
-	postOp := paths["/things"].(map[string]any)["post"].(map[string]any)
+	postOp := opOf(t, doc, "/things", "post")
 	reqContent := postOp["requestBody"].(map[string]any)["content"].(map[string]any)
 	if _, ok := reqContent["application/xml"]; !ok {
-		t.Errorf("request content = %v", reqContent)
+		t.Errorf("request content = %v, want xml too", reqContent)
 	}
 	resContent := postOp["responses"].(map[string]any)["200"].(map[string]any)["content"].(map[string]any)
 	if len(resContent) != 2 {
-		t.Errorf("response content = %v", resContent)
+		t.Fatalf("response content = %v, want two media types", resContent)
+	}
+	jsonRef := resContent["application/json"].(map[string]any)["schema"].(map[string]any)["$ref"]
+	xmlRef := resContent["application/xml"].(map[string]any)["schema"].(map[string]any)["$ref"]
+	if xmlRef != jsonRef || jsonRef != "#/components/schemas/probeRes" {
+		t.Errorf("media type schemas = %v and %v, want one probeRes ref", jsonRef, xmlRef)
 	}
 
 	info := doc["info"].(map[string]any)
-	if info["termsOfService"] != "https://x.example/tos" || info["contact"].(map[string]any)["email"] != "api@x.example" || info["license"].(map[string]any)["name"] != "MIT" {
+	if info["termsOfService"] != "https://x.example/tos" || info["license"].(map[string]any)["name"] != "MIT" {
 		t.Errorf("info = %v", info)
+	}
+	contact := info["contact"].(map[string]any)
+	if contact["email"] != "api@x.example" {
+		t.Errorf("contact = %v", contact)
+	}
+	if _, ok := contact["url"]; ok {
+		t.Error("an empty contact field must not be emitted")
 	}
 	if doc["tags"].([]any)[0].(map[string]any)["externalDocs"].(map[string]any)["url"] != "https://x.example/things" {
 		t.Errorf("tag externalDocs = %v", doc["tags"])
 	}
+
 	schemes := doc["components"].(map[string]any)["securitySchemes"].(map[string]any)
-	flows := schemes["oauth"].(map[string]any)["flows"].(map[string]any)["implicit"].(map[string]any)
-	if flows["authorizationUrl"] != "https://x.example/auth" {
-		t.Errorf("oauth flows = %v", flows)
+	implicit := schemes["oauth"].(map[string]any)["flows"].(map[string]any)["implicit"].(map[string]any)
+	if implicit["authorizationUrl"] != "https://x.example/auth" {
+		t.Errorf("oauth flows = %v", implicit)
+	}
+	if scopes := implicit["scopes"].(map[string]any); len(scopes) != 2 || scopes["write:pets"] != "modify pets" {
+		t.Errorf("scopes = %v", scopes)
 	}
 	if schemes["api_key"].(map[string]any)["name"] != "X-Key" {
 		t.Errorf("api_key = %v", schemes["api_key"])
@@ -135,17 +157,11 @@ func probeAssert(t *testing.T, doc map[string]any) {
 }
 
 // probeInvariant: every path SpecStatuses knows about is a path the document
-// emits (catch-alls are the only allowed omission).
+// emits (catch-alls are the only allowed omission), and a bare range key allows
+// a 404 without requiring one.
 func probeInvariant(t *testing.T, d *specout.Generator, doc map[string]any) {
 	t.Helper()
-	st, err := d.SpecStatuses()
-	if err != nil {
-		t.Fatal(err)
-	}
-	declared, err := d.DeclaredStatuses()
-	if err != nil {
-		t.Fatal(err)
-	}
+	st, declared := specStatuses(t, d), declaredStatuses(t, d)
 	paths := doc["paths"].(map[string]any)
 	for k := range st {
 		if _, ok := paths[k.Path]; !ok {
@@ -161,19 +177,7 @@ func probeInvariant(t *testing.T, d *specout.Generator, doc map[string]any) {
 	}
 }
 
-func probeBuild(t *testing.T, d *specout.Generator) map[string]any {
-	t.Helper()
-	var buf bytes.Buffer
-	if err := d.WriteJSON(&buf); err != nil {
-		t.Fatal(err)
-	}
-	var doc map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &doc); err != nil {
-		t.Fatal(err)
-	}
-	return doc
-}
-
+// probeServe produces the fixture's documented codes through the recorder.
 func probeServe(rec *recorder.Recorder, targets ...string) {
 	for _, target := range targets {
 		rec.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", target, nil))
@@ -181,44 +185,8 @@ func probeServe(rec *recorder.Recorder, targets ...string) {
 	rec.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/things", strings.NewReader("{}")))
 }
 
-// TestGapFeaturesOnEveryAdapter: the gap features are registration and
-// rendering, so the document must not depend on which adapter found the
-// route. Each adapter registers the same handlers, gets the same document,
-// and passes the same drift check.
-func TestGapFeaturesOnEveryAdapter(t *testing.T) {
-	t.Run("chi", func(t *testing.T) {
-		d := specout.New(probeCfg())
-		r := chi.NewRouter()
-		b := specout.Chi(d, r)
-		probeRegister(b.Get[probeQ, probeRes], b.Post[probeBody, probeRes])
-		if err := b.Adopt(); err != nil {
-			t.Fatal(err)
-		}
-		probeCheck(t, d, r, probeBuild(t, d))
-	})
-
-	t.Run("gorilla", func(t *testing.T) {
-		d := specout.New(probeCfg())
-		r := mux.NewRouter()
-		b := specout.Gorilla(d, r)
-		probeRegister(b.Get[probeQ, probeRes], b.Post[probeBody, probeRes])
-		if err := b.Adopt(); err != nil {
-			t.Fatal(err)
-		}
-		probeCheck(t, d, r, probeBuild(t, d))
-	})
-
-	t.Run("std", func(t *testing.T) {
-		d := specout.New(probeCfg())
-		r := http.NewServeMux()
-		b := specout.Std(d, r)
-		probeRegister(b.Get[probeQ, probeRes], b.Post[probeBody, probeRes])
-		probeCheck(t, d, r, probeBuild(t, d))
-	})
-}
-
-// probeCheck asserts the document, the SpecStatuses invariant, and that the
-// recorder sees no drift once the documented codes are produced.
+// probeCheck asserts the document and the drift view, then requires a clean
+// drift check once the documented codes are produced.
 func probeCheck(t *testing.T, d *specout.Generator, r http.Handler, doc map[string]any) {
 	t.Helper()
 	probeAssert(t, doc)
@@ -226,4 +194,29 @@ func probeCheck(t *testing.T, d *specout.Generator, r http.Handler, doc map[stri
 	rec := recorder.New(r)
 	probeServe(rec, "/things/1", "/things/1?fail=1")
 	recorder.Verify(t, d, rec)
+}
+
+// TestGapFeaturesOnEveryAdapter registers one fixture on each adapter and
+// requires the same document, the same drift view and the same clean check.
+func TestGapFeaturesOnEveryAdapter(t *testing.T) {
+	t.Run("chi", func(t *testing.T) {
+		d, r := specout.New(probeCfg()), chi.NewRouter()
+		b := specout.Chi(d, r)
+		probeRegister(b.Get[probeQ, probeRes], b.Post[probeBody, probeRes])
+		adopt(t, b)
+		probeCheck(t, d, r, buildDoc(t, d))
+	})
+	t.Run("gorilla", func(t *testing.T) {
+		d, r := specout.New(probeCfg()), mux.NewRouter()
+		b := specout.Gorilla(d, r)
+		probeRegister(b.Get[probeQ, probeRes], b.Post[probeBody, probeRes])
+		adopt(t, b)
+		probeCheck(t, d, r, buildDoc(t, d))
+	})
+	t.Run("std", func(t *testing.T) {
+		d, r := specout.New(probeCfg()), http.NewServeMux()
+		b := specout.Std(d, r)
+		probeRegister(b.Get[probeQ, probeRes], b.Post[probeBody, probeRes])
+		probeCheck(t, d, r, buildDoc(t, d))
+	})
 }

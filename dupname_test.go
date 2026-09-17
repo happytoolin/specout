@@ -47,7 +47,7 @@ func TestSameNamedNestedTypesPanic(t *testing.T) {
 	}()
 	d := specout.New(specout.Config{Title: "t", Version: "1"})
 	r := chi.NewRouter()
-	specout.Chi(d, r).Get("/x", specout.Handler[struct{}, nestedDup]{HandlerFunc: noop2})
+	specout.Chi(d, r).Get("/x", specout.Handler[struct{}, nestedDup]{HandlerFunc: noop})
 	serveDoc(t, d, r)
 }
 
@@ -57,7 +57,7 @@ func TestNestedOnlyOverrideApplies(t *testing.T) {
 	d := specout.New(specout.Config{Title: "t", Version: "1"})
 	d.SchemaName[Contact]("LocalContact")
 	r := chi.NewRouter()
-	specout.Chi(d, r).Get("/x", specout.Handler[struct{}, nestedDup]{HandlerFunc: noop2})
+	specout.Chi(d, r).Get("/x", specout.Handler[struct{}, nestedDup]{HandlerFunc: noop})
 	doc := serveDoc(t, d, r)
 
 	schemas := doc["components"].(map[string]any)["schemas"].(map[string]any)
