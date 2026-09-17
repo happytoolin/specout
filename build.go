@@ -29,10 +29,10 @@ func (d *Generator) build() (*obj, error) {
 	info.setIf("description", d.cfg.Description)
 	info.setIf("termsOfService", d.cfg.TermsOfService)
 	if c := d.cfg.Contact; c != nil {
-		info.set("contact", strObj("name", c.Name, "url", c.URL, "email", c.Email))
+		info.set("contact", newObj().setIf("name", c.Name).setIf("url", c.URL).setIf("email", c.Email))
 	}
 	if l := d.cfg.License; l != nil {
-		info.set("license", strObj("name", l.Name, "url", l.URL))
+		info.set("license", newObj().setIf("name", l.Name).setIf("url", l.URL))
 	}
 	spec.set("openapi", "3.1.0").set("info", info)
 	if len(d.cfg.Servers) > 0 {
