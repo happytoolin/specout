@@ -1,5 +1,7 @@
 # specout
 
+![specout v0.0.1 — OpenAPI 3.1 from plain Go handlers](release-assets/v0.0.1/specout-v0.0.1-og.png)
+
 Generate OpenAPI 3.1 from plain Go HTTP handlers.
 
 `specout` keeps your runtime code native. It reads request and response types when you register routes, builds one deterministic OpenAPI document, and lets tests detect route or status-code drift.
@@ -23,7 +25,7 @@ Generate OpenAPI 3.1 from plain Go HTTP handlers.
 ## Install
 
 ```bash
-go get github.com/happytoolin/specout
+go get github.com/happytoolin/specout@v0.0.1
 ```
 
 Install the public agent skill when you want an agent to add or verify specout
@@ -168,6 +170,8 @@ func TestObservedStatusesMatch(t *testing.T) {
 | `gorilla/mux` | `specout.Gorilla` | Registers typed routes and can adopt routes from the live router |
 | `http.ServeMux` | `specout.Std` | Registers typed routes explicitly |
 | Other routers | `specout.Document` | Builds the document without a router adapter |
+
+More router adapters are welcome. Open an issue with the router and use case you need, or send a pull request.
 
 `chi` and `gorilla/mux` can enumerate their route trees. `http.ServeMux` cannot, so direct calls to `Handle` or `HandleFunc` are not visible to `specout`.
 

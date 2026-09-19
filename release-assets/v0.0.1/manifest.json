@@ -1,0 +1,14 @@
+{
+  "release": "v0.0.1",
+  "exports": [
+    {
+      "file": "specout-v0.0.1-og.png",
+      "purpose": "Open Graph and social release image",
+      "width": 1200,
+      "height": 630,
+      "format": "PNG",
+      "bytes": 649010,
+      "sha256": "ad48c96337eb7cdfb5ca4b20abebae707b521340bb0828d9317fb852f49d04da"
+    }
+  ]
+}
