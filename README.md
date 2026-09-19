@@ -149,17 +149,17 @@ func TestSpecMatchesReality(t *testing.T) {
 }
 ```
 
-The golden export is committed. CI checks its bytes, runs race tests, and
-validates generated test documents and examples against OpenAPI 3.1:
+CI runs race tests, validates generated documents against OpenAPI 3.1, and
+compares selected operations with pinned GitHub, Stripe, and Cloudflare
+contracts. Export a document for review with:
 
 ```sh
-just golden
-git diff --exit-code examples/onboarding/openapi.json
+just spec > openapi.json
 ```
 
 Run `just validate` to validate generated documents against OpenAPI 3.1 and
-JSON Schema 2020-12. Run `just client-types` to generate and compile TypeScript
-types from all served examples.
+JSON Schema 2020-12, then compare the pinned public contracts. Run `just
+client-types` to generate and compile TypeScript types from all served examples.
 
 ## Demo
 
