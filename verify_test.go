@@ -8,33 +8,39 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/happytoolin/specout"
-	"github.com/happytoolin/specout/internal/demo/router"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestRequireDocumentedPasses(t *testing.T) {
-	d, r := router.New()
-	specout.Chi(d, r.(chi.Router)).RequireDocumented(t)
+	d, r := documentedRouter()
+	specout.Chi(d, r).RequireDocumented(t)
 }
 
 func TestRequireDocumentedFailsOnStray(t *testing.T) {
-	d, r := router.New()
-	r.(chi.Router).Get("/debug/vars", func(http.ResponseWriter, *http.Request) {})
-	r.(chi.Router).Get("/debug/hidden", func(http.ResponseWriter, *http.Request) {})
+	d, r := documentedRouter()
+	r.Get("/debug/vars", func(http.ResponseWriter, *http.Request) {})
+	r.Get("/debug/hidden", func(http.ResponseWriter, *http.Request) {})
 
 	capt := &captureT{}
-	specout.Chi(d, r.(chi.Router)).RequireDocumented(capt, specout.Skip("/debug/*"))
+	specout.Chi(d, r).RequireDocumented(capt, specout.Skip("/debug/*"))
 	require.Empty(t, capt.errs, "skip must suppress /debug/*")
 }
 
 // A plain r.Get with no skip is reported, naming the route.
 func TestRequireDocumentedReportsStray(t *testing.T) {
-	d, r := router.New()
-	r.(chi.Router).Get("/stray", strayHandler)
+	d, r := documentedRouter()
+	r.Get("/stray", strayHandler)
 	capt := &captureT{}
-	specout.Chi(d, r.(chi.Router)).RequireDocumented(capt)
+	specout.Chi(d, r).RequireDocumented(capt)
 	require.Contains(t, strings.Join(capt.errs, ";"), "/stray", "want /stray reported")
+}
+
+func documentedRouter() (*specout.Generator, chi.Router) {
+	d := specout.New(specout.Config{Title: "test", Version: "1"})
+	r := chi.NewRouter()
+	specout.Chi(d, r).Get("/documented", specout.Get[struct{}]{HandlerFunc: okBody})
+	return d, r
 }
 
 // Two generators on two roots each check their own router: no shared state.

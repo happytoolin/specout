@@ -61,21 +61,13 @@ func optionalTag(tag string) bool {
 // A path: field is one: it types the {name} placeholder and must not appear in
 // the body either.
 func isParamField(f reflect.StructField) bool {
-	if f.PkgPath != "" {
-		return false
-	}
 	loc, value := paramTag(f)
-	if loc == "" {
-		return false
-	}
 	// query:"-" (or header:"-") opts out: the field is a plain body field.
-	return loc == pathLocation || parts0(value) != "-"
+	return f.PkgPath == "" && loc != "" && (loc == pathLocation || parts0(value) != "-")
 }
 
 // hasParamField reports whether t carries any parameter field.
-func hasParamField(t reflect.Type) bool {
-	return slices.ContainsFunc(exportedFields(t), isParamField)
-}
+func hasParamField(t reflect.Type) bool { return slices.ContainsFunc(exportedFields(t), isParamField) }
 
 // taggedParams reflects Req fields carrying a query/header/cookie tag into
 // OpenAPI parameters.

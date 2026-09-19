@@ -5,9 +5,7 @@
 package main
 
 import (
-	"fmt"
 	"net/http"
-	"os"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -97,13 +95,5 @@ func Handler(r http.Handler) http.Handler {
 
 func main() {
 	d, r := New()
-	if examplekit.EmitSpec(d) {
-		return
-	}
-	fmt.Println("petstore: http://localhost:8081/   spec: http://localhost:8081/api/v3/openapi.json")
-	srv := &http.Server{Addr: ":8081", Handler: Handler(r), ReadHeaderTimeout: examplekit.ReadHeaderTimeout}
-	if err := srv.ListenAndServe(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+	examplekit.Run(":8081", "petstore", d, Handler(r))
 }

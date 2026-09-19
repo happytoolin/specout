@@ -5,9 +5,7 @@
 package main
 
 import (
-	"fmt"
 	"net/http"
-	"os"
 
 	"github.com/gorilla/mux"
 
@@ -20,7 +18,7 @@ const graphDescription = "This OData service is located at https://graph.microso
 
 // New builds the generator and the router. The published document declares no
 // securitySchemes, though Graph takes a bearer token.
-func New() (*specout.Generator, *mux.Router) {
+func New() (*specout.Generator, http.Handler) {
 	d := specout.New(specout.Config{
 		Title:       "OData Service for namespace microsoft.graph",
 		Version:     "v1.0",
@@ -33,6 +31,7 @@ func New() (*specout.Generator, *mux.Router) {
 	r := mux.NewRouter()
 	b := specout.Gorilla(d, r)
 	routes(b, s)
+	r.Handle("/openapi.json", d).Methods(http.MethodGet, http.MethodHead)
 	if err := b.Adopt(); err != nil {
 		panic(err)
 	}
@@ -41,22 +40,11 @@ func New() (*specout.Generator, *mux.Router) {
 
 // Handler serves the demo: Swagger UI at / and the spec at /openapi.json. The
 // published server URL is absolute, so "try it out" aims at real Graph.
-func Handler(d *specout.Generator, r http.Handler) http.Handler {
-	std := http.NewServeMux()
-	std.Handle("/openapi.json", d)
-	std.Handle("/", examplekit.Page(examplekit.SwaggerPage("specout example — Microsoft Graph subset", "/openapi.json"), r))
-	return std
+func Handler(r http.Handler) http.Handler {
+	return examplekit.Page(examplekit.SwaggerPage("specout example — Microsoft Graph subset", "/openapi.json"), r)
 }
 
 func main() {
 	d, r := New()
-	if examplekit.EmitSpec(d) {
-		return
-	}
-	fmt.Println("msgraph: http://localhost:8082/   spec: http://localhost:8082/openapi.json")
-	srv := &http.Server{Addr: ":8082", Handler: Handler(d, r), ReadHeaderTimeout: examplekit.ReadHeaderTimeout}
-	if err := srv.ListenAndServe(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+	examplekit.Run(":8082", "msgraph", d, Handler(r))
 }

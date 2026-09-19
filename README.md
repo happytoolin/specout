@@ -149,26 +149,26 @@ func TestSpecMatchesReality(t *testing.T) {
 }
 ```
 
-The golden export is committed. CI checks its bytes, runs race tests, and validates generated test documents and examples against OpenAPI 3.1:
+The golden export is committed. CI checks its bytes, runs race tests, and
+validates generated test documents and examples against OpenAPI 3.1:
 
 ```sh
-GO_SPEC_ONLY=1 go run ./cmd/demo > openapi.json
-git diff --exit-code openapi.json
+just golden
+git diff --exit-code examples/onboarding/openapi.json
 ```
 
-Run `just validate` to check the documents and compare six selected operations
-from pinned GitHub, Stripe, and Cloudflare specifications. Run `just client-types`
-to generate and compile TypeScript types. See [compatibility and release checks](docs/compatibility.md)
-for the tested scope and limits.
+Run `just validate` to validate generated documents against OpenAPI 3.1 and
+JSON Schema 2020-12. Run `just client-types` to generate and compile TypeScript
+types from all served examples.
 
 ## Demo
 
 ```sh
 git clone https://github.com/happytoolin/specout && cd specout
-just demo   # or: go run ./cmd/demo
+just demo   # or: go run ./examples/onboarding
 ```
 
-Swagger UI at http://localhost:8080/, Scalar at /scalar, Redoc at /redoc, the spec at /openapi.json.
+Swagger UI is at http://localhost:8080/. The spec is at `/openapi.json`.
 
 | Route | What it shows |
 |---|---|
@@ -188,12 +188,26 @@ Swagger UI at http://localhost:8080/, Scalar at /scalar, Redoc at /redoc, the sp
 - **chi, gorilla and std mux all work.** `specout.Chi(d, r).Get(...)` / `specout.Gorilla(d, gm).Get(...)` / `specout.Std(d, mux).Handle("GET /path", ...)`. Other routers record through `specout.Document`.
 - **No comment parsing, ever.** Types are the single source of truth.
 
-## Docs
+## How the pieces connect
 
-- [docs/api-reference.html](docs/api-reference.html) — the full public surface with generated-output examples
-- [docs/design-discussion.md](docs/design-discussion.md) — rationale and trade-offs
-- [docs/compatibility.md](docs/compatibility.md) — validation commands, public API samples, and limits
-- [PLAN.md](PLAN.md) — original implementation plan
+1. `Handler[Req, Res]` carries the handler and its document metadata.
+2. `Chi`, `Gorilla`, `Std`, or `Document` records one internal route entry.
+3. The first spec read resolves live router paths and reflects request and
+   response schemas.
+4. The generator freezes and serves deterministic OpenAPI JSON.
+5. `recorder.Verify` compares declared status codes with codes observed in
+   tests.
+
+The core files follow that flow: `routes.go` records routes, `build.go`
+assembles the document, `schema.go` and `fixups.go` own schema reflection, and
+`recorder/` owns runtime verification. Router-specific code stays in the three
+`register_*.go` files.
+
+## More examples
+
+See [examples/README.md](examples/README.md) for the onboarding, Petstore, and
+Microsoft Graph examples. Public types and methods have Go documentation in
+the source.
 
 ## License
 

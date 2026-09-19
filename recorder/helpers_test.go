@@ -20,7 +20,6 @@ type failT struct{ errs []string }
 
 func (f *failT) Helper()                    {}
 func (f *failT) Errorf(fm string, a ...any) { f.errs = append(f.errs, fmt.Sprintf(fm, a...)) }
-func (f *failT) Fatalf(fm string, a ...any) { f.Errorf(fm, a...) }
 
 func hit204(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }
 
@@ -28,6 +27,31 @@ func gen() *specout.Generator { return specout.New(specout.Config{Title: "t", Ve
 
 func nc(h http.HandlerFunc) specout.Handler[struct{}, specout.NoContent] {
 	return specout.Handler[struct{}, specout.NoContent]{HandlerFunc: h}
+}
+
+type responseBody struct {
+	OK bool `json:"ok"`
+}
+
+func statusRoute(t *testing.T) (*specout.Generator, *recorder.Recorder) {
+	t.Helper()
+	d, r := gen(), chi.NewRouter()
+	b := specout.Chi(d, r)
+	b.Post("/items", specout.Handler[struct{}, responseBody]{
+		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Query().Get("status") {
+			case "201":
+				w.WriteHeader(http.StatusCreated)
+			case "409":
+				w.WriteHeader(http.StatusConflict)
+			default:
+				w.WriteHeader(http.StatusOK)
+			}
+		},
+		Responses: []specout.Response{{Status: http.StatusCreated}, {Status: http.StatusConflict}},
+	})
+	require.NoError(t, b.Adopt())
+	return d, recorder.New(r)
 }
 
 func serve(h http.Handler, method, target string) {

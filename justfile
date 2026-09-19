@@ -5,7 +5,7 @@
 lintbin := "go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2"
 
 # default: quick local checks; CI also runs build, race, validate and client-types
-default: lint test check-golden
+default: lint test
 
 # install the pinned validation tools in an isolated environment
 validation-deps:
@@ -13,22 +13,15 @@ validation-deps:
     if [ ! -x .venv/bin/python ]; then python3 -m venv .venv; fi
     .venv/bin/pip install -q -r tools/requirements.txt
 
-# validate the golden, test documents, examples and selected upstream contracts
+# validate generated test documents and served examples
 validate: validation-deps
-    .venv/bin/python tools/test_contract_comparison.py
-    .venv/bin/python tools/validate_spec.py testdata/openapi.json
     .venv/bin/python tools/validate_suite.py
-    .venv/bin/python tools/check_compatibility.py
-
-# refresh pinned upstream excerpts and verify their checksums (network required)
-compatibility-refresh: validation-deps
-    .venv/bin/python tools/check_compatibility.py --refresh
 
 # check all packages with the race detector
 race:
     go test -race ./...
 
-# generate and compile client types for all six examples (Node.js/npm required)
+# generate and compile client types for all served examples (Node.js/npm required)
 client-types:
     ./tools/check_client_types.sh
 
@@ -55,23 +48,17 @@ tidy:
 fmt:
     {{ lintbin }} fmt ./...
 
-# serve the demo: swagger ui at /, scalar at /scalar
+# serve the compact onboarding example
 demo:
-    go run ./cmd/demo
+    go run ./examples/onboarding
 
 # export the spec to stdout (CI golden uses this same path)
 spec:
-    GO_SPEC_ONLY=1 go run ./cmd/demo
+    GO_SPEC_ONLY=1 go run ./examples/onboarding
 
-# regenerate testdata/openapi.json after intentional spec changes
+# regenerate the onboarding golden after intentional spec changes
 golden:
-    UPDATE_GOLDEN=1 go test -run TestGoldenSpec .
-
-# fail if the committed golden differs from what the binary emits
-check-golden:
-    GO_SPEC_ONLY=1 go run ./cmd/demo > /tmp/specout-spec.json
-    cmp /tmp/specout-spec.json testdata/openapi.json || (echo "stale: run just golden" && exit 1)
-    @echo "golden ok"
+    UPDATE_GOLDEN=1 go test -run TestGoldenSpec ./examples/onboarding
 
 # tidy, lint, test — the pre-commit sweep
 sweep: tidy lint test

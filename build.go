@@ -134,7 +134,7 @@ func (d *Generator) schemaObjs(sr *schemaRegistry) *obj {
 	}
 	// hoisted $defs with no Go type: emitted after the typed components
 	for _, n := range sr.nameOrder {
-		if !schemas.has(n) {
+		if schemas.get(n) == nil {
 			schemas.set(n, sr.byName[n])
 		}
 	}

@@ -23,12 +23,10 @@ type respEntry struct {
 // document and the drift check cannot disagree about what a route returns.
 func (d *Generator) responsePlan(rec *routeRecord, withDefaults bool) []respEntry {
 	var order []string
-	seen := map[string]bool{}
 	byKey := map[string]respEntry{}
 	omitted := map[string]bool{}
 	put := func(e respEntry) {
-		if !seen[e.key] {
-			seen[e.key] = true
+		if _, exists := byKey[e.key]; !exists {
 			order = append(order, e.key)
 		}
 		delete(omitted, e.key)
@@ -99,10 +97,8 @@ func (d *Generator) putDefaultErrors(put func(respEntry), byKey map[string]respE
 	}
 	for _, code := range d.cfg.DefaultErrors {
 		key := responseKey(code, "")
-		if omitted[key] {
-			continue
-		}
-		if _, declared := byKey[key]; declared {
+		_, declared := byKey[key]
+		if omitted[key] || declared {
 			continue
 		}
 		put(respEntry{key: key, code: code, typ: et})
