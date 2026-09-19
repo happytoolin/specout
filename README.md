@@ -1,200 +1,206 @@
 # specout
 
-**OpenAPI 3.1 from plain Go handlers. No comments to keep in sync. No runtime to adopt. Specs your tests can prove honest.**
+Generate OpenAPI 3.1 from plain Go HTTP handlers.
 
-Point it at the router you already have. Tag the types you already have. It emits the spec; your tests verify it.
+`specout` keeps your runtime code native. It reads request and response types when you register routes, builds one deterministic OpenAPI document, and lets tests detect route or status-code drift.
 
-```go
-d := specout.New(specout.Config{
-	Title: "Onboarding API",
-	Version: "1.0.0",
-})
-```
+| | |
+|---|---|
+| Output | OpenAPI 3.1 and JSON Schema 2020-12 |
+| Go | 1.27 or later |
+| Routers | `net/http`, `chi/v5`, and `gorilla/mux` |
+| Runtime scope | Documentation only; your handlers keep control of decoding, validation, and responses |
 
-```go
-func HandleList(deps Deps) specout.Handler[ListRequest, Page] {
-	return specout.Handler[ListRequest, Page]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) { /* raw std */ },
-		Summary:     "List onboarding records",
-	}
-}
+## Why specout
 
-rc := specout.Chi(d, r)
-rc.Get("/onboarding", HandleList(deps))
-if err := rc.Adopt(); err != nil { panic(err) }
-r.Mount("/openapi.json", d)
-```
-
-## Why
-
-Specs rot because they live apart from the code. specout closes the gap from the Go side:
-
-- **Route checks.** The chi and gorilla adapters scan the live router for undocumented routes. Std mux and other routers use explicit declarations.
-- **No lock-in.** Handlers stay plain `http.HandlerFunc`. No framework, no request lifecycle to adopt — or later escape.
-- **Doc, nothing else.** It reads types, tags, and route patterns. It never decodes, validates, or writes a response.
-- **Provable.** A test-time recorder fails CI when a handler emits a status the spec does not declare, or vice versa.
-- **Byte-deterministic.** Same binary, same routes, same bytes. Diffs are reviewable; the spec commits like code.
-
-OpenAPI 3.1 (JSON Schema 2020-12), Go 1.27+. Three runtime dependencies: chi,
-gorilla/mux and the reflection layer. testify is a test-only dependency.
+- Keep normal `http.HandlerFunc` code.
+- Define the contract with Go types and field tags.
+- Generate stable JSON for review and version control.
+- Compare declared routes with the live router.
+- Compare declared responses with statuses observed in tests.
+- Avoid comments, generators, and a second routing system.
 
 ## Install
 
-Requires Go 1.27 or newer:
-
-```sh
-go get github.com/happytoolin/specout@latest
+```bash
+go get github.com/happytoolin/specout
 ```
 
-## The idea in one endpoint
+## Quick start
 
-Metadata rides the generic return type. Reflection sees it at registration; the handler itself stays untouched std:
-
-```go
-type UpsertRequest struct {
-	Owner string `json:"owner" jsonschema:"format=email"`
-	Stage string `json:"stage" jsonschema:"enum=draft|active|archived,default=draft"`
-}
-
-func HandleUpsert(d Deps) specout.Handler[UpsertRequest, Onboarding] {
-	return specout.Handler[UpsertRequest, Onboarding]{
-		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
-			var req UpsertRequest
-			json.NewDecoder(r.Body).Decode(&req) // your code, your way
-			api.JSON(w, 200, onb)               // your helper, not ours
-		},
-		Summary: "Create or replace a record",
-		Responses: []specout.Response{{Status: 422, Type: api.ValidationError{}}},
-	}
-}
-```
-
-The same metadata has a fluent spelling — chains copy, so factories can build up a base and callers extend it:
+Define request and response shapes with ordinary Go types.
 
 ```go
-func HandleUpsert(d Deps) specout.Handler[UpsertRequest, Onboarding] {
-	return specout.Handler[UpsertRequest, Onboarding]{HandlerFunc: upsert(d)}.
-		WithSummary("Create or replace a record").
-		WithTags("onboarding").
-		WithResponse(specout.Response{Status: 409, Type: SyncConflict{}})
+type ListRequest struct {
+	Limit int `query:"limit" jsonschema:"minimum=1,maximum=100,default=20"`
+}
+
+type Item struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type Page struct {
+	Items []Item `json:"items"`
+}
+
+var listItems = specout.Handler[ListRequest, Page]{
+	HandlerFunc: serveItems,
+	Summary:     "List items",
 }
 ```
 
-Both spellings are the same type: literal fields where metadata is static, the chain for composing or extending shared bases. Every link returns a copy.
-
-## Shape aliases
-
-The empty sides of `Handler` need no spelling out. Two aliases cover them; both are full type aliases, so every binder and `With*` method accepts them unchanged:
+Register the handler through a router adapter.
 
 ```go
-specout.Get[Onboarding]{HandlerFunc: fetch, Summary: "Fetch one record"}      // = Handler[struct{}, Onboarding]
-specout.Delete{HandlerFunc: remove, Summary: "Delete an onboarding record"}  // = Handler[struct{}, NoContent]
+doc := specout.New(specout.Config{
+	Title:   "Inventory API",
+	Version: "1.0.0",
+})
+
+router := chi.NewRouter()
+routes := specout.Chi(doc, router)
+routes.Get("/items", listItems)
+
+router.Mount("/openapi.json", doc)
+
+if err := routes.Adopt(); err != nil {
+	log.Fatal(err)
+}
+
+log.Fatal(http.ListenAndServe(":8080", router))
 ```
 
-Everything the spec needs is visible in the source you already write:
+The service now exposes its specification at `GET /openapi.json`.
 
-| Spec feature | How you declare it |
+## Describe the contract
+
+Most metadata comes from types and tags.
+
+| Need | Declaration |
 |---|---|
-| path params | route pattern `{id}` |
-| query/header/cookie params | `query:` / `header:` / `cookie:` tags on `Req` |
-| required vs optional | presence of `omitempty` or `omitzero` |
-| nullable | Go pointer (type union for scalars; `anyOf` for references) |
-| enums, bounds, patterns, formats | `jsonschema:` tag |
-| oneOf unions with discriminator | `d.Register[T]("name")` + `oneof_type` tag |
-| readOnly / writeOnly | `jsonschema:` tag |
-| auth schemes | `Config.Auth` (Bearer, API key, `OAuth2`, openIdConnect); `Public: true` opts out |
-| operationId | derived from method+path, or set `OperationID` |
-| status ranges | `{Key: "4XX"}` — one entry for a whole range; a concrete `Status` beside it is the code tests must produce |
-| several content types | `RequestContentTypes` on the handler, `ContentTypes` on a response |
-| parameter serialization | `jsonschema:"style=deepObject,explode=true"` |
-| deprecated property | `jsonschema:"deprecated"` |
-| `x-` extensions | `jsonschema_extras` on a field, `Raw` on a handler |
-| `examples` (plural) | repeat `example=` in the tag |
-| contact, license, terms | `Config.Contact` / `License` / `TermsOfService` |
-| externalDocs | `ExternalDocs` on `Config`, a handler, or a tag |
+| Query parameter | `` `query:"limit"` `` |
+| Path parameter | `` `path:"id"` `` |
+| Header | `` `header:"X-Trace-ID"` `` |
+| Cookie | `` `cookie:"session"` `` |
+| JSON body | `` `json:"name"` `` |
+| Optional property | `omitempty` or `omitzero` in its `json` tag |
+| Nullable property | Pointer type |
+| Constraints | `jsonschema` tags such as `minimum`, `maximum`, `pattern`, and `enum` |
+| Custom request media type | `RequestContentTypes` on the handler |
+| Binary upload | `specout.File` |
+| Binary download | `ContentType` on a `specout.Response` |
+| Empty response | `specout.NoContent` |
+| Discriminated union | `doc.Register[T]("name")` and a `oneof_type` tag |
+| Security | `Config.Auth` with `specout.Bearer`, `specout.APIKey`, or a custom scheme |
+| Explicit schema name | `doc.SchemaName[T]("Name")` |
 
-Two types with the same name panic at build time, with the fix in the message:
-the check covers nested types too, not only request and response bodies.
-
-```
-panic: specout: duplicate component name Widget (pa.Widget vs pb.Widget), call SchemaName to disambiguate
-```
-
-## Responses beyond 200
+Use fluent methods when they make route declarations easier to read.
 
 ```go
-Responses: []specout.Response{
-	{Status: 200, ContentType: "application/pdf"}, // binary download
-	{Status: 200, ContentTypes: []string{"application/json", "application/xml"}},
-	{Status: 201, Headers: []specout.Header{{Name: "Location"}}},
-	{Status: 409, Type: SyncConflict{}},       // per-route error shape
-	{Status: 401, Omit: true},                 // drop one default error code
-	{Key: "4XX", Type: Problem{}},              // one entry for a whole range
+h := specout.Get[Page]{HandlerFunc: servePage}.
+	WithSummary("List items").
+	WithTags("inventory")
+```
+
+Duplicate component names with different schemas fail when the document builds. Use an explicit schema name only when two Go types would otherwise collide.
+
+## Declare responses
+
+Success responses are inferred from the handler response type. Add other outcomes directly to the handler.
+
+```go
+h := specout.Handler[CreateRequest, Item]{
+	HandlerFunc: createItem,
+	Summary:     "Create an item",
+	Responses: []specout.Response{
+		{Status: http.StatusCreated, Headers: []specout.Header{{Name: "Location"}}},
+		{Status: http.StatusBadRequest, Type: Problem{}},
+		{Status: http.StatusConflict, Type: Problem{}},
+	},
 }
 ```
 
-## Verify it in CI
+You can also set shared default problems in `specout.Config`.
 
-Two tests keep the doc honest — every route documented, every declared status actually produced:
+## Verify the contract
+
+Check that every live route has documentation.
 
 ```go
-func TestEveryRouteIsDocumented(t *testing.T) { specout.Chi(d, r).RequireDocumented(t) }
+func TestRoutesAreDocumented(t *testing.T) {
+	doc := specout.New(specout.Config{Title: "Inventory API", Version: "1.0.0"})
+	router := chi.NewRouter()
+	routes := specout.Chi(doc, router)
 
-func TestSpecMatchesReality(t *testing.T) {
-	d, r := router.New()
-	// skip routes that are not API operations, e.g. the spec endpoint
-	rec := recorder.New(r, specout.Skip("/openapi.json"))
-	// ... hit every route through rec
-	recorder.Verify(t, d, rec)
+	registerRoutes(routes)
+	routes.RequireDocumented(t)
 }
 ```
 
-The golden export is committed. CI checks its bytes, runs race tests, and validates generated test documents and examples against OpenAPI 3.1:
+Check that tests observed only declared statuses, and that each declared status was observed.
 
-```sh
-GO_SPEC_ONLY=1 go run ./cmd/demo > openapi.json
-git diff --exit-code openapi.json
+```go
+func TestObservedStatusesMatch(t *testing.T) {
+	doc := specout.New(specout.Config{Title: "Inventory API", Version: "1.0.0"})
+	router := chi.NewRouter()
+	registerRoutes(specout.Chi(doc, router))
+
+	recorded := recorder.New(router, specout.Skip("/openapi.json"))
+	// Exercise the API through recorded.
+
+	recorder.Verify(t, doc, recorded)
+}
 ```
 
-Run `just validate` to check the documents and compare six selected operations
-from pinned GitHub, Stripe, and Cloudflare specifications. Run `just client-types`
-to generate and compile TypeScript types. See [compatibility and release checks](docs/compatibility.md)
-for the tested scope and limits.
+## Router support
 
-## Demo
+| Router | Adapter | Behavior |
+|---|---|---|
+| `chi/v5` | `specout.Chi` | Registers typed routes and can adopt routes from the live router |
+| `gorilla/mux` | `specout.Gorilla` | Registers typed routes and can adopt routes from the live router |
+| `http.ServeMux` | `specout.Std` | Registers typed routes explicitly |
+| Other routers | `specout.Document` | Builds the document without a router adapter |
 
-```sh
-git clone https://github.com/happytoolin/specout && cd specout
-just demo   # or: go run ./cmd/demo
+`chi` and `gorilla/mux` can enumerate their route trees. `http.ServeMux` cannot, so direct calls to `Handle` or `HandleFunc` are not visible to `specout`.
+
+## How it works
+
+```text
+Handler[Request, Response]
+        ↓
+router adapter → route record → schema reflection → deterministic OpenAPI JSON
+        ↓
+test recorder → declared and observed status comparison
 ```
 
-Swagger UI at http://localhost:8080/, Scalar at /scalar, Redoc at /redoc, the spec at /openapi.json.
+The document stays mutable while routes are registered. The first call to `WriteJSON` or `ServeHTTP` builds and freezes it. Later registration panics with a clear error.
 
-| Route | What it shows |
-|---|---|
-| `GET /onboarding` | cookie + header + query params on one request type |
-| `PUT /onboarding/{id}` | multi-status upsert (200/201), Location header, 422 override |
-| `POST /onboarding/{id}/sync` | optimistic concurrency, rich 409 body |
-| `POST /files/import` | file upload → multipart/form-data |
-| `GET /files/report` | binary response (PDF) |
-| `POST /webhooks`, `POST /channels` | oneOf unions with discriminators |
-| `POST /things` | every constraint keyword in one body |
-| `GET /legacy` | `Deprecated: true` |
+## Examples and development
 
-## Design rules
+The canonical example is in [`examples/onboarding`](examples/onboarding). Its committed [`openapi.json`](examples/onboarding/openapi.json) is the sample specification and a golden test fixture.
 
-- **Lazy build, freeze on first serve.** Registering after the spec is served panics.
-- **One generator per service.** Route and schema registrations stay on that generator.
-- **chi, gorilla and std mux all work.** `specout.Chi(d, r).Get(...)` / `specout.Gorilla(d, gm).Get(...)` / `specout.Std(d, mux).Handle("GET /path", ...)`. Other routers record through `specout.Document`.
-- **No comment parsing, ever.** Types are the single source of truth.
+```bash
+just test          # Run the test suite.
+just validate      # Validate the generated OpenAPI document.
+just client-types  # Generate and compile client types from every example.
+just demo          # Run the onboarding API on localhost:8080.
+```
 
-## Docs
+Two smaller integrations are also available:
 
-- [docs/api-reference.html](docs/api-reference.html) — the full public surface with generated-output examples
-- [docs/design-discussion.md](docs/design-discussion.md) — rationale and trade-offs
-- [docs/compatibility.md](docs/compatibility.md) — validation commands, public API samples, and limits
-- [PLAN.md](PLAN.md) — original implementation plan
+- [`examples/petstore`](examples/petstore)
+- [`examples/msgraph`](examples/msgraph)
+
+## Design guarantees
+
+- Generated output is deterministic.
+- Schema names are stable.
+- Route adoption finds undocumented paths and methods.
+- Status verification checks both missing and unexpected outcomes.
+- The library does not decode requests or write responses for you.
+- The library emits OpenAPI 3.1 only.
 
 ## License
 
-MIT
+MIT. See [`LICENSE`](LICENSE).

@@ -166,7 +166,7 @@ func TestSpecKeepsPublishedShapes(t *testing.T) {
 func TestGraphDemoServesEveryRouteAndNoUndocumentedCode(t *testing.T) {
 	d, r := New()
 	rec := recorder.New(r, specout.Skip("/openapi.json"))
-	srv := httptest.NewServer(Handler(d, rec))
+	srv := httptest.NewServer(Handler(rec))
 	defer srv.Close()
 
 	do := func(method, path, body string, want int) {

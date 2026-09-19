@@ -67,6 +67,19 @@ func EmitSpec(d *specout.Generator) bool {
 	return true
 }
 
-// ReadHeaderTimeout is the header timeout the example and demo binaries set:
+// Run exports the document for CI or starts one example server.
+func Run(addr, name string, d *specout.Generator, handler http.Handler) {
+	if EmitSpec(d) {
+		return
+	}
+	_, _ = fmt.Fprintf(os.Stdout, "%s: http://localhost%s/\n", name, addr)
+	server := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: ReadHeaderTimeout}
+	if err := server.ListenAndServe(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+// ReadHeaderTimeout is the header timeout the example binaries set:
 // a stalled client cannot hold a connection open forever.
 const ReadHeaderTimeout = 5 * time.Second

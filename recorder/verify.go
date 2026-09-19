@@ -7,19 +7,12 @@ import (
 	"github.com/happytoolin/specout"
 )
 
-// TestingT is the subset of *testing.T Verify needs.
-type TestingT interface {
-	Helper()
-	Errorf(format string, args ...any)
-	Fatalf(format string, args ...any)
-}
-
 // Verify fails the test when declared and observed status codes disagree in
 // either direction, naming the route and code. required is what each route
 // declares for itself, so a code never produced there is a coverage gap;
 // allowed adds the global error envelope, so a handler that returns a declared
 // default is not drift.
-func Verify(t TestingT, d *specout.Generator, rec *Recorder) {
+func Verify(t specout.TestingT, d *specout.Generator, rec *Recorder) {
 	t.Helper()
 	required, err := d.DeclaredStatuses()
 	if err != nil {

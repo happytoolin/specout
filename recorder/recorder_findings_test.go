@@ -8,9 +8,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	gmux "github.com/gorilla/mux"
 	"github.com/happytoolin/specout"
-	"github.com/happytoolin/specout/internal/demo/router"
 	"github.com/happytoolin/specout/recorder"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // A handler returning a global-default code the spec declares (404) is not
@@ -96,7 +96,11 @@ func TestGorillaBraceQuantifierNoDrift(t *testing.T) {
 // The spec endpoint lives on the app router but is not an operation: a skip
 // keeps it out of the drift check.
 func TestSpecEndpointSkipped(t *testing.T) {
-	d, r := router.New()
+	d, r := gen(), chi.NewRouter()
+	b := specout.Chi(d, r)
+	b.Get("/x", nc(hit204))
+	r.Mount("/openapi.json", d)
+	require.NoError(t, b.Adopt())
 	rec := recorder.New(r, specout.Skip("/openapi.json"))
 	serve(rec, "GET", "/openapi.json")
 	wantNoErr(t, d, rec, "openapi.json", "spec endpoint flagged as drift")

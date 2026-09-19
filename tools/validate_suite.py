@@ -22,7 +22,7 @@ def main():
         if not files:
             raise AssertionError("no test documents were exported")
         documents = [(path.name, json.loads(path.read_text())) for path in files]
-        for package in ("./cmd/demo", "./examples/petstore", "./examples/msgraph"):
+        for package in ("./examples/onboarding", "./examples/petstore", "./examples/msgraph"):
             output = subprocess.check_output(
                 ["go", "run", package], cwd=ROOT,
                 env={**os.environ, "GO_SPEC_ONLY": "1"},
@@ -37,9 +37,9 @@ def main():
                 raise AssertionError(f"{name}: {error}") from error
         print(f"PASS {len(files)} test documents and 3 served examples: OpenAPI 3.1 and JSON Schema")
 
-        demo = next(document for name, document in documents if name == "./cmd/demo")
+        demo = next(document for name, document in documents if name == "./examples/onboarding")
         validator = Draft202012Validator({
-            "$ref": "#/components/schemas/Config", "components": demo["components"],
+            "$ref": "#/components/schemas/webhook", "components": demo["components"],
         })
         validator.validate({"kind": "email", "data": {"address": "ops@example.com"}})
         validator.validate({"kind": "slack", "data": {"channel": "#ops"}})

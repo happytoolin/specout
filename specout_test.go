@@ -33,8 +33,7 @@ type UpsertRequest struct {
 
 type EmptyReq struct{}
 
-// TestQuickStartFlow mirrors docs/api-reference.html §01: registrations on
-// the root router with full patterns.
+// TestQuickStartFlow covers registrations on the root router with full paths.
 func TestQuickStartFlow(t *testing.T) {
 	d, r := specout.New(specout.Config{
 		Title:         "Onboarding API",
