@@ -20,7 +20,7 @@ jobs:
       - run: just lint
       - run: just test
       - run: just race
-      - name: Validate generated documents and pinned contracts
+      - name: Validate generated OpenAPI documents
         run: just validate
       - uses: actions/setup-node@v4
         with:

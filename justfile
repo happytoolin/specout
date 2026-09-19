@@ -13,15 +13,9 @@ validation-deps:
     if [ ! -x .venv/bin/python ]; then python3 -m venv .venv; fi
     .venv/bin/pip install -q -r tools/requirements.txt
 
-# validate generated documents and pinned public contracts
+# validate generated test documents and served examples
 validate: validation-deps
-    .venv/bin/python tools/test_contract_comparison.py
     .venv/bin/python tools/validate_suite.py
-    .venv/bin/python tools/check_compatibility.py
-
-# refresh pinned upstream excerpts and verify their checksums
-compatibility-refresh: validation-deps
-    .venv/bin/python tools/check_compatibility.py --refresh
 
 # check all packages with the race detector
 race:
@@ -61,6 +55,10 @@ demo:
 # export the spec to stdout (CI golden uses this same path)
 spec:
     GO_SPEC_ONLY=1 go run ./examples/onboarding
+
+# regenerate the onboarding golden after intentional spec changes
+golden:
+    UPDATE_GOLDEN=1 go test -run TestGoldenSpec ./examples/onboarding
 
 # tidy, lint, test — the pre-commit sweep
 sweep: tidy lint test

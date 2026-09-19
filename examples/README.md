@@ -10,12 +10,6 @@ startup to `internal/examplekit`.
 | `petstore` | Swagger Petstore, 13 paths and 19 operations | chi | 8081 |
 | `msgraph` | Microsoft Graph subset, 5 paths and 8 operations | gorilla/mux | 8082 |
 
-`compatibility` rebuilds selected GitHub, Stripe, and Cloudflare operations.
-Its pinned contract excerpts live in `compatibility/testdata`. `just validate`
-compares generated parameters, bodies, response codes, and schemas with those
-contracts. `just compatibility-refresh` refreshes the excerpts from their
-pinned commits and verifies the source checksums.
-
 Run one:
 
 ```sh
