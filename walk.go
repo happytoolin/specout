@@ -191,7 +191,7 @@ func (sr *schemaRegistry) addUnionBranch(name string, source *jsonschema.Schema,
 	properties.Set("data", &jsonschema.Schema{Ref: dataRef})
 	branch.Type = "object"
 	branch.Properties = properties
-	branch.Required = append([]string(nil), source.Required...)
+	branch.Required = slices.Clone(source.Required)
 	if !slices.Contains(branch.Required, discriminator) {
 		branch.Required = append(branch.Required, discriminator)
 	}

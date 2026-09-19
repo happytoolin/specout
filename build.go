@@ -146,10 +146,10 @@ func (d *Generator) schemaObjs(sr *schemaRegistry) *obj {
 func (d *Generator) pathObj(records []*routeRecord, sr *schemaRegistry) *obj {
 	paths := newObj()
 	for _, rec := range records {
-		op := d.operationFor(rec, sr)
 		if rec.omit {
 			continue
 		}
+		op := d.operationFor(rec, sr)
 		docP := docPath(rec.full)
 		pathItem, _ := paths.get(docP).(*obj)
 		if pathItem == nil {

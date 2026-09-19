@@ -217,10 +217,8 @@ func applyBoolEnumTag(p *jsonschema.Schema, t reflect.Type, tag reflect.StructTa
 // fieldName is a struct field's wire name: the json tag name when it has one,
 // else the Go name.
 func fieldName(f reflect.StructField) string {
-	if jt := f.Tag.Get("json"); jt != "" {
-		if parts := strings.Split(jt, ","); parts[0] != "" {
-			return parts[0]
-		}
+	if name := parts0(f.Tag.Get("json")); name != "" {
+		return name
 	}
 	return f.Name
 }
