@@ -4,13 +4,14 @@
 package recorder
 
 import (
-	"fmt"
+	"cmp"
 	"net/http"
 	"slices"
 	"strings"
 	"sync"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/gorilla/mux"
 	"github.com/happytoolin/specout"
 )
@@ -36,7 +37,7 @@ func New(next http.Handler, skips ...specout.SkipRule) *Recorder {
 
 func (rec *Recorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	pattern := rec.match(r)
-	rw := &observingWriter{ResponseWriter: w}
+	rw := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 	rec.next.ServeHTTP(rw, r)
 
 	// std populates r.Pattern during dispatch, so read it only after.
@@ -54,7 +55,7 @@ func (rec *Recorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if rec.codes[key] == nil {
 		rec.codes[key] = map[int]bool{}
 	}
-	rec.codes[key][rw.code] = true
+	rec.codes[key][cmp.Or(rw.Status(), http.StatusOK)] = true
 }
 
 // match resolves the pattern r dispatches to. chi sets the RouteContext before
@@ -81,42 +82,15 @@ func (rec *Recorder) match(r *http.Request) string {
 	return ""
 }
 
-// stdPattern extracts the operation path from an http.ServeMux pattern. A
-// pattern ending in "/" is a subtree mount ("/api/v3/" in front of the app
-// router), not one operation: a request the app router did not match must not
-// be keyed under the mount, or every 404 and 405 reads as drift.
+// stdPattern extracts the operation path from an http.ServeMux pattern.
+// Method-less subtree patterns can be outer mounts, so ignore them. A
+// method-qualified subtree is a documented operation, including its slash.
 func stdPattern(p string) string {
 	if _, path, ok := strings.Cut(p, " "); ok {
-		p = path
+		return path
 	}
 	if strings.HasSuffix(p, "/") {
 		return ""
 	}
 	return p
 }
-
-// observingWriter records the status code; Unwrap keeps ResponseController,
-// Flusher and Hijacker working through the wrapper.
-type observingWriter struct {
-	http.ResponseWriter
-
-	code int
-}
-
-func (w *observingWriter) WriteHeader(code int) {
-	w.code = code
-	w.ResponseWriter.WriteHeader(code)
-}
-
-func (w *observingWriter) Write(b []byte) (int, error) {
-	if w.code == 0 {
-		w.WriteHeader(http.StatusOK)
-	}
-	n, err := w.ResponseWriter.Write(b)
-	if err != nil {
-		return n, fmt.Errorf("recorder: write response body: %w", err)
-	}
-	return n, nil
-}
-
-func (w *observingWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }

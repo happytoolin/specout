@@ -29,7 +29,7 @@ r.Mount("/openapi.json", d)
 
 Specs rot because they live apart from the code. specout closes the gap from the Go side:
 
-- **No drift.** The spec builds from the same mux that serves traffic. An undocumented route fails a test, not a review.
+- **Route checks.** The chi and gorilla adapters scan the live router for undocumented routes. Std mux and other routers use explicit declarations.
 - **No lock-in.** Handlers stay plain `http.HandlerFunc`. No framework, no request lifecycle to adopt — or later escape.
 - **Doc, nothing else.** It reads types, tags, and route patterns. It never decodes, validates, or writes a response.
 - **Provable.** A test-time recorder fails CI when a handler emits a status the spec does not declare, or vice versa.
@@ -97,8 +97,8 @@ Everything the spec needs is visible in the source you already write:
 |---|---|
 | path params | route pattern `{id}` |
 | query/header/cookie params | `query:` / `header:` / `cookie:` tags on `Req` |
-| required vs optional | presence of `omitempty` |
-| nullable | Go pointer (`type: [T, "null"]`) |
+| required vs optional | presence of `omitempty` or `omitzero` |
+| nullable | Go pointer (type union for scalars; `anyOf` for references) |
 | enums, bounds, patterns, formats | `jsonschema:` tag |
 | oneOf unions with discriminator | `d.Register[T]("name")` + `oneof_type` tag |
 | readOnly / writeOnly | `jsonschema:` tag |
@@ -149,12 +149,17 @@ func TestSpecMatchesReality(t *testing.T) {
 }
 ```
 
-The golden export is committed — same binary, byte-identical output, checked in CI along with validation against the official OpenAPI 3.1 schema:
+The golden export is committed. CI checks its bytes, runs race tests, and validates generated test documents and examples against OpenAPI 3.1:
 
 ```sh
 GO_SPEC_ONLY=1 go run ./cmd/demo > openapi.json
 git diff --exit-code openapi.json
 ```
+
+Run `just validate` to check the documents and compare six selected operations
+from pinned GitHub, Stripe, and Cloudflare specifications. Run `just client-types`
+to generate and compile TypeScript types. See [compatibility and release checks](docs/compatibility.md)
+for the tested scope and limits.
 
 ## Demo
 
@@ -179,7 +184,7 @@ Swagger UI at http://localhost:8080/, Scalar at /scalar, Redoc at /redoc, the sp
 ## Design rules
 
 - **Lazy build, freeze on first serve.** Registering after the spec is served panics.
-- **No package globals.** One generator per service; deterministic output by construction.
+- **One generator per service.** Route and schema registrations stay on that generator.
 - **chi, gorilla and std mux all work.** `specout.Chi(d, r).Get(...)` / `specout.Gorilla(d, gm).Get(...)` / `specout.Std(d, mux).Handle("GET /path", ...)`. Other routers record through `specout.Document`.
 - **No comment parsing, ever.** Types are the single source of truth.
 
@@ -187,7 +192,8 @@ Swagger UI at http://localhost:8080/, Scalar at /scalar, Redoc at /redoc, the sp
 
 - [docs/api-reference.html](docs/api-reference.html) — the full public surface with generated-output examples
 - [docs/design-discussion.md](docs/design-discussion.md) — rationale and trade-offs
-- [PLAN.md](PLAN.md) — implementation log and decision ledger
+- [docs/compatibility.md](docs/compatibility.md) — validation commands, public API samples, and limits
+- [PLAN.md](PLAN.md) — original implementation plan
 
 ## License
 

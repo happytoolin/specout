@@ -857,20 +857,20 @@ type UpsertOnboardingRequest struct {
   <table>
     <thead><tr><th>Spec feature</th><th>Mechanism</th><th>Notes</th></tr></thead>
     <tbody>
-      <tr><td>property name</td><td><code>json</code> tag</td><td><code>json:"-"</code> hides it from JSON and the spec</td></tr>
-      <tr><td><code>required</code> array</td><td>absence of <code>omitempty</code></td><td>or force with <code>jsonschema:"required"</code></td></tr>
-      <tr><td>nullable</td><td>Go pointer</td><td>type becomes <code>[T, "null"]</code>; one reflector policy controls this</td></tr>
+      <tr><td>property name</td><td><code>json</code> tag</td><td><code>json:"-"</code> hides the body property; explicit parameter tags still apply</td></tr>
+      <tr><td><code>required</code> array</td><td>absence of <code>omitempty</code> or <code>omitzero</code></td><td>or force with <code>jsonschema:"required"</code></td></tr>
+      <tr><td>nullable</td><td>Go pointer</td><td>scalar type union or <code>anyOf</code> for a reference</td></tr>
       <tr><td><code>format</code></td><td>Go type first, then tag</td><td><code>time.Time</code>→date-time, <code>uuid.UUID</code>→uuid (stdlib since Go 1.27), <code>format=email</code> for the rest</td></tr>
-      <tr><td><code>enum</code>, <code>default</code></td><td>tag</td><td>works on custom string/int types via reflection</td></tr>
+      <tr><td><code>enum</code>, <code>default</code></td><td>tag</td><td>string and numeric constraints via reflection; boolean enums are also supported</td></tr>
       <tr><td><code>pattern</code>, <code>minLength</code>, <code>maxLength</code></td><td>tag</td><td>strings</td></tr>
       <tr><td><code>minimum</code>, <code>maximum</code>, <code>multipleOf</code></td><td>tag</td><td>numbers</td></tr>
       <tr><td><code>minItems</code>, <code>maxItems</code>, <code>uniqueItems</code></td><td>tag</td><td>slices</td></tr>
       <tr><td><code>title</code>, <code>description</code>, <code>example</code></td><td>tag</td><td>field-level docs</td></tr>
       <tr><td><code>deprecated</code></td><td>tag on field; <code>Deprecated: true</code> on Handler</td><td>field- and operation-level</td></tr>
       <tr><td><code>readOnly</code> / <code>writeOnly</code></td><td>tag</td><td>see shared types, §08</td></tr>
-      <tr><td><code>additionalProperties: false</code></td><td>config <code>ClosedSchemas: true</code></td><td>clients love closed schemas</td></tr>
+      <tr><td><code>additionalProperties: false</code></td><td>config <code>ClosedSchemas: true</code></td><td>closes fixed objects; preserves map value schemas</td></tr>
       <tr><td>query vs body location</td><td><code>query</code> tag</td><td>fields become operation parameters</td></tr>
-      <tr><td>parameter <code>style</code>, <code>explode</code></td><td><code>jsonschema:"style=deepObject,explode=true"</code></td><td>query, header and cookie parameters; a path parameter's style is fixed by the pattern</td></tr>
+      <tr><td>parameter <code>style</code>, <code>explode</code></td><td><code>jsonschema:"style=deepObject,explode=true"</code></td><td>path, query, header and cookie parameters; invalid styles for a location fail at build time</td></tr>
       <tr><td>path parameter type</td><td><code>path</code> tag</td><td><code>path:"petId"</code> types the <code>{petId}</code> placeholder (int64, not string); the tag name must match the pattern or the build fails. <code>path:"-"</code> opts a field out</td></tr>
       <tr><td>cookie parameter</td><td><code>cookie</code> tag</td><td><code>in: cookie</code> operation parameter</td></tr>
       <tr><td>header parameter</td><td><code>header</code> tag</td><td><code>in: header</code> operation parameter (e.g. X-Trace-Id)</td></tr>
@@ -879,7 +879,7 @@ type UpsertOnboardingRequest struct {
 
   <div class="callout note">
     <span class="label">encoding/json/v2 (Go 1.27)</span>
-    <p>The package defaults to json/v2 semantics — the three dials in §08 map identically, with pointer + <code>(omitzero)</code> as optional-and-nullable. Types still carrying v1 tags set <code>JSONDialect: specout.JSONv1</code> once. Spec serialization (<code>WriteJSON</code>) uses json/v2 throughout.</p>
+    <p><code>WriteJSON</code> uses json/v2. Both <code>omitempty</code> and <code>omitzero</code> mark optional fields. Pointers mark nullable values. There is no JSON dialect switch. Use the reflector's <code>JSONSchema()</code> hook when a custom encoder changes the wire shape.</p>
   </div>
 </section>
 
@@ -900,13 +900,14 @@ type UpsertOnboardingRequest struct {
 
   <div class="callout warn">
     <span class="label">Watch out</span>
-    <p>"Absent" and "null" are different things in JSON, and Go's <code>*T</code> (nil vs missing key) is the only place it can express the difference. House convention: <strong>pointers are nullable, <code>omitempty</code> are optional, <code>default=</code> tags document server-side fallbacks</strong> — all three can coexist.</p>
+    <p>Absent and null are different values in JSON. House convention: <strong>pointers are nullable, <code>omitempty</code> or <code>omitzero</code> mark optional fields, and <code>default=</code> tags document server-side fallbacks</strong>. These declarations do not decode or validate requests.</p>
   </div>
 </section>
 
 <!-- ============================================================ -->
 <section id="shared">
   <h2><span class="num">09</span>Shared request/response types</h2>
+  <p>A request that mixes parameter tags with body fields emits a separate <code>TypeNameBody</code> component. The full type keeps its name when used in a response.</p>
   <p>One struct serving both sides of the wire, with <code>readOnly</code>/<code>writeOnly</code> marking direction. Cuts your type count roughly in half for CRUD endpoints:</p>
 
   <figure class="code" data-lang="go">
@@ -943,25 +944,31 @@ type WebhookConfig struct {
   <figure class="code" data-lang="yaml">
     <figcaption><span>generated</span><button class="copy">copy</button></figcaption>
     <pre><code>WebhookConfig:
+  oneOf:
+    - $ref: '#/components/schemas/WebhookConfigVariant1'
+    - $ref: '#/components/schemas/WebhookConfigVariant2'
+  discriminator:
+    propertyName: kind
+    mapping:
+      email: '#/components/schemas/WebhookConfigVariant1'
+      slack: '#/components/schemas/WebhookConfigVariant2'
+WebhookConfigVariant1:
   type: object
   required: [kind, data]
   properties:
-    kind:
-      type: string
-      enum: [email, slack]
-      description: Discriminator
-    data:
-      oneOf:
-        - $ref: '#/components/schemas/EmailConfig'
-        - $ref: '#/components/schemas/SlackConfig'
-      discriminator:
-        propertyName: kind
-        mapping: { email: EmailConfig, slack: SlackConfig }</code></pre>
+    kind: {type: string, const: email}
+    data: {$ref: '#/components/schemas/EmailConfig'}
+WebhookConfigVariant2:
+  type: object
+  required: [kind, data]
+  properties:
+    kind: {type: string, const: slack}
+    data: {$ref: '#/components/schemas/SlackConfig'}</code></pre>
   </figure>
 
   <div class="callout note">
     <span class="label">Note</span>
-    <p>The idiomatic Go escape: a flat "struct of optional groups" (<code>Email *EmailConfig; Slack *SlackConfig</code>, serialized flat) needs no <code>oneOf</code> at all — the schema is just an object with optional properties. Good enough for most consumers, zero machinery.</p>
+    <p>The wire shape stays <code>{"kind":"email","data":{...}}</code>. Each branch constrains the complete envelope, so JSON Schema validation rejects a kind/data mismatch. For other <code>anyOf</code> or <code>allOf</code> shapes, a custom type can supply <code>JSONSchema()</code>.</p>
   </div>
 </section>
 
@@ -1000,9 +1007,7 @@ type WebhookConfig struct {
 	},
 	ErrorType:     api.Problem{},
 	DefaultErrors: []int{400, 401, 403, 404, 409, 500},
-	ClosedSchemas: true,    // additionalProperties: false everywhere
-	// JSONDialect is absent — the zero value already means json/v2.
-	// Set JSONDialect: specout.JSONv1 only for legacy tag sets.
+	ClosedSchemas: true,    // close fixed objects; preserve dictionaries
 })
 
 // type parameters can't be struct fields — these are methods:
@@ -1373,7 +1378,7 @@ specout.Chi(d, r).RequireDocumented(t, specout.Skip("/debug/*"))</code></pre>
   <h3>doc</h3>
   <span class="sig"><b>func</b> New(cfg Config) *Generator
 
-<b>type</b> Config <b>struct</b> { Title, Version, Description, TermsOfService <b>string</b>; Contact *Contact; License *License; Servers []Server; Auth []AuthScheme; Tags []Tag; ExternalDocs *ExternalDocs; ErrorType <b>any</b>; DefaultErrors []<b>int</b>; ClosedSchemas <b>bool</b>; JSONDialect Dialect }
+<b>type</b> Config <b>struct</b> { Title, Version, Description, TermsOfService <b>string</b>; Contact *Contact; License *License; Servers []Server; Auth []AuthScheme; Tags []Tag; ExternalDocs *ExternalDocs; ErrorType <b>any</b>; DefaultErrors []<b>int</b>; ClosedSchemas <b>bool</b> }
 <b>type</b> Contact <b>struct</b> { Name, URL, Email <b>string</b> }
 <b>type</b> License <b>struct</b> { Name, URL <b>string</b> }
 <b>type</b> ExternalDocs <b>struct</b> { URL, Description <b>string</b> }

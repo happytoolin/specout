@@ -116,7 +116,7 @@ func TestSpecKeepsPublishedShapes(t *testing.T) {
 	// InnerError is reached only through MainError's pointer field, so it is
 	// nested-only: the pointer must still widen to [InnerError, null].
 	// Regression — the pointer field kept invopop's bare $ref.
-	arms, _ := dig(t, schemas, "MainError", "properties", "innerError")["oneOf"].([]any)
+	arms, _ := dig(t, schemas, "MainError", "properties", "innerError")["anyOf"].([]any)
 	require.Len(t, arms, 2, "MainError.innerError = %v, want a $ref and a null arm", arms)
 	assert.Equal(t, "null", arms[1].(map[string]any)["type"])
 

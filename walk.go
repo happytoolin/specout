@@ -1,7 +1,9 @@
 package specout
 
 import (
+	"maps"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/invopop/jsonschema"
@@ -11,27 +13,45 @@ import (
 // child, so fn can rewrite a node and its children still get visited. It is
 // the one traversal definition; the fixups below are its callbacks.
 func walkSchema(s *jsonschema.Schema, fn func(*jsonschema.Schema)) {
+	walkSchemaSeen(s, fn, make(map[*jsonschema.Schema]bool))
+}
+
+func walkSchemaSeen(s *jsonschema.Schema, fn func(*jsonschema.Schema), seen map[*jsonschema.Schema]bool) {
 	if s == nil {
 		return
 	}
-	fn(s)
-	for _, sub := range s.Definitions {
-		walkSchema(sub, fn)
+	if seen[s] {
+		return
 	}
-	walkSchema(s.Items, fn)
+	seen[s] = true
+	fn(s)
+	for _, key := range slices.Sorted(maps.Keys(s.Definitions)) {
+		walkSchemaSeen(s.Definitions[key], fn, seen)
+	}
+	walkSchemaSeen(s.Items, fn, seen)
+	walkSchemaSeen(s.Not, fn, seen)
+	walkSchemaSeen(s.If, fn, seen)
+	walkSchemaSeen(s.Then, fn, seen)
+	walkSchemaSeen(s.Else, fn, seen)
+	walkSchemaSeen(s.Contains, fn, seen)
+	walkSchemaSeen(s.PropertyNames, fn, seen)
+	walkSchemaSeen(s.ContentSchema, fn, seen)
+	for _, key := range slices.Sorted(maps.Keys(s.DependentSchemas)) {
+		walkSchemaSeen(s.DependentSchemas[key], fn, seen)
+	}
 	for _, group := range [][]*jsonschema.Schema{s.AllOf, s.AnyOf, s.OneOf, s.PrefixItems} {
 		for _, sub := range group {
-			walkSchema(sub, fn)
+			walkSchemaSeen(sub, fn, seen)
 		}
 	}
 	if s.Properties != nil {
 		for key := range s.Properties.KeysFromOldest() {
-			walkSchema(s.Properties.Value(key), fn)
+			walkSchemaSeen(s.Properties.Value(key), fn, seen)
 		}
 	}
-	walkSchema(s.AdditionalProperties, fn)
-	for _, sub := range s.PatternProperties {
-		walkSchema(sub, fn)
+	walkSchemaSeen(s.AdditionalProperties, fn, seen)
+	for _, key := range slices.Sorted(maps.Keys(s.PatternProperties)) {
+		walkSchemaSeen(s.PatternProperties[key], fn, seen)
 	}
 }
 
@@ -48,7 +68,7 @@ func remapDefs(s *jsonschema.Schema) {
 // closeSchema sets additionalProperties: false on every object node.
 func closeSchema(s *jsonschema.Schema) {
 	walkSchema(s, func(x *jsonschema.Schema) {
-		if x.Type == "object" {
+		if x.Type == "object" && x.AdditionalProperties == nil {
 			x.AdditionalProperties = jsonschema.FalseSchema
 		}
 	})
@@ -74,74 +94,124 @@ func splitEnums(s *jsonschema.Schema) {
 	})
 }
 
-// normalizeOneOf rewrites oneof_type=a|b entries (our dialect) into $refs to
-// registered variants, then attaches a discriminator where a Variant field
-// sits next to the oneOf (api-reference §10).
-func normalizeOneOf(s *jsonschema.Schema, sr *schemaRegistry) {
-	// two passes: resolve first, because the discriminator reads the rewritten
-	// oneOf of each property.
-	walkSchema(s, func(x *jsonschema.Schema) { x.OneOf = variantRefs(x.OneOf, sr) })
-	walkSchema(s, func(x *jsonschema.Schema) { attachDiscriminator(x, sr) })
-}
-
-// variantRefs replaces oneof_type=a|b placeholders with $refs to the
-// registered variants; anything else is kept as-is.
-func variantRefs(oneOf []*jsonschema.Schema, sr *schemaRegistry) []*jsonschema.Schema {
-	var kept []*jsonschema.Schema
-	for _, sub := range oneOf {
-		// invopop parsed oneof_type=email|slack as one entry with the literal
-		// Type "email|slack"; split on | and resolve each variant name.
-		if sub == nil || !strings.Contains(sub.Type, "|") {
-			kept = append(kept, sub)
-			continue
-		}
-		for name := range strings.SplitSeq(sub.Type, "|") {
-			if t, ok := sr.variants[name]; ok {
-				kept = append(kept, &jsonschema.Schema{Ref: sr.refFor(t)})
-			}
-		}
+// normalizeOneOf turns a {kind,data} declaration into a oneOf of complete
+// envelope objects. Each arm constrains kind and data together, so ordinary
+// JSON Schema validation rejects a discriminator/payload mismatch.
+func normalizeOneOf(s *jsonschema.Schema, sr *schemaRegistry, owner string) {
+	var nodes []*jsonschema.Schema
+	walkSchema(s, func(x *jsonschema.Schema) { nodes = append(nodes, x) })
+	for _, x := range nodes {
+		makeUnionEnvelope(x, sr, owner)
 	}
-	return kept
 }
 
-// attachDiscriminator sets propertyName + mapping on each oneOf property of s
-// when an enum-tagged Discriminator field sits next to it.
-func attachDiscriminator(s *jsonschema.Schema, sr *schemaRegistry) {
-	if s.Properties == nil || s.Extras != nil {
+func makeUnionEnvelope(s *jsonschema.Schema, sr *schemaRegistry, owner string) {
+	if s.Properties == nil || len(s.OneOf) != 0 {
 		return
 	}
 	disc := findVariantProperty(s)
 	if disc == "" {
 		return
 	}
-	for key := range s.Properties.KeysFromOldest() {
-		p := s.Properties.Value(key)
-		if p == nil || len(p.OneOf) == 0 {
-			continue
+	data := unionDataProperty(s)
+	if data == nil {
+		return
+	}
+	names := unionVariantNames(data.OneOf)
+	if len(names) == 0 {
+		return
+	}
+	mapping := newObj()
+	refs := make([]*jsonschema.Schema, 0, len(names))
+	for i, name := range names {
+		t, ok := sr.variants[name]
+		if !ok {
+			panic("specout: union variant " + name + " is not registered")
 		}
-		mapping := newObj()
-		for _, sub := range p.OneOf {
-			if sub.Ref == "" {
-				continue
-			}
-			name := strings.TrimPrefix(sub.Ref, "#/components/schemas/")
-			// mapping key order must not vary between processes: sr.variants is
-			// a map, so collect the matches and sort them.
-			var names []string
-			for vn, vt := range sr.variants {
-				if sanitizeName(vt) == name {
-					names = append(names, vn)
-				}
-			}
-			slices.Sort(names)
-			for _, vn := range names {
-				mapping.set(vn, name)
-			}
-		}
-		p.Extras = map[string]any{
-			"discriminator": map[string]any{"propertyName": disc, "mapping": mapping},
+		variantRef := sr.refFor(t)
+		branchName := sr.unionBranchName(owner, i+1)
+		branchRef := "#/components/schemas/" + branchName
+		sr.addUnionBranch(branchName, s, disc, name, variantRef)
+		refs = append(refs, &jsonschema.Schema{Ref: branchRef})
+		mapping.set(name, branchRef)
+	}
+	s.Type = ""
+	s.Properties = nil
+	s.AdditionalProperties = nil
+	s.PatternProperties = nil
+	s.PropertyNames = nil
+	s.MinProperties = nil
+	s.MaxProperties = nil
+	s.Required = nil
+	s.OneOf = refs
+	if s.Extras == nil {
+		s.Extras = map[string]any{}
+	}
+	s.Extras["discriminator"] = map[string]any{"propertyName": disc, "mapping": mapping}
+}
+
+func unionDataProperty(s *jsonschema.Schema) *jsonschema.Schema {
+	p, _ := s.Properties.Get("data")
+	if p != nil && len(unionVariantNames(p.OneOf)) > 0 {
+		return p
+	}
+	return nil
+}
+
+func unionVariantNames(oneOf []*jsonschema.Schema) []string {
+	for _, sub := range oneOf {
+		if sub != nil && strings.Contains(sub.Type, "|") {
+			return slices.Collect(strings.SplitSeq(sub.Type, "|"))
 		}
 	}
+	return nil
+}
+
+func (sr *schemaRegistry) addUnionBranch(name string, source *jsonschema.Schema, discriminator, value, dataRef string) {
+	if sr.byName[name] != nil || sr.owned[name] != nil {
+		panic("specout: duplicate component name " + name)
+	}
+	branch := *source
+	branch.OneOf = nil
+	branch.Extras = maps.Clone(source.Extras)
+	properties := jsonschema.NewProperties()
+	if source.Properties != nil {
+		for key := range source.Properties.KeysFromOldest() {
+			properties.Set(key, source.Properties.Value(key))
+		}
+	}
+	if disc, ok := properties.Get(discriminator); ok {
+		discriminatorSchema := *disc
+		discriminatorSchema.Enum = nil
+		discriminatorSchema.Const = value
+		properties.Set(discriminator, &discriminatorSchema)
+	} else {
+		properties.Set(discriminator, &jsonschema.Schema{Type: "string", Const: value})
+	}
+	properties.Set("data", &jsonschema.Schema{Ref: dataRef})
+	branch.Type = "object"
+	branch.Properties = properties
+	branch.Required = slices.Clone(source.Required)
+	if !slices.Contains(branch.Required, discriminator) {
+		branch.Required = append(branch.Required, discriminator)
+	}
+	if !slices.Contains(branch.Required, "data") {
+		branch.Required = append(branch.Required, "data")
+	}
+	if sr.closed {
+		branch.AdditionalProperties = jsonschema.FalseSchema
+	}
+	sr.byName[name] = &branch
+	sr.nameOrder = append(sr.nameOrder, name)
+}
+
+func (sr *schemaRegistry) unionBranchName(owner string, index int) string {
+	base := owner + "Variant" + strconv.Itoa(index)
+	name := base
+	for suffix := 2; sr.byName[name] != nil || sr.owned[name] != nil; suffix++ {
+		name = base + strconv.Itoa(suffix)
+	}
+	return name
 }
 
 // findVariantProperty returns the property name of the discriminator field.

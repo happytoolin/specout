@@ -31,6 +31,7 @@ go.work.sum
 # .idea/
 # .vscode/
 .venv
+__pycache__/
 
 # Built example binaries (go build ./examples/...)
 /demo

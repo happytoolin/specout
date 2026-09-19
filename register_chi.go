@@ -23,8 +23,9 @@ func (c *ChiRouter) source() { c.d.addSource(chiWalkSource{c.r}) }
 
 func (c *ChiRouter) register(method, pattern string, rec routeRecord) {
 	rec.method, rec.pattern = method, pattern
-	c.r.Method(method, pattern, rec.fn)
-	c.d.register(rec)
+	c.d.register(rec, func(rec *routeRecord) {
+		c.r.Method(method, pattern, rec)
+	})
 }
 
 // Get registers a GET route on p.

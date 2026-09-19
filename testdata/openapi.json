@@ -1547,6 +1547,23 @@
           "mode"
         ]
       },
+      "Config": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ConfigVariant1"
+          },
+          {
+            "$ref": "#/components/schemas/ConfigVariant2"
+          }
+        ],
+        "discriminator": {
+          "mapping": {
+            "email": "#/components/schemas/ConfigVariant1",
+            "slack": "#/components/schemas/ConfigVariant2"
+          },
+          "propertyName": "kind"
+        }
+      },
       "EmailConfig": {
         "properties": {
           "address": {
@@ -1574,40 +1591,6 @@
         "type": "object",
         "required": [
           "channel"
-        ]
-      },
-      "Config": {
-        "properties": {
-          "kind": {
-            "type": "string",
-            "enum": [
-              "email",
-              "slack"
-            ],
-            "description": "Discriminator"
-          },
-          "data": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/EmailConfig"
-              },
-              {
-                "$ref": "#/components/schemas/SlackConfig"
-              }
-            ],
-            "discriminator": {
-              "mapping": {
-                "email": "EmailConfig",
-                "slack": "SlackConfig"
-              },
-              "propertyName": "kind"
-            }
-          }
-        },
-        "type": "object",
-        "required": [
-          "kind",
-          "data"
         ]
       },
       "CreateThingRequest": {
@@ -1785,6 +1768,23 @@
           "visibility"
         ]
       },
+      "ChannelConfig": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ChannelConfigVariant1"
+          },
+          {
+            "$ref": "#/components/schemas/ChannelConfigVariant2"
+          }
+        ],
+        "discriminator": {
+          "mapping": {
+            "notify_email": "#/components/schemas/ChannelConfigVariant1",
+            "notify_slack": "#/components/schemas/ChannelConfigVariant2"
+          },
+          "propertyName": "kind"
+        }
+      },
       "EmailChannel": {
         "properties": {
           "address": {
@@ -1811,40 +1811,6 @@
         "required": [
           "webhook",
           "channel"
-        ]
-      },
-      "ChannelConfig": {
-        "properties": {
-          "kind": {
-            "type": "string",
-            "enum": [
-              "notify_email",
-              "notify_slack"
-            ],
-            "description": "Discriminator"
-          },
-          "data": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/EmailChannel"
-              },
-              {
-                "$ref": "#/components/schemas/SlackChannel"
-              }
-            ],
-            "discriminator": {
-              "mapping": {
-                "notify_email": "EmailChannel",
-                "notify_slack": "SlackChannel"
-              },
-              "propertyName": "kind"
-            }
-          }
-        },
-        "type": "object",
-        "required": [
-          "kind",
-          "data"
         ]
       },
       "Page": {
@@ -1898,6 +1864,74 @@
         "required": [
           "field",
           "message"
+        ]
+      },
+      "ConfigVariant1": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "email",
+            "description": "Discriminator"
+          },
+          "data": {
+            "$ref": "#/components/schemas/EmailConfig"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "data"
+        ]
+      },
+      "ConfigVariant2": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "slack",
+            "description": "Discriminator"
+          },
+          "data": {
+            "$ref": "#/components/schemas/SlackConfig"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "data"
+        ]
+      },
+      "ChannelConfigVariant1": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "notify_email",
+            "description": "Discriminator"
+          },
+          "data": {
+            "$ref": "#/components/schemas/EmailChannel"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "data"
+        ]
+      },
+      "ChannelConfigVariant2": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "notify_slack",
+            "description": "Discriminator"
+          },
+          "data": {
+            "$ref": "#/components/schemas/SlackChannel"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "data"
         ]
       }
     }

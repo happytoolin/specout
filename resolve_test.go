@@ -64,11 +64,16 @@ func TestChiSlashVariantsDistinct(t *testing.T) {
 
 // Catch-alls are omitted from paths but stay in DeclaredStatuses.
 func TestCatchAllOmittedButDeclared(t *testing.T) {
+	type catchAllResponse struct {
+		Value string `json:"value"`
+	}
 	d, r := newGen(), chi.NewRouter()
 	rc := specout.Chi(d, r)
-	rc.Get("/files/*", okGet)
+	rc.Get("/files/*", specout.Handler[struct{}, catchAllResponse]{HandlerFunc: okBody})
 	adopt(t, rc)
-	assert.NotContains(t, docPaths(t, d), "/files/*", "catch-all leaked into paths")
+	doc := buildDoc(t, d)
+	assert.NotContains(t, pathsObj(doc), "/files/*", "catch-all leaked into paths")
+	assert.NotContains(t, doc, "components", "catch-all leaked an unused response schema")
 	assert.Contains(t, declaredStatuses(t, d), specout.RouteKey{Method: "GET", Path: "/files/*"}, "catch-all missing from drift keys")
 }
 

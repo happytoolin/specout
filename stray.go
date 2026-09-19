@@ -2,7 +2,6 @@ package specout
 
 import (
 	"net/http"
-	"reflect"
 	"strings"
 )
 
@@ -33,8 +32,10 @@ func (s *strayScan) collect(pattern, methods string, h http.Handler) {
 		s.unknown = append(s.unknown, "? "+pattern+" (no method constraint)")
 		return
 	}
-	if !s.d.lookup(reflect.ValueOf(h).Pointer()) {
-		s.unknown = append(s.unknown, methods+" "+pattern)
+	for method := range strings.SplitSeq(methods, ",") {
+		if !s.d.lookup(method, pattern, h) {
+			s.unknown = append(s.unknown, method+" "+pattern)
+		}
 	}
 }
 

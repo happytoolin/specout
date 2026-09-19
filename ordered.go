@@ -61,7 +61,7 @@ func (o *obj) write(enc *jsontext.Encoder) error {
 		if err := enc.WriteToken(jsontext.String(k)); err != nil {
 			return fmt.Errorf("specout: encode key %q: %w", k, err)
 		}
-		if err := json.MarshalEncode(enc, o.vals[k]); err != nil {
+		if err := json.MarshalEncode(enc, o.vals[k], json.Deterministic(true)); err != nil {
 			return fmt.Errorf("specout: encode value of %q: %w", k, err)
 		}
 	}

@@ -2,7 +2,7 @@
 
 **specout** — OpenAPI 3.1 from plain Go handlers. No comments, no drift, verified by your own tests.
 
-- Status: design complete (see `docs/api-reference.html`), implementation not started
+- Status: historical design plan. The implementation is present. See [compatibility and release checks](docs/compatibility.md) for current behavior. Unchecked items and proposed APIs below are not a current feature list.
 - Target: Go **1.27+** only (generic methods, `encoding/json/v2`, stdlib `uuid`)
 - Routers: **std `http.ServeMux` + chi** (blessed pair); adapters for gin/echo/fiber are explicitly later
 - Consumers: happytoolin services import this module; OSS publication is a possible later step (name is SEO-clean — nothing else owns "specout")

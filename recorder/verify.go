@@ -33,6 +33,9 @@ func Verify(t TestingT, d *specout.Generator, rec *Recorder) {
 	}
 	rec.mu.Lock()
 	observed := maps.Clone(rec.codes)
+	for key, codes := range observed {
+		observed[key] = maps.Clone(codes)
+	}
 	rec.mu.Unlock()
 
 	for key, codes := range required {

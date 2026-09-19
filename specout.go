@@ -23,8 +23,6 @@ type Generator struct {
 	records []*routeRecord
 	// sources: every router the generator saw, walked once at build time.
 	sources []routeSource
-	// known handlers: func code pointer -> true, for stray detection.
-	known map[uintptr]bool
 
 	variants      map[string]reflect.Type
 	nameOverrides map[reflect.Type]string
@@ -37,7 +35,6 @@ type Generator struct {
 func New(cfg Config) *Generator {
 	return &Generator{
 		cfg:           cfg,
-		known:         make(map[uintptr]bool),
 		variants:      make(map[string]reflect.Type),
 		nameOverrides: make(map[reflect.Type]string),
 	}

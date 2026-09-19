@@ -74,10 +74,10 @@ fallback. Merge rules: unmentioned codes keep the global shape; overrides are pe
 
 Research: 1.26 brought self-referential type params; 1.27 brought **generic methods**,
 `encoding/json/v2`, stdlib `uuid`, improved inference. **Decision:** target 1.27-only.
-Generic methods turn registration into compile-checked discovery (`d.Get(r, path, h)` —
-a plain `http.HandlerFunc` fails to compile). json/v2 becomes the default tag dialect
-(`(omitzero)`), v1 opt-in. Interface methods still can't be generic — hence methods on the
-generator taking the router as an argument.
+Generic methods turn registration into compile-checked discovery: a plain
+`http.HandlerFunc` cannot replace the typed handler metadata. Output uses json/v2.
+Both `omitempty` and `omitzero` mark optional fields. The unused `JSONDialect`
+option was removed during release checks; it never selected different behavior.
 
 ### 9. "Any more idiomatic API suggestions?"
 

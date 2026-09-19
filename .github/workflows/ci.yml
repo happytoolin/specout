@@ -19,9 +19,12 @@ jobs:
       - run: just build
       - run: just lint
       - run: just test
+      - run: just race
       - run: just check-golden
-      - name: Spec validates against OpenAPI 3.1 schema
-        run: |
-          python3 -m venv /tmp/venv
-          /tmp/venv/bin/pip install -q openapi-spec-validator
-          /tmp/venv/bin/python tools/validate_spec.py testdata/openapi.json
+      - name: Validate OpenAPI documents and public API contracts
+        run: just validate
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Generate and compile TypeScript client types
+        run: just client-types
