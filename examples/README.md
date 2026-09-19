@@ -1,14 +1,18 @@
 # Examples
 
-Two published OpenAPI documents, rebuilt with specout and served. Nothing here
-is invented: paths, operationIds, parameter names, response codes and response
-descriptions are the published ones. Only the descriptions are shortened, and
-the parts specout cannot say are listed under Gaps below.
+Two served examples rebuild selected published OpenAPI contracts. Paths,
+operationIds, parameter names, and response codes follow the source documents.
+Descriptions are shortened. These examples do not import arbitrary OpenAPI files.
 
 | Example | Document | Router | Port |
 |---|---|---|---|
 | `petstore` | petstore3.swagger.io/v3/openapi.json, OpenAPI 3.0.4, 13 paths, 19 operations | chi | 8081 |
 | `msgraph` | Microsoft Graph v1.0, OpenAPI 3.0, 11546 paths - 5 paths, 8 operations | gorilla/mux | 8082 |
+
+`compatibility` adds six operations from pinned GitHub, Stripe, and Cloudflare
+documents. `go run ./examples/compatibility github` exports one sample.
+`just validate` compares request and response schemas with saved upstream
+contracts. See [the compatibility report](../docs/compatibility.md) for exact scope.
 
 Run one:
 
@@ -28,7 +32,7 @@ status the document does not declare fails the test.
 
 ## Gaps
 
-What the four documents use most, and specout has no way to say. Counts come
+Features without a dedicated typed declaration are listed below. Counts come
 from a scan of the published files: petstore 3.0.4, Stripe `spec3.json`,
 GitHub `api.github.com.json`, Microsoft Graph v1.0.
 
@@ -39,7 +43,7 @@ GitHub `api.github.com.json`, Microsoft Graph v1.0.
 | `content` on a parameter | Graph and GitHub use it | No. Query parameters are tags on the Req type. |
 | named examples in `components.examples` | GitHub 535, Graph 3034 | Inline `examples` on a property come from repeated `example=` tags - one shared, `$ref`'d example has no form. |
 | `x-` vendor extensions on a path item | Graph 3486, Stripe 2669, GitHub 53 | Those counts are schema- and operation-level, and both now work. A path item itself has no hook. |
-| `anyOf`, and `allOf` inheritance | Stripe 2051, Graph 3976 and 3742, GitHub 35 and 78 | `Register[T]` plus a `oneof_type` field gives `oneOf` with a discriminator - the shape Graph (277) and GitHub (5) use. `anyOf` and `allOf` have no form: inheritance is flattened into one Go struct, as `User` in the msgraph example shows. |
+| `anyOf`, and `allOf` inheritance | Stripe 2051, Graph 3976 and 3742, GitHub 35 and 78 | Custom types can use the reflector's `JSONSchema()` hook. Embedded Go structs flatten object inheritance. `Register[T]` with `oneof_type` builds a tagged envelope union. |
 | `webhooks`, `components.pathItems` | 3.1 features, absent from these four | No. |
 
 Two shapes that look like gaps and are not:
@@ -98,11 +102,10 @@ Checked by the tests, not by eye:
 
 ## Router notes
 
-- `Adopt()` is required for chi and gorilla. It walks the live router, so
-  prefixes composed by `r.Route`, `r.Mount` or `PathPrefix`
-  resolve. A route the walk never sees is a build error naming the pattern, not
-  a `""` path. `specout.Std` needs no walk: its patterns are already
-  absolute.
+- Call `Adopt()` on the outermost chi router to resolve mounted paths and
+  check for undocumented routes. Gorilla composes prefixes when it registers
+  routes; `Adopt()` adds the completeness check. `specout.Std` has absolute
+  patterns and no completeness scan.
 - Document order is registration order. The `paths` object reads like the
   registration code.
 - `Req` is path, query and body together. specout splits the parameter

@@ -3,6 +3,7 @@ package specout
 import (
 	"net/http"
 	"reflect"
+	"slices"
 )
 
 // Handler is an http.HandlerFunc factory product carrying request and
@@ -62,25 +63,24 @@ func (h Handler[Req, Res]) WithOperationID(id string) Handler[Req, Res] {
 
 // WithTags appends tags.
 func (h Handler[Req, Res]) WithTags(tags ...string) Handler[Req, Res] {
-	h.Tags = append(h.Tags, tags...)
+	h.Tags = append(slices.Clone(h.Tags), tags...)
 	return h
 }
 
 // WithResponse appends one response declaration.
 func (h Handler[Req, Res]) WithResponse(r Response) Handler[Req, Res] {
-	h.Responses = append(h.Responses, r)
-	return h
+	return h.WithResponses(r)
 }
 
 // WithResponses appends several response declarations.
 func (h Handler[Req, Res]) WithResponses(rs ...Response) Handler[Req, Res] {
-	h.Responses = append(h.Responses, rs...)
+	h.Responses = append(slices.Clone(h.Responses), rs...)
 	return h
 }
 
 // WithRequestContentTypes appends request body media types.
 func (h Handler[Req, Res]) WithRequestContentTypes(cts ...string) Handler[Req, Res] {
-	h.RequestContentTypes = append(h.RequestContentTypes, cts...)
+	h.RequestContentTypes = append(slices.Clone(h.RequestContentTypes), cts...)
 	return h
 }
 

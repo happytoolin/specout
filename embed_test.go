@@ -25,7 +25,7 @@ func TestEmbeddedBodyWithParam(t *testing.T) {
 	}
 
 	doc := docOf(t, "POST", "/x", specout.Handler[Req, specout.NoContent]{HandlerFunc: noop})
-	p := props(t, doc, "Req")
+	p := props(t, doc, "ReqBody")
 	require.Len(t, p, 3, "body props = %v, want id, flags, name", p)
 	assert.Equal(t, true, p["flags"].(map[string]any)["readOnly"], "embedded readOnly lost: %v", p["flags"])
 	assert.True(t, isNullable(p["id"].(map[string]any)), "embedded pointer not nullable: %v", p["id"])
@@ -98,7 +98,7 @@ func TestEmbeddedShadowingField(t *testing.T) {
 		Q  string `query:"q"`
 	}
 
-	p := props(t, docOf(t, "POST", "/x", specout.Handler[Req, specout.NoContent]{HandlerFunc: noop}), "Req")
+	p := props(t, docOf(t, "POST", "/x", specout.Handler[Req, specout.NoContent]{HandlerFunc: noop}), "ReqBody")
 	require.Len(t, p, 1, "body props = %v, want only the shadowing id", p)
 	typ, _ := p["id"].(map[string]any)["type"].([]any)
 	assert.Len(t, typ, 2)

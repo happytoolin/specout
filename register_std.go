@@ -25,12 +25,13 @@ func (s *StdRouter) Handle[Req, Res any](pattern string, h Handler[Req, Res]) {
 		panic("specout: std pattern must be METHOD /path, got " + pattern)
 	}
 	checkMethod(method)
-	s.mux.HandleFunc(pattern, h.HandlerFunc)
 	rec := recOf(h)
 	rec.method, rec.pattern = method, path
 	rec.full = canonicalPath(path)
 	rec.absolute = true
-	s.d.register(rec)
+	s.d.register(rec, func(rec *routeRecord) {
+		s.mux.Handle(pattern, rec)
+	})
 }
 
 // Get registers a GET route on p.

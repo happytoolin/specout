@@ -88,9 +88,6 @@ func TestEdgeCases(t *testing.T) {
 		{name: "query+json both", route: func(d *specout.Generator) {
 			specout.Document(d, http.MethodPost, "/q", specout.Handler[BothTagReq, struct{}]{HandlerFunc: noop})
 		}},
-		{name: "unregistered union", route: func(d *specout.Generator) {
-			specout.Document(d, http.MethodPost, "/u", specout.Handler[UnregisteredUnionReq, struct{}]{HandlerFunc: noop})
-		}},
 		{name: "public without auth", route: func(d *specout.Generator) {
 			specout.Document(d, http.MethodGet, "/p", specout.Handler[struct{}, Alpha]{HandlerFunc: noop, Public: true})
 		}},
@@ -131,4 +128,10 @@ func TestEdgeCases(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestUnregisteredUnionFailsClearly(t *testing.T) {
+	d := newGen()
+	specout.Document(d, http.MethodPost, "/u", specout.Handler[UnregisteredUnionReq, struct{}]{HandlerFunc: noop})
+	assert.PanicsWithValue(t, "specout: union variant a is not registered", func() { buildDoc(t, d) })
 }

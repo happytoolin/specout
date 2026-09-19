@@ -6,7 +6,9 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -24,6 +26,7 @@ func buildDoc(t *testing.T, d *specout.Generator) map[string]any {
 	t.Helper()
 	var buf bytes.Buffer
 	require.NoError(t, d.WriteJSON(&buf), "build")
+	exportValidationDoc(t, buf.Bytes())
 	var doc map[string]any
 	require.NoError(t, json.Unmarshal(buf.Bytes(), &doc), "invalid json")
 	return doc
@@ -74,9 +77,24 @@ func serve(t *testing.T, d *specout.Generator, r chi.Router) map[string]any {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/openapi.json", nil))
 	require.Equal(t, 200, w.Code, "openapi.json status")
+	exportValidationDoc(t, w.Body.Bytes())
 	var doc map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &doc), "invalid json")
 	return doc
+}
+
+// CI validates every generated fixture, including cases outside the demo.
+func exportValidationDoc(t *testing.T, document []byte) {
+	t.Helper()
+	dir := os.Getenv("SPECOUT_VALIDATE_DIR")
+	if dir == "" {
+		return
+	}
+	f, err := os.CreateTemp(dir, strings.ReplaceAll(t.Name(), "/", "_")+"-*.json")
+	require.NoError(t, err)
+	_, err = f.Write(document)
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
 }
 
 // serveDoc adopts the chi root, mounts the spec and returns the served document.
@@ -111,8 +129,7 @@ func okBody(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusN
 // no response body: by far the most common handler a test registers.
 type noBody = specout.Handler[struct{}, specout.NoContent]
 
-// okGet is one shared noBody value. Handler identity is the func pointer, so a
-// test that needs the same handler on two routes reuses this one.
+// okGet is one shared noBody value used by route tests.
 var okGet = noBody{HandlerFunc: okBody}
 
 // declaredStatuses and specStatuses are the two drift views, fatal on error.
@@ -154,6 +171,13 @@ func props(t *testing.T, doc map[string]any, name string) map[string]any {
 func isNullable(p map[string]any) bool {
 	if arms, _ := p["oneOf"].([]any); len(arms) == 2 {
 		return true
+	}
+	if arms, _ := p["anyOf"].([]any); len(arms) >= 2 {
+		for _, arm := range arms {
+			if schema, _ := arm.(map[string]any); schema["type"] == "null" {
+				return true
+			}
+		}
 	}
 	typ, _ := p["type"].([]any)
 	return len(typ) == 2 && typ[1] == "null"

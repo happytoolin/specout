@@ -1,0 +1,371 @@
+{
+  "GET /v1/country_specs": {
+    "operationId": "GetCountrySpecs",
+    "parameters": [
+      {
+        "explode": true,
+        "in": "query",
+        "name": "ending_before",
+        "required": false,
+        "schema": {
+          "maxLength": 5000,
+          "type": "string"
+        },
+        "style": "form"
+      },
+      {
+        "explode": true,
+        "in": "query",
+        "name": "expand",
+        "required": false,
+        "schema": {
+          "items": {
+            "maxLength": 5000,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "style": "deepObject"
+      },
+      {
+        "explode": true,
+        "in": "query",
+        "name": "limit",
+        "required": false,
+        "schema": {
+          "type": "integer"
+        },
+        "style": "form"
+      },
+      {
+        "explode": true,
+        "in": "query",
+        "name": "starting_after",
+        "required": false,
+        "schema": {
+          "maxLength": 5000,
+          "type": "string"
+        },
+        "style": "form"
+      }
+    ],
+    "requestBody": {
+      "content": {
+        "application/x-www-form-urlencoded": {
+          "additionalProperties": false,
+          "properties": {},
+          "type": "object"
+        }
+      },
+      "required": false
+    },
+    "responses": {
+      "200": {
+        "application/json": {
+          "properties": {
+            "data": {
+              "items": {
+                "properties": {
+                  "default_currency": {
+                    "maxLength": 5000,
+                    "type": "string"
+                  },
+                  "id": {
+                    "maxLength": 5000,
+                    "type": "string"
+                  },
+                  "object": {
+                    "enum": [
+                      "country_spec"
+                    ],
+                    "type": "string"
+                  },
+                  "supported_bank_account_currencies": {
+                    "additionalProperties": {
+                      "items": {
+                        "maxLength": 5000,
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "type": "object"
+                  },
+                  "supported_payment_currencies": {
+                    "items": {
+                      "maxLength": 5000,
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "supported_payment_methods": {
+                    "items": {
+                      "maxLength": 5000,
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "supported_transfer_countries": {
+                    "items": {
+                      "maxLength": 5000,
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "verification_fields": {
+                    "properties": {
+                      "company": {
+                        "properties": {
+                          "additional": {
+                            "items": {
+                              "maxLength": 5000,
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "minimum": {
+                            "items": {
+                              "maxLength": 5000,
+                              "type": "string"
+                            },
+                            "type": "array"
+                          }
+                        },
+                        "required": [
+                          "additional",
+                          "minimum"
+                        ],
+                        "type": "object"
+                      },
+                      "individual": {
+                        "properties": {
+                          "additional": {
+                            "items": {
+                              "maxLength": 5000,
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "minimum": {
+                            "items": {
+                              "maxLength": 5000,
+                              "type": "string"
+                            },
+                            "type": "array"
+                          }
+                        },
+                        "required": [
+                          "additional",
+                          "minimum"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "company",
+                      "individual"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "default_currency",
+                  "id",
+                  "object",
+                  "supported_bank_account_currencies",
+                  "supported_payment_currencies",
+                  "supported_payment_methods",
+                  "supported_transfer_countries",
+                  "verification_fields"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "has_more": {
+              "type": "boolean"
+            },
+            "object": {
+              "enum": [
+                "list"
+              ],
+              "type": "string"
+            },
+            "url": {
+              "maxLength": 5000,
+              "pattern": "^/v1/country_specs",
+              "type": "string"
+            }
+          },
+          "required": [
+            "data",
+            "has_more",
+            "object",
+            "url"
+          ],
+          "type": "object"
+        }
+      },
+      "default": {}
+    }
+  },
+  "GET /v1/country_specs/{country}": {
+    "operationId": "GetCountrySpecsCountry",
+    "parameters": [
+      {
+        "explode": false,
+        "in": "path",
+        "name": "country",
+        "required": true,
+        "schema": {
+          "maxLength": 5000,
+          "type": "string"
+        },
+        "style": "simple"
+      },
+      {
+        "explode": true,
+        "in": "query",
+        "name": "expand",
+        "required": false,
+        "schema": {
+          "items": {
+            "maxLength": 5000,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "style": "deepObject"
+      }
+    ],
+    "requestBody": {
+      "content": {
+        "application/x-www-form-urlencoded": {
+          "additionalProperties": false,
+          "properties": {},
+          "type": "object"
+        }
+      },
+      "required": false
+    },
+    "responses": {
+      "200": {
+        "application/json": {
+          "properties": {
+            "default_currency": {
+              "maxLength": 5000,
+              "type": "string"
+            },
+            "id": {
+              "maxLength": 5000,
+              "type": "string"
+            },
+            "object": {
+              "enum": [
+                "country_spec"
+              ],
+              "type": "string"
+            },
+            "supported_bank_account_currencies": {
+              "additionalProperties": {
+                "items": {
+                  "maxLength": 5000,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "type": "object"
+            },
+            "supported_payment_currencies": {
+              "items": {
+                "maxLength": 5000,
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "supported_payment_methods": {
+              "items": {
+                "maxLength": 5000,
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "supported_transfer_countries": {
+              "items": {
+                "maxLength": 5000,
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "verification_fields": {
+              "properties": {
+                "company": {
+                  "properties": {
+                    "additional": {
+                      "items": {
+                        "maxLength": 5000,
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "minimum": {
+                      "items": {
+                        "maxLength": 5000,
+                        "type": "string"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "additional",
+                    "minimum"
+                  ],
+                  "type": "object"
+                },
+                "individual": {
+                  "properties": {
+                    "additional": {
+                      "items": {
+                        "maxLength": 5000,
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "minimum": {
+                      "items": {
+                        "maxLength": 5000,
+                        "type": "string"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "additional",
+                    "minimum"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "company",
+                "individual"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "default_currency",
+            "id",
+            "object",
+            "supported_bank_account_currencies",
+            "supported_payment_currencies",
+            "supported_payment_methods",
+            "supported_transfer_countries",
+            "verification_fields"
+          ],
+          "type": "object"
+        }
+      },
+      "default": {}
+    }
+  }
+}

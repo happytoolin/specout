@@ -21,13 +21,13 @@ type GorillaRouter struct {
 
 func (g *GorillaRouter) register(method, pattern string, rec routeRecord) {
 	rec.method, rec.pattern = method, pattern
-	// gorilla folds subrouter PathPrefix into the route's own template when
-	// the route is created, so the composed path is available right away.
-	if tpl, err := g.r.HandleFunc(pattern, rec.fn).Methods(method).GetPathTemplate(); err == nil {
-		rec.full = tpl
-	}
 	rec.absolute = true
-	g.d.register(rec)
+	g.d.register(rec, func(rec *routeRecord) {
+		// gorilla folds subrouter prefixes into the route template.
+		if tpl, err := g.r.Handle(pattern, rec).Methods(method).GetPathTemplate(); err == nil {
+			rec.full = tpl
+		}
+	})
 }
 
 // Get registers a GET route on p.

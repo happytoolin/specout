@@ -16,7 +16,6 @@ type Config struct {
 	ErrorType      any
 	DefaultErrors  []int
 	ClosedSchemas  bool
-	JSONDialect    Dialect
 }
 
 // Contact is the info.contact object: who owns the API.
@@ -92,15 +91,4 @@ const (
 	InHeader = "header"
 	InQuery  = "query"
 	InCookie = "cookie"
-)
-
-// Dialect selects how struct tags are interpreted for schema generation.
-type Dialect int
-
-const (
-	// JSONv2 is the default: encoding/json/v2 semantics, with pointer +
-	// (omitzero)/omitempty as optional.
-	JSONv2 Dialect = iota
-	// JSONv1 is the legacy dialect for types still carrying v1 tags.
-	JSONv1
 )

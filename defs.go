@@ -17,10 +17,7 @@ func (sr *schemaRegistry) unwrapDefs(t reflect.Type, s *jsonschema.Schema) *json
 	if s == nil || len(s.Definitions) == 0 {
 		return s
 	}
-	name := sanitizeName(t)
-	if n, ok := sr.overrides[t]; ok {
-		name = n
-	}
+	name := sr.nameFor(t)
 	body := s
 	if s.Ref != "" && strings.HasSuffix(s.Ref, "/"+name) {
 		body = s.Definitions[name]
@@ -50,7 +47,6 @@ func (sr *schemaRegistry) unwrapDefs(t reflect.Type, s *jsonschema.Schema) *json
 func (sr *schemaRegistry) addDef(name string, def *jsonschema.Schema) {
 	def.Version = ""
 	splitEnums(def)
-	normalizeOneOf(def, sr)
 	if sr.closed {
 		closeSchema(def)
 	}
@@ -59,11 +55,4 @@ func (sr *schemaRegistry) addDef(name string, def *jsonschema.Schema) {
 		sr.byName[name] = def
 		sr.nameOrder = append(sr.nameOrder, name)
 	}
-}
-
-func lastSeg(s string) string {
-	if _, last, ok := strings.CutLast(s, "."); ok {
-		return last
-	}
-	return s
 }

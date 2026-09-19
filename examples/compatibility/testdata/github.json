@@ -1,0 +1,273 @@
+{
+  "GET /licenses": {
+    "operationId": "licenses/get-all-commonly-used",
+    "parameters": [
+      {
+        "explode": true,
+        "in": "query",
+        "name": "featured",
+        "required": false,
+        "schema": {
+          "type": "boolean"
+        },
+        "style": "form"
+      },
+      {
+        "explode": true,
+        "in": "query",
+        "name": "page",
+        "required": false,
+        "schema": {
+          "default": 1,
+          "type": "integer"
+        },
+        "style": "form"
+      },
+      {
+        "explode": true,
+        "in": "query",
+        "name": "per_page",
+        "required": false,
+        "schema": {
+          "default": 30,
+          "type": "integer"
+        },
+        "style": "form"
+      }
+    ],
+    "responses": {
+      "200": {
+        "application/json": {
+          "items": {
+            "properties": {
+              "html_url": {
+                "format": "uri",
+                "type": "string"
+              },
+              "key": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "node_id": {
+                "type": "string"
+              },
+              "spdx_id": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "url": {
+                "format": "uri",
+                "type": [
+                  "null",
+                  "string"
+                ]
+              }
+            },
+            "required": [
+              "key",
+              "name",
+              "node_id",
+              "spdx_id",
+              "url"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "304": {}
+    }
+  },
+  "GET /repos/{owner}/{repo}/topics": {
+    "operationId": "repos/get-all-topics",
+    "parameters": [
+      {
+        "explode": false,
+        "in": "path",
+        "name": "owner",
+        "required": true,
+        "schema": {
+          "type": "string"
+        },
+        "style": "simple"
+      },
+      {
+        "explode": false,
+        "in": "path",
+        "name": "repo",
+        "required": true,
+        "schema": {
+          "type": "string"
+        },
+        "style": "simple"
+      },
+      {
+        "explode": true,
+        "in": "query",
+        "name": "page",
+        "required": false,
+        "schema": {
+          "default": 1,
+          "type": "integer"
+        },
+        "style": "form"
+      },
+      {
+        "explode": true,
+        "in": "query",
+        "name": "per_page",
+        "required": false,
+        "schema": {
+          "default": 30,
+          "type": "integer"
+        },
+        "style": "form"
+      }
+    ],
+    "responses": {
+      "200": {
+        "application/json": {
+          "properties": {
+            "names": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "names"
+          ],
+          "type": "object"
+        }
+      },
+      "404": {
+        "application/json": {
+          "properties": {
+            "documentation_url": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      }
+    }
+  },
+  "PUT /repos/{owner}/{repo}/topics": {
+    "operationId": "repos/replace-all-topics",
+    "parameters": [
+      {
+        "explode": false,
+        "in": "path",
+        "name": "owner",
+        "required": true,
+        "schema": {
+          "type": "string"
+        },
+        "style": "simple"
+      },
+      {
+        "explode": false,
+        "in": "path",
+        "name": "repo",
+        "required": true,
+        "schema": {
+          "type": "string"
+        },
+        "style": "simple"
+      }
+    ],
+    "requestBody": {
+      "content": {
+        "application/json": {
+          "properties": {
+            "names": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "names"
+          ],
+          "type": "object"
+        }
+      },
+      "required": true
+    },
+    "responses": {
+      "200": {
+        "application/json": {
+          "properties": {
+            "names": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "names"
+          ],
+          "type": "object"
+        }
+      },
+      "404": {
+        "application/json": {
+          "properties": {
+            "documentation_url": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "422": {
+        "application/json": {
+          "properties": {
+            "documentation_url": {
+              "type": "string"
+            },
+            "errors": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "documentation_url",
+            "message"
+          ],
+          "type": "object"
+        }
+      }
+    }
+  }
+}

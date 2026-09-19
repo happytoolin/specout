@@ -1,6 +1,10 @@
 package specout
 
-import "reflect"
+import (
+	"reflect"
+	"strconv"
+	"strings"
+)
 
 // bodyView is the request-body view of a Req type that mixes parameters and
 // body fields: the synthetic body-only struct, and the component name it is
@@ -48,64 +52,103 @@ func (sr *schemaRegistry) bodyType(req reflect.Type) (reflect.Type, string) {
 		// every field is a parameter: the operation has no body at all
 		return nil, ""
 	}
-	v := bodyView{t: reflect.StructOf(fields), name: sr.nameFor(req)}
+	v := bodyView{t: reflect.StructOf(fields), name: sr.nameFor(req) + "Body"}
 	sr.bodyViews[req] = v
 	return v.t, v.name
 }
 
-// bodyFields lists the StructOf fields of a request-body view: req's exported,
-// non-parameter fields, with untagged embedded structs expanded the way
-// encoding/json expands them. reflect.StructOf rejects an unexported field,
-// and the promoted fields belong in the body, so the expansion is required: a
-// body that embeds a base type (ids, timestamps) must not panic the moment it
-// also carries a query parameter.
+type bodyFieldCandidate struct {
+	field  reflect.StructField
+	name   string
+	depth  int
+	tagged bool
+}
+
+// bodyFields follows encoding/json's wire-name dominance. Parameter fields
+// participate in shadowing, then disappear from the resulting body.
 func bodyFields(req reflect.Type) []reflect.StructField {
-	// a direct field shadows a promoted one of the same name, and StructOf
-	// rejects the duplicate: reserve the direct names before expanding
-	taken := make(map[string]bool, req.NumField())
-	for f := range req.Fields() {
-		if !isParamField(f) && !promotes(f) {
-			taken[f.Name] = true
+	var candidates []bodyFieldCandidate
+	collectBodyFields(req, 0, &candidates, make(map[reflect.Type]bool))
+	byName := make(map[string][]bodyFieldCandidate)
+	var names []string
+	for _, candidate := range candidates {
+		if _, ok := byName[candidate.name]; !ok {
+			names = append(names, candidate.name)
+		}
+		byName[candidate.name] = append(byName[candidate.name], candidate)
+	}
+	var selected []bodyFieldCandidate
+	for _, name := range names {
+		if winner, ok := dominantBodyField(byName[name]); ok && !isParamField(winner.field) {
+			selected = append(selected, winner)
 		}
 	}
-	var out []reflect.StructField
-	for f := range req.Fields() {
-		if !isParamField(f) {
-			out = bodyField(out, f, taken)
-		}
+	out := make([]reflect.StructField, 0, len(selected))
+	for i, candidate := range selected {
+		f := candidate.field
+		f.Anonymous = false
+		f.Name = "Field" + strconv.Itoa(i+1)
+		f.PkgPath = ""
+		f.Tag = bodyJSONTag(f.Tag, candidate.name)
+		out = append(out, f)
 	}
 	return out
 }
 
-// ponytail: first declaration wins when two embedded structs promote the same
-// name; encoding/json drops both as ambiguous. Add a depth map if that shows up.
-func bodyField(out []reflect.StructField, f reflect.StructField, taken map[string]bool) []reflect.StructField {
-	if promotes(f) {
-		et := deref(f.Type)
-		for sub := range et.Fields() {
-			if sub.PkgPath != "" && !sub.Anonymous {
-				continue // unexported plain field: never marshaled
-			}
-			if taken[sub.Name] {
-				continue // shadowed by a field at this or a shallower level
-			}
-			taken[sub.Name] = true
-			out = bodyField(out, sub, taken)
-		}
-		return out
+func bodyJSONTag(tag reflect.StructTag, name string) reflect.StructTag {
+	if _, options, ok := strings.Cut(tag.Get("json"), ","); ok && options != "" {
+		name += "," + options
 	}
-	if f.PkgPath != "" {
-		if !f.Anonymous {
-			return out // unexported plain field: never marshaled
-		}
-		// unexported embedded type: StructOf needs an exported Go name; the
-		// JSON property name still comes from the tag.
-		if f.Tag.Get("json") == "" {
-			f.Tag = reflect.StructTag("json:\"" + f.Name + "\" " + string(f.Tag))
-		}
-		f.Anonymous = false
-		f.Name = "Embedded" + f.Name
-		f.PkgPath = ""
+	return reflect.StructTag("json:" + strconv.Quote(name) + " " + string(tag))
+}
+
+func collectBodyFields(t reflect.Type, depth int, out *[]bodyFieldCandidate, stack map[reflect.Type]bool) {
+	t = deref(t)
+	if t == nil || t.Kind() != reflect.Struct || stack[t] {
+		return
 	}
-	return append(out, f)
+	stack[t] = true
+	defer delete(stack, t)
+	for f := range t.Fields() {
+		if promotes(f) && !isParamField(f) {
+			collectBodyFields(f.Type, depth+1, out, stack)
+			continue
+		}
+		if f.PkgPath != "" && !f.Anonymous {
+			continue
+		}
+		name := parts0(f.Tag.Get("json"))
+		if name == "-" {
+			continue
+		}
+		*out = append(*out, bodyFieldCandidate{
+			field: f, name: fieldName(f), depth: depth, tagged: name != "",
+		})
+	}
+}
+
+func dominantBodyField(fields []bodyFieldCandidate) (bodyFieldCandidate, bool) {
+	bestDepth := fields[0].depth
+	for _, field := range fields[1:] {
+		bestDepth = min(bestDepth, field.depth)
+	}
+	var best []bodyFieldCandidate
+	for _, field := range fields {
+		if field.depth == bestDepth {
+			best = append(best, field)
+		}
+	}
+	if len(best) == 1 {
+		return best[0], true
+	}
+	var tagged []bodyFieldCandidate
+	for _, field := range best {
+		if field.tagged {
+			tagged = append(tagged, field)
+		}
+	}
+	if len(tagged) == 1 {
+		return tagged[0], true
+	}
+	return bodyFieldCandidate{}, false
 }

@@ -10,6 +10,8 @@ import (
 	"github.com/invopop/jsonschema"
 )
 
+const pathLocation = "path"
+
 // pathParamRe matches one route param, with or without a regex constraint.
 // A constraint may itself carry a {n} quantifier, so braces are excluded from
 // the constraint body and a balanced pair is matched explicitly; otherwise
@@ -30,7 +32,7 @@ func pathParams(pattern string) []string {
 // paramTag returns the parameter location and tag value of a Req field:
 // query, header, cookie or path.
 func paramTag(f reflect.StructField) (string, string) {
-	for _, l := range []string{"query", "header", "cookie", "path"} {
+	for _, l := range []string{"query", "header", "cookie", pathLocation} {
 		if t := f.Tag.Get(l); t != "" {
 			return l, t
 		}
@@ -42,9 +44,17 @@ func paramTag(f reflect.StructField) (string, string) {
 // when the query tag ends in ",omitempty", the json tag says omitempty, or the
 // jsonschema tag supplies a default.
 func requiredParam(f reflect.StructField, qt string) bool {
-	return !strings.Contains(qt, ",omitempty") &&
-		!strings.Contains(f.Tag.Get("json"), "omitempty") &&
+	return !optionalTag(qt) && !optionalTag(f.Tag.Get("json")) &&
 		tagValue(f.Tag.Get("jsonschema"), "default") == ""
+}
+
+func optionalTag(tag string) bool {
+	for option := range strings.SplitSeq(tag, ",") {
+		if option == "omitempty" || option == "omitzero" {
+			return true
+		}
+	}
+	return false
 }
 
 // isParamField reports whether an exported Req field is an OpenAPI parameter.
@@ -59,7 +69,7 @@ func isParamField(f reflect.StructField) bool {
 		return false
 	}
 	// query:"-" (or header:"-") opts out: the field is a plain body field.
-	return loc == "path" || parts0(value) != "-"
+	return loc == pathLocation || parts0(value) != "-"
 }
 
 // hasParamField reports whether t carries any parameter field.
@@ -71,28 +81,30 @@ func hasParamField(t reflect.Type) bool {
 // OpenAPI parameters.
 func taggedParams(req reflect.Type) []any {
 	var params []any
+	seen := make(map[string]bool)
 	for _, f := range exportedFields(req) {
 		loc, qt := paramTag(f)
 		// a non-parameter is a body field, and a path: field only types an
 		// already-declared placeholder: neither becomes a query parameter here.
-		if !isParamField(f) || loc == "path" {
+		if !isParamField(f) || loc == pathLocation {
 			continue
 		}
 		name := parts0(qt)
+		if name == "" || seen[loc+"\x00"+name] {
+			panic("specout: empty or duplicate " + loc + " parameter " + name)
+		}
+		seen[loc+"\x00"+name] = true
 		// reflect a one-field wrapper so the field's jsonschema tag applies
 		fs := reflectParam(f)
 		if f.Type.Kind() == reflect.Pointer {
-			base := fs.Type
-			fs.Type = ""
-			fs.Extras = map[string]any{"type": []string{base, "null"}}
+			nullable(fs)
 		}
-		splitEnums(fs)
 		p := newObj().
 			set("name", name).
 			set("in", loc).
 			set("required", requiredParam(f, qt)).
 			set("schema", fs)
-		applyParamStyle(p, f)
+		applyParamStyle(p, f, loc)
 		if desc := tagValue(f.Tag.Get("jsonschema"), "description"); desc != "" {
 			fs.Description = ""
 			p.set("description", desc)
@@ -105,17 +117,16 @@ func taggedParams(req reflect.Type) []any {
 // applyParamStyle copies style= and explode= onto the parameter object. They
 // are parameter serialization keywords, not schema keywords, and the
 // jsonschema tag is the one tag specout already reads on a parameter field.
-// ponytail: query/header/cookie only; a path parameter's style is fixed by
-// the router pattern.
-func applyParamStyle(p *obj, f reflect.StructField) {
+func applyParamStyle(p *obj, f reflect.StructField, loc string) {
 	tag := f.Tag.Get("jsonschema")
-	switch st := tagValue(tag, "style"); st {
-	case "":
-	case "matrix", "label", "form", "simple", "spaceDelimited", "pipeDelimited", "deepObject":
+	if st := tagValue(tag, "style"); st != "" {
+		valid := loc == pathLocation && slices.Contains([]string{"matrix", "label", "simple"}, st) ||
+			loc == "header" && st == "simple" || loc == "cookie" && st == "form" ||
+			loc == "query" && slices.Contains([]string{"form", "spaceDelimited", "pipeDelimited", "deepObject"}, st)
+		if !valid {
+			panic("specout: field " + f.Name + " has invalid " + loc + " parameter style=" + st)
+		}
 		p.set("style", st)
-	default:
-		panic("specout: field " + f.Name + " has style=" + st +
-			", must be matrix, label, form, simple, spaceDelimited, pipeDelimited or deepObject")
 	}
 	if ex := tagValue(tag, "explode"); ex != "" {
 		b, err := strconv.ParseBool(ex)
@@ -170,9 +181,10 @@ func pathParamObjs(pattern string, req reflect.Type) []any {
 		var schema any = newObj().set("type", "string")
 		param := newObj().
 			set("name", name).
-			set("in", "path").
+			set("in", pathLocation).
 			set("required", true)
 		if f, ok := pathField(req, name); ok {
+			applyParamStyle(param, f, pathLocation)
 			if s := reflectParam(f); s != nil {
 				// the description belongs on the parameter object, not inside
 				// its schema: that is where every published spec puts it.
@@ -204,6 +216,7 @@ func propSchema(t reflect.Type, tag reflect.StructTag) *jsonschema.Schema {
 		break
 	}
 	applyFormatTag(p, tag)
+	applyBoolEnumTag(p, t, tag)
 	return p
 }
 
@@ -219,16 +232,20 @@ func applyFormatTag(p *jsonschema.Schema, tag reflect.StructTag) {
 	}
 }
 
-// reflectParam is propSchema for the field's own type and tag.
+// Parameters have their own wire names; json:"-" only hides a body property.
 func reflectParam(f reflect.StructField) *jsonschema.Schema {
-	return propSchema(f.Type, f.Tag)
+	var tag strings.Builder
+	for _, key := range []string{"jsonschema", "jsonschema_description", "jsonschema_extras"} {
+		tag.WriteString(key + ":" + strconv.Quote(f.Tag.Get(key)) + " ")
+	}
+	schema := propSchema(f.Type, reflect.StructTag(tag.String()))
+	splitEnums(schema)
+	return schema
 }
 
 func parts0(s string) string {
-	if p := strings.Split(s, ","); p[0] != "" {
-		return p[0]
-	}
-	return s
+	name, _, _ := strings.Cut(s, ",")
+	return name
 }
 
 // tagValue extracts key=value from a jsonschema tag string.

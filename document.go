@@ -15,5 +15,5 @@ func Document[Req, Res any](d *Generator, method, pattern string, h Handler[Req,
 	rec.method, rec.pattern = method, pattern
 	rec.full = pattern
 	rec.absolute = true
-	d.register(rec)
+	d.register(rec, nil)
 }

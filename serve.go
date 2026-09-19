@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 
 	json "encoding/json/v2"
 )
@@ -12,7 +13,7 @@ import (
 // ServeHTTP serves the built spec. GET (and HEAD) only; other methods get 405.
 func (d *Generator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		w.Header().Set("Allow", http.MethodGet)
+		w.Header().Set("Allow", "GET, HEAD")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -22,7 +23,10 @@ func (d *Generator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write(spec)
+	w.Header().Set("Content-Length", strconv.Itoa(len(spec)))
+	if r.Method != http.MethodHead {
+		_, _ = w.Write(spec)
+	}
 }
 
 // WriteJSON writes the spec to w. Builds and freezes if not already.
