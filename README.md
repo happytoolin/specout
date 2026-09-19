@@ -26,6 +26,13 @@ Generate OpenAPI 3.1 from plain Go HTTP handlers.
 go get github.com/happytoolin/specout
 ```
 
+Install the public agent skill when you want an agent to add or verify specout
+in a Go service:
+
+```bash
+npx skills add happytoolin/specout --skill specout
+```
+
 ## Quick start
 
 Define request and response shapes with ordinary Go types.
