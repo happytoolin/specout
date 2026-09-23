@@ -32,6 +32,10 @@ func (d *Generator) statusMap(withDefaults bool) (map[RouteKey]map[int]bool, err
 		}
 		codes := map[int]bool{}
 		for _, e := range d.responsePlan(rec, withDefaults) {
+			if e.key == defaultResponseKey && withDefaults {
+				codes[0] = true
+				continue
+			}
 			if lo, hi, ok := rangeOf(e.key); ok {
 				if e.code != 0 {
 					// the caller named one code of the range for coverage

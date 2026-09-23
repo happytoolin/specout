@@ -181,7 +181,8 @@ func TestObservedStatusesMatch(t *testing.T) {
 
 Global `DefaultErrors` are allowed but are not required on every route. A bare
 `default` or response range allows matching statuses without creating a test
-coverage requirement. HEAD and GET observations can satisfy each other.
+coverage requirement. With http.ServeMux, a HEAD request handled by a GET route
+counts toward that GET route. An explicit HEAD route needs its own test.
 Unmatched requests are not recorded.
 
 Every relevant request must pass through the `Recorder`. Do not wrap only the

@@ -39,6 +39,7 @@ func binarySchema() *obj {
 
 // hasBinaryField reports whether any field is a File marker or tagged format=binary.
 func hasBinaryField(t reflect.Type) bool {
+	t = deref(t)
 	if t.Kind() != reflect.Struct {
 		return false
 	}
@@ -46,9 +47,12 @@ func hasBinaryField(t reflect.Type) bool {
 	if t == fileT {
 		return true
 	}
-	for field := range t.Fields() {
-		ft := field.Type
-		if ft == fileT || (ft.Kind() == reflect.Slice && ft.Elem() == fileT) {
+	for _, field := range jsonFields(t, false) {
+		if parts0(field.Tag.Get("jsonschema")) == "-" {
+			continue
+		}
+		ft := deref(field.Type)
+		if ft == fileT || (ft.Kind() == reflect.Slice && deref(ft.Elem()) == fileT) {
 			return true
 		}
 		if tagValue(field.Tag.Get("jsonschema"), "format") == "binary" {

@@ -6,6 +6,8 @@ import (
 	"strconv"
 )
 
+const defaultResponseKey = "default"
+
 // respEntry is one response a route derives: its emitted key, the concrete code
 // it names (0 for a range or "default" key), the body type, and the declaration
 // that asked for it (nil for the Res default and the global error envelope).
@@ -127,7 +129,7 @@ func responseBody(e respEntry, sr *schemaRegistry) *obj {
 		return contentResponse(e.code, e.typ, sr)
 	}
 	body := contentResponse(e.code, e.typ, sr)
-	if resp.Status == 0 && resp.Key != "" && resp.Key != "default" {
+	if resp.Status == 0 && resp.Key != "" && resp.Key != defaultResponseKey {
 		// a range has no status text of its own; published documents carry
 		// their own wording in Raw. OpenAPI requires the field, so a
 		// placeholder beats an empty string.
@@ -190,20 +192,24 @@ func isEmptyStruct(t reflect.Type) bool {
 // code or "default" — "0" is neither, so it validates against nothing. Any
 // other code outside 100-599 is a typo, not a status.
 func responseKey(code int, key string) string {
+	if code != 0 && (code < 100 || code > 599) {
+		panic("specout: response status must be 0 (default) or 100-599, got " + strconv.Itoa(code))
+	}
 	if key != "" {
-		if key == "default" {
+		if key == defaultResponseKey {
 			return key
 		}
-		if _, _, ok := rangeOf(key); !ok {
+		lo, hi, ok := rangeOf(key)
+		if !ok {
 			panic("specout: Response.Key must be default or a range like 4XX, got " + key)
+		}
+		if code != 0 && (code < lo || code > hi) {
+			panic("specout: response status " + strconv.Itoa(code) + " is outside range " + key)
 		}
 		return key
 	}
 	if code == 0 {
-		return "default"
-	}
-	if code < 100 || code > 599 {
-		panic("specout: response status must be 0 (default) or 100-599, got " + strconv.Itoa(code))
+		return defaultResponseKey
 	}
 	return strconv.Itoa(code)
 }

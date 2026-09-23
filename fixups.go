@@ -64,19 +64,23 @@ func admitsNull(s *jsonschema.Schema) bool {
 	if s == nil {
 		return false
 	}
-	if types, ok := s.Extras["type"].([]string); ok && slices.Contains(types, nullType) {
-		return true
-	}
-	if types, ok := s.Extras["type"].([]any); ok && slices.Contains(types, any(nullType)) {
-		return true
-	}
-	if s.Type == nullType {
+	if hasSchemaType(s, nullType) {
 		return true
 	}
 	if slices.Contains(s.Enum, any(nil)) {
 		return true
 	}
 	return slices.ContainsFunc(s.AnyOf, admitsNull) || slices.ContainsFunc(s.OneOf, admitsNull)
+}
+
+func hasSchemaType(s *jsonschema.Schema, name string) bool {
+	if types, ok := s.Extras["type"].([]string); ok && slices.Contains(types, name) {
+		return true
+	}
+	if types, ok := s.Extras["type"].([]any); ok && slices.Contains(types, any(name)) {
+		return true
+	}
+	return s.Type == name
 }
 
 // applySchemaFixes runs the post-reflection fixups over the whole type graph:
@@ -87,7 +91,7 @@ func admitsNull(s *jsonschema.Schema) bool {
 // so the walk follows $refs into those components. Without it only the root
 // type is fixed up: a nested struct keeps invopop's raw output, no
 // nullability and no readonly/deprecated tags.
-func (sr *schemaRegistry) applySchemaFixes(t reflect.Type, s *jsonschema.Schema, seen map[reflect.Type]bool) {
+func (sr *schemaRegistry) applySchemaFixes(t reflect.Type, s *jsonschema.Schema) {
 	if t == nil || s == nil {
 		return
 	}
@@ -97,81 +101,71 @@ func (sr *schemaRegistry) applySchemaFixes(t reflect.Type, s *jsonschema.Schema,
 			s = body
 		}
 	}
+	// Shared components need one pass, but repeated inline types have
+	// separate schema nodes and each needs its own fixes.
+	if sr.fixed[s] {
+		return
+	}
+	sr.fixed[s] = true
 	switch t.Kind() {
 	case reflect.Slice, reflect.Array:
-		sr.applySchemaFixes(t.Elem(), s.Items, seen)
+		sr.applySchemaFixes(t.Elem(), s.Items)
 		if t.Elem().Kind() == reflect.Pointer {
 			nullable(s.Items)
 		}
 		return
 	case reflect.Map:
-		if s.AdditionalProperties == nil {
-			s.AdditionalProperties = jsonschema.TrueSchema
-		}
-		sr.applySchemaFixes(t.Elem(), s.AdditionalProperties, seen)
-		if t.Elem().Kind() == reflect.Pointer {
-			nullable(s.AdditionalProperties)
-		}
+		sr.fixMapValues(t, s)
 		return
 	case reflect.Struct:
 	default:
 		return
 	}
-	// a recursive type reaches itself: each component body needs one pass
-	if seen[t] || s.Properties == nil {
+	if s.Properties == nil {
 		return
 	}
-	seen[t] = true
-	sr.fixStructFields(t, s, seen)
+	sr.fixStructFields(t, s)
 }
 
-// fixStructFields applies the per-field fixups to one struct's schema. It is
-// separate from applySchemaFixes so the embedded-struct descent can run on the
-// parent's schema without marking the embedded type as seen: the type still
-// needs its own pass when it is also reached as a component body elsewhere.
-func (sr *schemaRegistry) fixStructFields(t reflect.Type, s *jsonschema.Schema, seen map[reflect.Type]bool) {
-	sr.fixStructFieldsSeen(t, s, seen, make(map[reflect.Type]bool))
-}
-
-func (sr *schemaRegistry) fixStructFieldsSeen(
-	t reflect.Type,
-	s *jsonschema.Schema,
-	seen, embedded map[reflect.Type]bool,
-) {
-	t = deref(t)
-	if embedded[t] {
+func (sr *schemaRegistry) fixMapValues(t reflect.Type, s *jsonschema.Schema) {
+	// The reflector places signed integer keys in patternProperties and
+	// closes additionalProperties. Go also serializes negative integer keys.
+	if value, ok := s.PatternProperties["^[0-9]+$"]; ok {
+		switch t.Key().Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			delete(s.PatternProperties, "^[0-9]+$")
+			s.PatternProperties["^-?[0-9]+$"] = value
+		default:
+		}
+	}
+	fix := func(value *jsonschema.Schema) {
+		sr.applySchemaFixes(t.Elem(), value)
+		if t.Elem().Kind() == reflect.Pointer {
+			nullable(value)
+		}
+	}
+	if len(s.PatternProperties) > 0 {
+		for _, value := range s.PatternProperties {
+			fix(value)
+		}
 		return
 	}
-	embedded[t] = true
-	defer delete(embedded, t)
-	for f := range t.Fields() {
-		if f.Anonymous && parts0(f.Tag.Get("json")) == "" {
-			// invopop flattens an untagged embedded struct into this schema:
-			// its fields are properties of s itself, not of a nested object.
-			if ft := deref(f.Type); ft.Kind() == reflect.Struct {
-				sr.fixStructFieldsSeen(ft, s, seen, embedded)
-				continue
-			}
-		}
-		// an embedded field is promoted even when its Go name is unexported
-		if f.PkgPath != "" && !f.Anonymous {
-			continue
-		}
+	if s.AdditionalProperties == nil {
+		s.AdditionalProperties = jsonschema.TrueSchema
+	}
+	fix(s.AdditionalProperties)
+}
+
+// fixStructFields applies tags only from the winning JSON field. Hidden
+// embedded fields must not change the schema of the field that shadows them.
+func (sr *schemaRegistry) fixStructFields(t reflect.Type, s *jsonschema.Schema) {
+	fields := jsonFields(t, false)
+	removeShadowedFields(t, s, fields)
+	for _, f := range fields {
 		name := fieldName(f)
 		p, ok := s.Properties.Get(name)
 		if !ok || p == nil {
 			continue
-		}
-		if form := f.Tag.Get("form"); form != "" {
-			if fn := parts0(form); fn != "-" && fn != name {
-				s.Properties.Set(fn, p)
-				s.Properties.Delete(name)
-				// required names the wire property too: leaving the Go field
-				// name here would require a property that does not exist.
-				if i := slices.Index(s.Required, name); i >= 0 {
-					s.Required[i] = fn
-				}
-			}
 		}
 		applyFormatTag(p, f.Tag)
 		applyBoolEnumTag(p, f.Type, f.Tag)
@@ -186,10 +180,71 @@ func (sr *schemaRegistry) fixStructFieldsSeen(
 			}
 		}
 		// descend before nullable() clears a $ref: the recursion needs the link
-		sr.applySchemaFixes(f.Type, p, seen)
+		sr.applySchemaFixes(f.Type, p)
 		if f.Type.Kind() == reflect.Pointer {
 			nullable(p)
 		}
+	}
+	renameFormFields(s, fields)
+}
+
+// Rename together so one field's destination cannot replace another field
+// before it is read. Required names must use the same mapping.
+func renameFormFields(s *jsonschema.Schema, fields []reflect.StructField) {
+	renames := make(map[string]string)
+	for _, f := range fields {
+		name, form := fieldName(f), parts0(f.Tag.Get("form"))
+		if form != "" && form != "-" && form != name {
+			renames[name] = form
+		}
+	}
+	if len(renames) == 0 {
+		return
+	}
+	properties := jsonschema.NewProperties()
+	for name := range s.Properties.KeysFromOldest() {
+		wireName := name
+		if form, ok := renames[name]; ok {
+			wireName = form
+		}
+		if _, duplicate := properties.Get(wireName); duplicate {
+			panic("specout: duplicate form field " + wireName)
+		}
+		properties.Set(wireName, s.Properties.Value(name))
+	}
+	s.Properties = properties
+	for i, name := range s.Required {
+		if form, ok := renames[name]; ok {
+			s.Required[i] = form
+		}
+	}
+}
+
+// The reflector accumulates required names even when a later field replaces
+// an earlier one. Remove ambiguous properties and stale required entries.
+func removeShadowedFields(t reflect.Type, s *jsonschema.Schema, fields []reflect.StructField) {
+	selected := make(map[string]reflect.StructField, len(fields))
+	for _, f := range fields {
+		selected[fieldName(f)] = f
+	}
+	var candidates []bodyFieldCandidate
+	collectBodyFields(t, 0, &candidates, make(map[reflect.Type]bool), false)
+	counts := make(map[string]int)
+	for _, candidate := range candidates {
+		counts[candidate.name]++
+	}
+	for _, candidate := range candidates {
+		if counts[candidate.name] == 1 {
+			continue
+		}
+		f, ok := selected[candidate.name]
+		if !ok || parts0(f.Tag.Get("jsonschema")) == "-" {
+			s.Properties.Delete(candidate.name)
+		} else if !optionalTag(f.Tag.Get("json")) ||
+			slices.Contains(strings.Split(f.Tag.Get("jsonschema"), ","), "required") {
+			continue
+		}
+		s.Required = slices.DeleteFunc(s.Required, func(name string) bool { return name == candidate.name })
 	}
 }
 

@@ -61,13 +61,11 @@ func (d *Generator) buildRecords() ([]*routeRecord, error) {
 	// document reads like the router. Sorting put every DELETE first and
 	// scattered one resource across the paths object.
 	records := slices.Clone(d.records)
+	for _, rec := range records {
+		rec.omit = isCatchAll(rec.full)
+	}
 	if err := checkOperationIDs(records); err != nil {
 		return nil, err
-	}
-	for _, rec := range records {
-		if isCatchAll(rec.full) {
-			rec.omit = true
-		}
 	}
 	return records, nil
 }

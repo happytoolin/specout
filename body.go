@@ -67,8 +67,25 @@ type bodyFieldCandidate struct {
 // bodyFields follows encoding/json's wire-name dominance. Parameter fields
 // participate in shadowing, then disappear from the resulting body.
 func bodyFields(req reflect.Type) []reflect.StructField {
+	var out []reflect.StructField
+	for _, f := range jsonFields(req, true) {
+		if isParamField(f) {
+			continue
+		}
+		f.Tag = bodyJSONTag(f.Tag, fieldName(f))
+		f.Anonymous = false
+		f.Name = "Field" + strconv.Itoa(len(out)+1)
+		f.PkgPath = ""
+		out = append(out, f)
+	}
+	return out
+}
+
+// jsonFields resolves JSON name dominance. A split request keeps embedded
+// object-valued parameters intact so bodyFields can remove them afterwards.
+func jsonFields(req reflect.Type, splitParameters bool) []reflect.StructField {
 	var candidates []bodyFieldCandidate
-	collectBodyFields(req, 0, &candidates, make(map[reflect.Type]bool))
+	collectBodyFields(req, 0, &candidates, make(map[reflect.Type]bool), splitParameters)
 	byName := make(map[string][]bodyFieldCandidate)
 	var names []string
 	for _, candidate := range candidates {
@@ -77,20 +94,11 @@ func bodyFields(req reflect.Type) []reflect.StructField {
 		}
 		byName[candidate.name] = append(byName[candidate.name], candidate)
 	}
-	var selected []bodyFieldCandidate
+	var out []reflect.StructField
 	for _, name := range names {
-		if winner, ok := dominantBodyField(byName[name]); ok && !isParamField(winner.field) {
-			selected = append(selected, winner)
+		if winner, ok := dominantBodyField(byName[name]); ok {
+			out = append(out, winner.field)
 		}
-	}
-	out := make([]reflect.StructField, 0, len(selected))
-	for i, candidate := range selected {
-		f := candidate.field
-		f.Anonymous = false
-		f.Name = "Field" + strconv.Itoa(i+1)
-		f.PkgPath = ""
-		f.Tag = bodyJSONTag(f.Tag, candidate.name)
-		out = append(out, f)
 	}
 	return out
 }
@@ -102,7 +110,9 @@ func bodyJSONTag(tag reflect.StructTag, name string) reflect.StructTag {
 	return reflect.StructTag("json:" + strconv.Quote(name) + " " + string(tag))
 }
 
-func collectBodyFields(t reflect.Type, depth int, out *[]bodyFieldCandidate, stack map[reflect.Type]bool) {
+func collectBodyFields(
+	t reflect.Type, depth int, out *[]bodyFieldCandidate, stack map[reflect.Type]bool, splitParameters bool,
+) {
 	t = deref(t)
 	if t == nil || t.Kind() != reflect.Struct || stack[t] {
 		return
@@ -110,8 +120,8 @@ func collectBodyFields(t reflect.Type, depth int, out *[]bodyFieldCandidate, sta
 	stack[t] = true
 	defer delete(stack, t)
 	for f := range t.Fields() {
-		if promotes(f) && !isParamField(f) {
-			collectBodyFields(f.Type, depth+1, out, stack)
+		if promotes(f) && (!splitParameters || !isParamField(f)) {
+			collectBodyFields(f.Type, depth+1, out, stack, splitParameters)
 			continue
 		}
 		if f.PkgPath != "" && !f.Anonymous {

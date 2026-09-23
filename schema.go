@@ -17,13 +17,14 @@ type schemaRegistry struct {
 	byName      map[string]*jsonschema.Schema // hoisted $defs with no Go type
 	nameOrder   []string
 	names       map[reflect.Type]string
-	overrides   map[reflect.Type]string   // SchemaName[T] component-name overrides
-	defOwners   map[string]reflect.Type   // component name -> type that claimed it
-	variants    map[string]reflect.Type   // Register[T] union variants, by name
-	anon        int                       // anonymous struct component counter
-	owned       map[string]reflect.Type   // component name -> owning Go type
-	bodyViews   map[reflect.Type]bodyView // Req type -> request-body-only view
-	normalizing map[string]bool           // union components currently being rewritten
+	overrides   map[reflect.Type]string     // SchemaName[T] component-name overrides
+	defOwners   map[string]reflect.Type     // component name -> type that claimed it
+	variants    map[string]reflect.Type     // Register[T] union variants, by name
+	anon        int                         // anonymous struct component counter
+	owned       map[string]reflect.Type     // component name -> owning Go type
+	bodyViews   map[reflect.Type]bodyView   // Req type -> request-body-only view
+	normalizing map[string]bool             // union components currently being rewritten
+	fixed       map[*jsonschema.Schema]bool // schema nodes whose field fixes are complete
 	closed      bool
 }
 
@@ -43,6 +44,7 @@ func newSchemaRegistry(cfg Config) *schemaRegistry {
 		owned:       make(map[string]reflect.Type),
 		bodyViews:   make(map[reflect.Type]bodyView),
 		normalizing: make(map[string]bool),
+		fixed:       make(map[*jsonschema.Schema]bool),
 		closed:      cfg.ClosedSchemas,
 	}
 }
@@ -79,6 +81,9 @@ func (sr *schemaRegistry) refFor(t reflect.Type) string {
 		Anonymous:                 true,
 		DoNotReference:            false,
 		AllowAdditionalProperties: true,
+		// The reflector visits embedded fields in declaration order. Reapply
+		// the JSON winners last so an embedding cannot overwrite a direct field.
+		AdditionalFields: dominantJSONFields,
 		// The File marker is a raw payload, not an object: map it to the
 		// binary string schema before invopop turns it into a $ref and an
 		// empty "File" component.
@@ -111,7 +116,7 @@ func (sr *schemaRegistry) refFor(t reflect.Type) string {
 	s = sr.unwrapDefs(t, s)
 	splitEnums(s)
 	e.s = s
-	sr.applySchemaFixes(t, s, map[reflect.Type]bool{})
+	sr.applySchemaFixes(t, s)
 	// Build union envelopes only after field fixups. Branches copy the parent
 	// fields, so nullable and tag fixes must already be present.
 	sr.normalizeUnions(e.name, s)
@@ -127,6 +132,15 @@ func (sr *schemaRegistry) refFor(t reflect.Type) string {
 	}
 
 	return "#/components/schemas/" + e.name
+}
+
+func dominantJSONFields(t reflect.Type) []reflect.StructField {
+	for f := range t.Fields() {
+		if promotes(f) {
+			return jsonFields(t, false)
+		}
+	}
+	return nil
 }
 
 func (sr *schemaRegistry) normalizeUnions(name string, s *jsonschema.Schema) {
@@ -187,7 +201,9 @@ func isBuiltin(t reflect.Type) bool {
 	}
 	switch t.Kind() {
 	case reflect.Slice, reflect.Array, reflect.Map:
-		return isBuiltin(t.Elem())
+		// Named containers need components, including recursive types whose
+		// elements can lead back to the container itself.
+		return t.PkgPath() == "" && isBuiltin(t.Elem())
 	case reflect.Bool, reflect.String,
 		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
@@ -207,7 +223,7 @@ func schemaFor(t reflect.Type, sr *schemaRegistry) any {
 	if !isBuiltin(t) {
 		return newObj().set("$ref", sr.refFor(t))
 	}
-	if s := propSchema(t, ""); s != nil {
+	if s := sr.propSchema(t, ""); s != nil {
 		return s
 	}
 	return newObj().set("$ref", sr.refFor(t))

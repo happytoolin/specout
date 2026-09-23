@@ -41,8 +41,14 @@ func (rec *Recorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rec.next.ServeHTTP(rw, r)
 
 	// std populates r.Pattern during dispatch, so read it only after.
+	method := r.Method
 	if pattern == "" {
 		pattern = stdPattern(r.Pattern)
+		// ServeMux dispatches HEAD to GET only when no explicit HEAD route
+		// matched. Record the handler that actually ran.
+		if method == http.MethodHead && strings.HasPrefix(r.Pattern, http.MethodGet+" ") {
+			method = http.MethodGet
+		}
 	}
 	// unmatched, or a skipped route: no key, no drift entry
 	if pattern == "" || slices.ContainsFunc(rec.skips, func(s specout.SkipRule) bool { return s.Matches(pattern) }) {
@@ -51,7 +57,7 @@ func (rec *Recorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
-	key := specout.NewRouteKey(r.Method, pattern)
+	key := specout.NewRouteKey(method, pattern)
 	if rec.codes[key] == nil {
 		rec.codes[key] = map[int]bool{}
 	}
@@ -63,13 +69,14 @@ func (rec *Recorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // manually; gorilla keeps the matched route on a request copy the caller never
 // sees, so match here too.
 func (rec *Recorder) match(r *http.Request) string {
-	if rctx := chi.RouteContext(r.Context()); rctx != nil && rctx.RoutePattern() != "" {
-		return rctx.RoutePattern()
+	routes, _ := rec.next.(chi.Routes)
+	if rctx := chi.RouteContext(r.Context()); rctx != nil && rctx.Routes != nil {
+		routes = rctx.Routes
 	}
-	if routes, ok := rec.next.(chi.Routes); ok {
-		if rctx := chi.NewRouteContext(); routes.Match(rctx, r.Method, r.URL.Path) {
-			return rctx.RoutePattern()
-		}
+	if routes != nil {
+		// Find preserves trailing slashes; RoutePattern trims them. Match the
+		// escaped path like chi does, so encoded slashes stay in one segment.
+		return routes.Find(chi.NewRouteContext(), r.Method, cmp.Or(r.URL.RawPath, r.URL.Path))
 	}
 	if mr, ok := rec.next.(*mux.Router); ok {
 		var match mux.RouteMatch

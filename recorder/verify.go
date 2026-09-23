@@ -2,7 +2,6 @@ package recorder
 
 import (
 	"maps"
-	"net/http"
 
 	"github.com/happytoolin/specout"
 )
@@ -32,7 +31,7 @@ func Verify(t specout.TestingT, d *specout.Generator, rec *Recorder) {
 	rec.mu.Unlock()
 
 	for key, codes := range required {
-		seen := lookupKey(observed, key)
+		seen := observed[key]
 		for code := range codes {
 			if !seen[code] {
 				t.Errorf("declared %s %s %d never produced by any test", key.Method, key.Path, code)
@@ -42,7 +41,7 @@ func Verify(t specout.TestingT, d *specout.Generator, rec *Recorder) {
 	for key, codes := range observed {
 		// a declared "default" response (status 0) means any code is in the
 		// spec for that route, so nothing the handler writes is drift.
-		want := lookupKey(allowed, key)
+		want := allowed[key]
 		if want[0] {
 			continue
 		}
@@ -52,19 +51,4 @@ func Verify(t specout.TestingT, d *specout.Generator, rec *Recorder) {
 			}
 		}
 	}
-}
-
-// lookupKey accepts HEAD and GET as the same route: net/http serves HEAD
-// through the GET handler, so either observation satisfies the other.
-func lookupKey(m map[specout.RouteKey]map[int]bool, k specout.RouteKey) map[int]bool {
-	if v := m[k]; v != nil {
-		return v
-	}
-	switch k.Method {
-	case http.MethodHead:
-		return m[specout.RouteKey{Method: http.MethodGet, Path: k.Path}]
-	case http.MethodGet:
-		return m[specout.RouteKey{Method: http.MethodHead, Path: k.Path}]
-	}
-	return nil
 }

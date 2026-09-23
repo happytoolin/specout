@@ -99,6 +99,71 @@ def main():
                     raise AssertionError(f"{name}: nested union accepted invalid payload")
         print("PASS nested union payloads")
 
+        for name, document in documents:
+            if not name.startswith("TestNullableAnonymousUnion"):
+                continue
+            validator = Draft202012Validator({
+                "$ref": "#/components/schemas/nullableUnionHolder",
+                "components": document["components"],
+            })
+            for event in (
+                None,
+                {"kind": "email", "data": {"address": "ops@example.com"}},
+                {"kind": "slack", "data": {"channel": "#ops"}},
+            ):
+                validator.validate({"event": event})
+            for event in (
+                {"kind": "email", "data": {"channel": "#ops"}},
+                {"kind": "unknown", "data": {}},
+                {"data": {"address": "ops@example.com"}},
+                {"kind": "email"},
+            ):
+                if validator.is_valid({"event": event}):
+                    raise AssertionError(f"{name}: nullable union accepted invalid payload: {event}")
+        print("PASS nullable anonymous union payloads")
+
+        map_doc = next(document for name, document in documents
+                       if name.startswith("TestSignedMapValuesKeepFixups"))
+        validator = Draft202012Validator({
+            "$ref": "#/components/schemas/integerMapResponse",
+            "components": map_doc["components"],
+        })
+        validator.validate({"values": {"-1": None, "2": {"value": None}}})
+        for values in ({"bad": None}, {"-1": {"value": 42}}):
+            if validator.is_valid({"values": values}):
+                raise AssertionError(f"signed map accepted invalid payload: {values}")
+        print("PASS signed map keys and nullable values")
+
+        recursive_doc = next(document for name, document in documents
+                             if name.startswith("TestRecursiveParameterUsesResolvableComponents"))
+        parameters = recursive_doc["paths"]["/x"]["get"]["parameters"]
+        samples = {
+            "filter": ({"value": "a", "next": {"value": "b", "next": None}}, {"value": "a", "next": 42}),
+            "tree": ({"child": {"leaf": {}}}, {"child": "invalid"}),
+            "nodes": ([[], [[]]], ["invalid"]),
+        }
+        for parameter in parameters:
+            validator = Draft202012Validator({
+                **parameter["schema"], "components": recursive_doc["components"],
+            })
+            valid, invalid = samples[parameter["name"]]
+            validator.validate(valid)
+            if validator.is_valid(invalid):
+                raise AssertionError(f"recursive parameter accepted invalid payload: {invalid}")
+        print("PASS recursive parameter payloads")
+
+        form_doc = next(document for name, document in documents
+                        if name.startswith("TestFormRenamesPreserveSharedFields"))
+        validator = Draft202012Validator({
+            "$ref": "#/components/schemas/swappedFormFields", "components": form_doc["components"],
+        })
+        validator.validate({"a": None, "b": "text", "c": "text"})
+        validator.validate({"a": 42, "b": "text", "c": "text"})
+        for payload in ({"a": "text", "b": 42, "c": "text"}, {"c": "text"}):
+            if validator.is_valid(payload):
+                raise AssertionError(f"form schema accepted invalid payload: {payload}")
+        print("PASS renamed form field payloads")
+
         enum_doc = next(document for name, document in documents
                         if name.startswith("TestParameterEnumsSplitBeforeNullability"))
         for parameter in enum_doc["paths"]["/items/{id}"]["get"]["parameters"]:

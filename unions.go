@@ -21,9 +21,14 @@ func (d *Generator) Register[T any](name string) {
 
 // SchemaName overrides the component name generated for T — the fix when two
 // packages own types with the same name. Call before building the spec.
+// Names must be nonempty and contain only letters, digits, dots, hyphens or
+// underscores. T and *T name the same component; the last override wins.
 func (d *Generator) SchemaName[T any](name string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.mustBeOpen()
-	d.nameOverrides[reflect.TypeFor[T]()] = name
+	if name == "" || componentChars.MatchString(name) {
+		panic("specout: SchemaName must contain only ASCII letters, digits, dots, hyphens or underscores")
+	}
+	d.nameOverrides[deref(reflect.TypeFor[T]())] = name
 }

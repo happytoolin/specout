@@ -76,15 +76,15 @@ func (g *GorillaRouter) Trace[Req, Res any](p string, h Handler[Req, Res]) {
 func (g *GorillaRouter) Adopt(skips ...SkipRule) error {
 	s := strayScan{d: g.d, skips: skips}
 	err := g.r.Walk(func(route *mux.Route, _ *mux.Router, _ []*mux.Route) error {
-		tpl, err := route.GetPathTemplate()
-		if err != nil {
-			return fmt.Errorf("specout: read route template: %w", err)
-		}
 		// A route with no handler is a PathPrefix/Subrouter mount, not an
 		// endpoint: skip it like chi skips Mount stubs.
 		h := route.GetHandler()
 		if h == nil {
 			return nil
+		}
+		tpl, err := route.GetPathTemplate()
+		if err != nil {
+			return fmt.Errorf("specout: read route template: %w", err)
 		}
 		methods, err := route.GetMethods()
 		if err != nil {

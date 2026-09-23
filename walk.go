@@ -68,7 +68,7 @@ func remapDefs(s *jsonschema.Schema) {
 // closeSchema sets additionalProperties: false on every object node.
 func closeSchema(s *jsonschema.Schema) {
 	walkSchema(s, func(x *jsonschema.Schema) {
-		if x.Type == "object" && x.AdditionalProperties == nil {
+		if hasSchemaType(x, "object") && x.AdditionalProperties == nil {
 			x.AdditionalProperties = jsonschema.FalseSchema
 		}
 	})
@@ -121,6 +121,10 @@ func makeUnionEnvelope(s *jsonschema.Schema, sr *schemaRegistry, owner string) {
 	if len(names) == 0 {
 		return
 	}
+	allowNull := hasSchemaType(s, nullType)
+	// nullable stores a type array in Extras. Branches are object schemas;
+	// leaving that array in their copies would emit two type members.
+	delete(s.Extras, "type")
 	mapping := newObj()
 	refs := make([]*jsonschema.Schema, 0, len(names))
 	for i, name := range names {
@@ -144,6 +148,9 @@ func makeUnionEnvelope(s *jsonschema.Schema, sr *schemaRegistry, owner string) {
 	s.MaxProperties = nil
 	s.Required = nil
 	s.OneOf = refs
+	if allowNull {
+		nullable(s)
+	}
 	if s.Extras == nil {
 		s.Extras = map[string]any{}
 	}

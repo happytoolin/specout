@@ -28,6 +28,7 @@ func docPath(p string) string {
 // both the chi/std form (/files/*) and the std multi-segment form
 // (/files/{path...}).
 func isCatchAll(p string) bool {
+	p = docPath(p)
 	return strings.Contains(p, "*") || strings.Contains(p, "...}")
 }
 

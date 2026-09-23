@@ -33,7 +33,7 @@ func (d *Generator) operationFor(rec *routeRecord, sr *schemaRegistry) *obj {
 		op.set("tags", toAny(rec.tags))
 	}
 	// path params from the resolved pattern, query params from Req tags
-	params := slices.Concat(pathParamObjs(rec.full, rec.req), taggedParams(rec.req))
+	params := slices.Concat(sr.pathParamObjs(rec.full, rec.req), sr.taggedParams(rec.req))
 	if len(params) > 0 {
 		op.set("parameters", params)
 	}
