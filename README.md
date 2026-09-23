@@ -192,11 +192,19 @@ The document stays mutable while routes are registered. The first call to `Write
 The canonical example is in [`examples/onboarding`](examples/onboarding). Its committed [`openapi.json`](examples/onboarding/openapi.json) is the sample specification and a golden test fixture.
 
 ```bash
+just check         # Run all CI and release checks.
+just lint          # Check Go lint rules and formatting.
 just test          # Run the test suite.
 just validate      # Validate the generated OpenAPI document.
 just client-types  # Generate and compile client types from every example.
 just demo          # Run the onboarding API on localhost:8080.
 ```
+
+`just check` requires Go, Python 3, and Node.js/npm. It checks module files,
+builds all packages, runs Go and workflow linting, runs tests with and without
+the race detector, validates OpenAPI schemas, compiles generated client types,
+and scans code and tests for known vulnerabilities. Tool versions are pinned.
+CI and release checks use the same command.
 
 Two smaller integrations are also available:
 

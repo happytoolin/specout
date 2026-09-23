@@ -16,7 +16,7 @@
 
 Post in this order. Adapt the opening line for each community. Do not publish every post at the same time.
 
-1. **[r/golang](https://www.reddit.com/r/golang/) weekly Small Projects thread** — Best first audience for a new Go library. Use the Reddit copy below and one link.
+1. **[r/golang](https://www.reddit.com/r/golang/)** — Use the [Reddit announcement](REDDIT.md). Check the current posting rules. Use the weekly Small Projects thread if required.
 2. **[Go Forum](https://forum.golangbridge.org/), Technical Discussion** — The forum accepts announcements about Go packages and projects. Ask for specific technical feedback.
 3. **[Bluesky](https://bsky.app/) or [X](https://x.com/)** — Use the short post with the OG image. Reply with one code example if people engage.
 4. **[LinkedIn](https://www.linkedin.com/)** — Use the longer post if your network includes backend or platform engineers.
@@ -34,17 +34,9 @@ https://github.com/happytoolin/specout
 
 #golang #opensource
 
-## Reddit: r/golang Small Projects
+## Reddit
 
-**Project Name:** specout
-
-**Website:** https://github.com/happytoolin/specout
-
-**Description:** specout generates deterministic OpenAPI 3.1 documents from plain Go HTTP handlers. It supports `net/http`, `chi/v5`, and `gorilla/mux`. Request metadata comes from Go types and field tags. Tests can compare documented routes with the live router and declared response statuses with statuses observed at runtime.
-
-The goal is to keep application code native. There are no comment annotations, generated handlers, or second routing system.
-
-This is the first public release. Feedback on the API, schema output, missing HTTP edge cases, and routers that need adapters would be useful. Contributions are welcome.
+Use the standalone [Reddit announcement](REDDIT.md). If moderators redirect it, use the same body in the weekly Small Projects thread.
 
 ## Go Forum
 
