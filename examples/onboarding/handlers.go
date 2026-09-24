@@ -1,8 +1,8 @@
 package main
 
 import (
-	"encoding/json"
 	"net/http"
+	"net/mail"
 	"slices"
 	"strings"
 	"sync"
@@ -72,15 +72,24 @@ func invalid(w http.ResponseWriter, field, message string) {
 	examplekit.WriteJSON(w, http.StatusUnprocessableEntity, validationError{[]fieldProblem{{Field: field, Message: message}}})
 }
 
+func writeProblem(w http.ResponseWriter, status int, title string) {
+	examplekit.WriteJSON(w, status, problem{Title: title, Status: status})
+}
+
 func upsert(s *store, id func(*http.Request) string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var in upsertRequest
-		if json.NewDecoder(r.Body).Decode(&in) != nil {
-			http.Error(w, "invalid JSON", http.StatusBadRequest)
+		if examplekit.DecodeJSON(r.Body, &in) != nil {
+			writeProblem(w, http.StatusBadRequest, "invalid JSON")
 			return
 		}
-		if !strings.Contains(in.Owner, "@") {
+		address, err := mail.ParseAddress(in.Owner)
+		if err != nil || address.Address != in.Owner {
 			invalid(w, "owner", "must be a valid email")
+			return
+		}
+		if !slices.Contains([]string{"draft", "active", "archived"}, in.Stage) {
+			invalid(w, "stage", "must be draft, active, or archived")
 			return
 		}
 		item, created := s.upsert(id(r), in)
@@ -100,7 +109,7 @@ func routes(b *specout.ChiRouter, s *store) {
 	b.Get("/onboarding/{id}", operation[struct{}, onboarding]("Fetch one onboarding record", func(w http.ResponseWriter, r *http.Request) {
 		item, ok := s.get(chi.URLParam(r, "id"))
 		if !ok {
-			http.Error(w, "not found", http.StatusNotFound)
+			writeProblem(w, http.StatusNotFound, "not found")
 			return
 		}
 		examplekit.WriteJSON(w, http.StatusOK, item)
@@ -116,7 +125,7 @@ func routes(b *specout.ChiRouter, s *store) {
 	}), specout.Response{Status: http.StatusCreated}, specout.Response{Status: http.StatusUnprocessableEntity, Type: validationError{}}))
 	b.Delete("/onboarding/{id}", operation[struct{}, specout.NoContent]("Delete an onboarding record", func(w http.ResponseWriter, r *http.Request) {
 		if !s.delete(chi.URLParam(r, "id")) {
-			http.Error(w, "not found", http.StatusNotFound)
+			writeProblem(w, http.StatusNotFound, "not found")
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)

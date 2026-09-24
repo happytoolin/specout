@@ -341,22 +341,27 @@ type swappedFormFields struct {
 }
 
 func TestFormRenamesPreserveSharedFields(t *testing.T) {
-	type first struct {
-		Value swappedFormFields `json:"value"`
-	}
-	type second struct {
-		Value swappedFormFields `json:"value"`
-	}
 	d := newGen()
-	specout.Document(d, http.MethodPost, "/a", specout.Handler[first, specout.NoContent]{HandlerFunc: noop})
-	specout.Document(d, http.MethodPost, "/b", specout.Handler[second, specout.NoContent]{HandlerFunc: noop})
+	handler := specout.Handler[swappedFormFields, swappedFormFields]{HandlerFunc: noop}.
+		WithRequestContentTypes("application/json", "application/x-www-form-urlencoded")
+	specout.Document(d, http.MethodPost, "/a", handler)
+	specout.Document(d, http.MethodPost, "/b", handler)
 	doc := buildDoc(t, d)
-	p := props(t, doc, "swappedFormFields")
-	require.Len(t, p, 3)
-	assert.Equal(t, "string", p["b"].(map[string]any)["type"])
-	assert.True(t, isNullable(p["a"].(map[string]any)))
-	assert.Equal(t, "string", p["c"].(map[string]any)["type"])
-	assert.ElementsMatch(t, []any{"b", "c"}, componentsSchema(t, doc, "swappedFormFields")["required"])
+	for _, path := range []string{"/a", "/b"} {
+		content := opOf(t, doc, path, "post")["requestBody"].(map[string]any)["content"].(map[string]any)
+		form := content["application/x-www-form-urlencoded"].(map[string]any)["schema"].(map[string]any)
+		p := form["properties"].(map[string]any)
+		require.Len(t, p, 3)
+		assert.Equal(t, "string", p["b"].(map[string]any)["type"])
+		assert.True(t, isNullable(p["a"].(map[string]any)))
+		assert.Equal(t, "string", p["c"].(map[string]any)["type"])
+		assert.ElementsMatch(t, []any{"b", "c"}, form["required"])
+		assert.Equal(t, "#/components/schemas/swappedFormFields", content["application/json"].(map[string]any)["schema"].(map[string]any)["$ref"])
+	}
+	jsonProps := props(t, doc, "swappedFormFields")
+	assert.Equal(t, "string", jsonProps["a"].(map[string]any)["type"])
+	assert.True(t, isNullable(jsonProps["b"].(map[string]any)))
+	assert.ElementsMatch(t, []any{"a", "c"}, componentsSchema(t, doc, "swappedFormFields")["required"])
 }
 
 func TestDuplicateFormNamesFail(t *testing.T) {
@@ -365,7 +370,8 @@ func TestDuplicateFormNamesFail(t *testing.T) {
 		B int    `form:"value" json:"b"`
 	}
 	assert.PanicsWithValue(t, "specout: duplicate form field value", func() {
-		docOf(t, http.MethodPost, "/x", specout.Handler[request, specout.NoContent]{HandlerFunc: noop})
+		docOf(t, http.MethodPost, "/x", specout.Handler[request, specout.NoContent]{HandlerFunc: noop}.
+			WithRequestContentTypes("application/x-www-form-urlencoded"))
 	})
 }
 

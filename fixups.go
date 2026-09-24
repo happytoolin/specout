@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/invopop/jsonschema"
 )
@@ -53,9 +54,6 @@ func nullable(p *jsonschema.Schema) {
 		p.AnyOf = []*jsonschema.Schema{{AllOf: allOf}, {Type: nullType}}
 		return
 	}
-	if len(p.Enum) > 0 {
-		return
-	}
 	// An unconstrained schema already accepts null. This is the schema for
 	// *any and must stay {}, not ["", "null"].
 }
@@ -85,7 +83,7 @@ func hasSchemaType(s *jsonschema.Schema, name string) bool {
 
 // applySchemaFixes runs the post-reflection fixups over the whole type graph:
 // pointer fields become nullable, and the tag keywords invopop misses (bare
-// readonly/writeonly/deprecated, form= renames) reach the property.
+// readonly/writeonly/deprecated) reach the property.
 //
 // invopop hoists every named struct into components.schemas before this runs,
 // so the walk follows $refs into those components. Without it only the root
@@ -107,24 +105,29 @@ func (sr *schemaRegistry) applySchemaFixes(t reflect.Type, s *jsonschema.Schema)
 		return
 	}
 	sr.fixed[s] = true
+	// The nullable tag wraps the reflected shape in oneOf. Its non-null arm
+	// still needs the same field and container fixes as an unwrapped schema.
+	for _, group := range [][]*jsonschema.Schema{s.OneOf, s.AnyOf, s.AllOf} {
+		for _, child := range group {
+			if child != nil && child.Type != nullType {
+				sr.applySchemaFixes(t, child)
+			}
+		}
+	}
 	switch t.Kind() {
 	case reflect.Slice, reflect.Array:
 		sr.applySchemaFixes(t.Elem(), s.Items)
 		if t.Elem().Kind() == reflect.Pointer {
 			nullable(s.Items)
 		}
-		return
 	case reflect.Map:
 		sr.fixMapValues(t, s)
-		return
 	case reflect.Struct:
+		if s.Properties != nil {
+			sr.fixStructFields(t, s)
+		}
 	default:
-		return
 	}
-	if s.Properties == nil {
-		return
-	}
-	sr.fixStructFields(t, s)
 }
 
 func (sr *schemaRegistry) fixMapValues(t reflect.Type, s *jsonschema.Schema) {
@@ -162,8 +165,21 @@ func (sr *schemaRegistry) fixStructFields(t reflect.Type, s *jsonschema.Schema) 
 	fields := jsonFields(t, false)
 	removeShadowedFields(t, s, fields)
 	for _, f := range fields {
+		if parts0(f.Tag.Get("jsonschema")) == "-" {
+			continue
+		}
 		name := fieldName(f)
 		p, ok := s.Properties.Get(name)
+		// encoding/json excludes only the exact tag "-". The reflector
+		// also drops "-,omitempty", which names a real property.
+		if !ok && name == "-" {
+			p = sr.propSchema(f.Type, bodyJSONTag(f.Tag, "Wrap"))
+			s.Properties.Set(name, p)
+			if !optionalTag(f.Tag.Get("json")) || slices.Contains(strings.Split(f.Tag.Get("jsonschema"), ","), "required") {
+				s.Required = append(s.Required, name)
+			}
+			ok = true
+		}
 		if !ok || p == nil {
 			continue
 		}
@@ -185,39 +201,6 @@ func (sr *schemaRegistry) fixStructFields(t reflect.Type, s *jsonschema.Schema) 
 			nullable(p)
 		}
 	}
-	renameFormFields(s, fields)
-}
-
-// Rename together so one field's destination cannot replace another field
-// before it is read. Required names must use the same mapping.
-func renameFormFields(s *jsonschema.Schema, fields []reflect.StructField) {
-	renames := make(map[string]string)
-	for _, f := range fields {
-		name, form := fieldName(f), parts0(f.Tag.Get("form"))
-		if form != "" && form != "-" && form != name {
-			renames[name] = form
-		}
-	}
-	if len(renames) == 0 {
-		return
-	}
-	properties := jsonschema.NewProperties()
-	for name := range s.Properties.KeysFromOldest() {
-		wireName := name
-		if form, ok := renames[name]; ok {
-			wireName = form
-		}
-		if _, duplicate := properties.Get(wireName); duplicate {
-			panic("specout: duplicate form field " + wireName)
-		}
-		properties.Set(wireName, s.Properties.Value(name))
-	}
-	s.Properties = properties
-	for i, name := range s.Required {
-		if form, ok := renames[name]; ok {
-			s.Required[i] = form
-		}
-	}
 }
 
 // The reflector accumulates required names even when a later field replaces
@@ -228,13 +211,13 @@ func removeShadowedFields(t reflect.Type, s *jsonschema.Schema, fields []reflect
 		selected[fieldName(f)] = f
 	}
 	var candidates []bodyFieldCandidate
-	collectBodyFields(t, 0, &candidates, make(map[reflect.Type]bool), false)
+	collectBodyFields(t, 0, &candidates, make(map[reflect.Type]bool), false, false)
 	counts := make(map[string]int)
 	for _, candidate := range candidates {
 		counts[candidate.name]++
 	}
 	for _, candidate := range candidates {
-		if counts[candidate.name] == 1 {
+		if counts[candidate.name] == 1 && !candidate.optional {
 			continue
 		}
 		f, ok := selected[candidate.name]
@@ -254,17 +237,29 @@ func applyBoolEnumTag(p *jsonschema.Schema, t reflect.Type, tag reflect.StructTa
 	if p == nil || deref(t).Kind() != reflect.Bool || len(p.Enum) > 0 {
 		return
 	}
-	value := tagValue(tag.Get("jsonschema"), "enum")
-	if value == "" {
+	if len(p.OneOf) > 0 && admitsNull(p) {
+		for _, child := range p.OneOf {
+			if child != nil && child.Type != nullType {
+				applyBoolEnumTag(child, t, tag)
+			}
+		}
 		return
 	}
 	var values []any
-	for part := range strings.SplitSeq(value, "|") {
-		v, err := strconv.ParseBool(part)
-		if err != nil {
-			return
+	for item := range strings.SplitSeq(tag.Get("jsonschema"), ",") {
+		value, ok := strings.CutPrefix(item, "enum=")
+		if !ok {
+			continue
 		}
-		values = append(values, v)
+		for part := range strings.SplitSeq(value, "|") {
+			v, err := strconv.ParseBool(part)
+			if err != nil {
+				return
+			}
+			if !slices.Contains(values, any(v)) {
+				values = append(values, v)
+			}
+		}
 	}
 	p.Enum = values
 }
@@ -273,6 +268,9 @@ func applyBoolEnumTag(p *jsonschema.Schema, t reflect.Type, tag reflect.StructTa
 // else the Go name.
 func fieldName(f reflect.StructField) string {
 	if name := parts0(f.Tag.Get("json")); name != "" {
+		if parts0(f.Tag.Get("jsonschema")) != "-" && (!utf8.ValidString(name) || strings.ContainsAny(name, "'\"`\\")) {
+			panic("specout: invalid JSON field name " + strconv.Quote(name))
+		}
 		return name
 	}
 	return f.Name
@@ -288,10 +286,8 @@ func (sr *schemaRegistry) bodyForRef(ref string) *jsonschema.Schema {
 	if s, ok := sr.byName[name]; ok {
 		return s
 	}
-	for _, e := range sr.byType {
-		if e.name == name {
-			return e.s
-		}
+	if e := sr.byType[sr.owners[name]]; e != nil {
+		return e.s
 	}
 	return nil
 }

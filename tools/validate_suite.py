@@ -155,7 +155,8 @@ def main():
         form_doc = next(document for name, document in documents
                         if name.startswith("TestFormRenamesPreserveSharedFields"))
         validator = Draft202012Validator({
-            "$ref": "#/components/schemas/swappedFormFields", "components": form_doc["components"],
+            **form_doc["paths"]["/a"]["post"]["requestBody"]["content"]["application/x-www-form-urlencoded"]["schema"],
+            "components": form_doc["components"],
         })
         validator.validate({"a": None, "b": "text", "c": "text"})
         validator.validate({"a": 42, "b": "text", "c": "text"})

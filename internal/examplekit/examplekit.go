@@ -5,13 +5,29 @@ package examplekit
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"time"
 
 	"github.com/happytoolin/specout"
 )
+
+// DecodeJSON reads exactly one JSON value. The examples keep their existing
+// decoder semantics, but reject trailing values or junk before changing data.
+func DecodeJSON(r io.Reader, v any) error {
+	decoder := json.NewDecoder(r)
+	if err := decoder.Decode(v); err != nil {
+		return fmt.Errorf("decode request body: %w", err)
+	}
+	var extra json.RawMessage
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return errors.New("request body must contain exactly one JSON value")
+	}
+	return nil
+}
 
 // WriteJSON answers v as application/json with code: the one JSON writer both
 // examples share.

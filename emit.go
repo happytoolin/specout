@@ -19,11 +19,3 @@ func externalDocsObj(ed *ExternalDocs) *obj {
 func sortedKeys[V any](m map[string]V) []string {
 	return slices.Sorted(maps.Keys(m))
 }
-
-func toAny[T any](s []T) []any {
-	out := make([]any, 0, len(s))
-	for _, v := range s {
-		out = append(out, v)
-	}
-	return out
-}

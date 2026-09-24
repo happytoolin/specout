@@ -5,6 +5,7 @@ package recorder
 
 import (
 	"cmp"
+	"context"
 	"net/http"
 	"slices"
 	"strings"
@@ -37,12 +38,26 @@ func New(next http.Handler, skips ...specout.SkipRule) *Recorder {
 
 func (rec *Recorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	pattern := rec.match(r)
+	rctx := chi.RouteContext(r.Context())
+	if routes, ok := rec.next.(chi.Routes); ok && rctx == nil {
+		// Own the context so chi does not return it to its pool before we
+		// read the final method and pattern chosen by routing middleware.
+		rctx = chi.NewRouteContext()
+		rctx.Routes = routes
+		r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+	}
 	rw := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 	rec.next.ServeHTTP(rw, r)
 
 	// std populates r.Pattern during dispatch, so read it only after.
 	method := r.Method
-	if pattern == "" {
+	if rctx != nil && len(rctx.RoutePatterns) > 0 {
+		if actual := chiPattern(rctx); actual != "" {
+			pattern = actual
+		}
+		method = cmp.Or(rctx.RouteMethod, method)
+	}
+	if pattern == "" && rctx == nil {
 		pattern = stdPattern(r.Pattern)
 		// ServeMux dispatches HEAD to GET only when no explicit HEAD route
 		// matched. Record the handler that actually ran.
@@ -64,10 +79,36 @@ func (rec *Recorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rec.codes[key][cmp.Or(rw.Status(), http.StatusOK)] = true
 }
 
-// match resolves the pattern r dispatches to. chi sets the RouteContext before
-// dispatch and clears it after, and a request reaching us unwrapped is matched
-// manually; gorilla keeps the matched route on a request copy the caller never
-// sees, so match here too.
+// A pattern stack ending at a subrouter is an unmatched request or a
+// middleware response, not an endpoint. Preserve trailing slashes for real
+// endpoints; chi.Context.RoutePattern trims them.
+func chiPattern(ctx *chi.Context) string {
+	routes := ctx.Routes
+	for _, pattern := range ctx.RoutePatterns {
+		if routes == nil {
+			return ""
+		}
+		var next chi.Routes
+		for _, route := range routes.Routes() {
+			if route.Pattern == pattern {
+				next = route.SubRoutes
+				break
+			}
+		}
+		routes = next
+	}
+	if routes != nil {
+		return ""
+	}
+	pattern := strings.Join(ctx.RoutePatterns, "")
+	for strings.Contains(pattern, "/*/") {
+		pattern = strings.ReplaceAll(pattern, "/*/", "/")
+	}
+	return pattern
+}
+
+// match supplies a fallback when middleware returns before endpoint dispatch.
+// Gorilla also keeps its matched route on a request copy the caller cannot see.
 func (rec *Recorder) match(r *http.Request) string {
 	routes, _ := rec.next.(chi.Routes)
 	if rctx := chi.RouteContext(r.Context()); rctx != nil && rctx.Routes != nil {

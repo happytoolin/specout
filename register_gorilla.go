@@ -22,6 +22,7 @@ type GorillaRouter struct {
 func (g *GorillaRouter) register(method, pattern string, rec routeRecord) {
 	rec.method, rec.pattern = method, pattern
 	rec.absolute = true
+	rec.literalStars = true
 	g.d.register(rec, func(rec *routeRecord) {
 		// gorilla folds subrouter prefixes into the route template.
 		if tpl, err := g.r.Handle(pattern, rec).Methods(method).GetPathTemplate(); err == nil {

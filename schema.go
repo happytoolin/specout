@@ -1,10 +1,12 @@
 package specout
 
 import (
+	"maps"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
-	"time"
+	"strings"
 
 	"github.com/invopop/jsonschema"
 )
@@ -12,20 +14,18 @@ import (
 // schemaRegistry reflects Go types into JSON Schema, dedupes by Go type, and
 // names components.
 type schemaRegistry struct {
-	byType      map[reflect.Type]*schemaEntry
-	order       []reflect.Type
-	byName      map[string]*jsonschema.Schema // hoisted $defs with no Go type
-	nameOrder   []string
-	names       map[reflect.Type]string
-	overrides   map[reflect.Type]string     // SchemaName[T] component-name overrides
-	defOwners   map[string]reflect.Type     // component name -> type that claimed it
-	variants    map[string]reflect.Type     // Register[T] union variants, by name
-	anon        int                         // anonymous struct component counter
-	owned       map[string]reflect.Type     // component name -> owning Go type
-	bodyViews   map[reflect.Type]bodyView   // Req type -> request-body-only view
-	normalizing map[string]bool             // union components currently being rewritten
-	fixed       map[*jsonschema.Schema]bool // schema nodes whose field fixes are complete
-	closed      bool
+	byType    map[reflect.Type]*schemaEntry
+	order     []reflect.Type
+	byName    map[string]*jsonschema.Schema // hoisted $defs with no Go type
+	nameOrder []string
+	inline    []*jsonschema.Schema // parameter and media-specific schemas outside components
+	names     map[reflect.Type]string
+	overrides map[reflect.Type]string     // SchemaName[T] component-name overrides
+	owners    map[string]reflect.Type     // component name -> type that claimed it
+	variants  map[string]reflect.Type     // Register[T] union variants, by name
+	anon      int                         // anonymous struct component counter
+	fixed     map[*jsonschema.Schema]bool // schema nodes whose field fixes are complete
+	closed    bool
 }
 
 type schemaEntry struct {
@@ -33,49 +33,33 @@ type schemaEntry struct {
 	s    *jsonschema.Schema
 }
 
-func newSchemaRegistry(cfg Config) *schemaRegistry {
-	return &schemaRegistry{
-		byType:      make(map[reflect.Type]*schemaEntry),
-		byName:      make(map[string]*jsonschema.Schema),
-		names:       make(map[reflect.Type]string),
-		overrides:   make(map[reflect.Type]string),
-		defOwners:   make(map[string]reflect.Type),
-		variants:    make(map[string]reflect.Type),
-		owned:       make(map[string]reflect.Type),
-		bodyViews:   make(map[reflect.Type]bodyView),
-		normalizing: make(map[string]bool),
-		fixed:       make(map[*jsonschema.Schema]bool),
-		closed:      cfg.ClosedSchemas,
+// Build holds d.mu. Variants are read-only; body views add local name overrides.
+func (d *Generator) newSchemaRegistry() *schemaRegistry {
+	sr := &schemaRegistry{
+		byType:    make(map[reflect.Type]*schemaEntry),
+		byName:    make(map[string]*jsonschema.Schema),
+		names:     make(map[reflect.Type]string),
+		overrides: make(map[reflect.Type]string),
+		owners:    make(map[string]reflect.Type),
+		variants:  d.variants,
+		fixed:     make(map[*jsonschema.Schema]bool),
+		closed:    d.cfg.ClosedSchemas,
 	}
-}
-
-// registerVariant records a union variant type under its discriminator name.
-func (sr *schemaRegistry) registerVariant(t reflect.Type, name string) {
-	sr.variants[name] = deref(t)
-}
-
-// overrideName forces a component name for t (SchemaName[T]).
-func (sr *schemaRegistry) overrideName(t reflect.Type, name string) {
-	sr.overrides[deref(t)] = name
+	maps.Copy(sr.overrides, d.nameOverrides)
+	return sr
 }
 
 // refFor reflects t, registers it as a component, returns its $ref path.
 func (sr *schemaRegistry) refFor(t reflect.Type) string {
-	for t.Kind() == reflect.Pointer {
-		t = t.Elem()
-	}
+	t = deref(t)
 	if e, ok := sr.byType[t]; ok {
 		return "#/components/schemas/" + e.name
 	}
 	validateAnonymousEmbeddings(t, make(map[reflect.Type]bool))
 
-	e := &schemaEntry{name: sr.nameFor(t)}
-	if owner, clash := sr.owned[e.name]; clash && owner != t {
-		panicDuplicateName(e.name, owner, t)
-	}
+	e := &schemaEntry{name: sr.claimName(t)}
 	sr.byType[t] = e
 	sr.order = append(sr.order, t)
-	sr.owned[e.name] = t
 
 	r := &jsonschema.Reflector{
 		Anonymous:                 true,
@@ -89,7 +73,7 @@ func (sr *schemaRegistry) refFor(t reflect.Type) string {
 		// empty "File" component.
 		Mapper: func(t reflect.Type) *jsonschema.Schema {
 			if t == reflect.TypeFor[File]() {
-				return &jsonschema.Schema{Type: "string", Format: "binary"}
+				return binarySchema()
 			}
 			return nil
 		},
@@ -103,12 +87,7 @@ func (sr *schemaRegistry) refFor(t reflect.Type) string {
 			if t.Name() == "" && sr.overrides[t] == "" {
 				return ""
 			}
-			name := sr.nameFor(t)
-			if owner, ok := sr.defOwners[name]; ok && owner != t {
-				panicDuplicateName(name, owner, t)
-			}
-			sr.defOwners[name] = t
-			return name
+			return sr.claimName(t)
 		},
 	}
 	s := r.Reflect(reflect.New(t).Interface())
@@ -117,21 +96,22 @@ func (sr *schemaRegistry) refFor(t reflect.Type) string {
 	splitEnums(s)
 	e.s = s
 	sr.applySchemaFixes(t, s)
-	// Build union envelopes only after field fixups. Branches copy the parent
-	// fields, so nullable and tag fixes must already be present.
-	sr.normalizeUnions(e.name, s)
-	i := 0
-	for i < len(sr.nameOrder) {
-		name := sr.nameOrder[i]
-		sr.normalizeUnions(name, sr.byName[name])
-		i++
-	}
 	// closed schemas: additionalProperties: false at every object node
 	if sr.closed {
 		closeSchema(s)
 	}
 
 	return "#/components/schemas/" + e.name
+}
+
+// claimName applies the same collision check to root types and nested definitions.
+func (sr *schemaRegistry) claimName(t reflect.Type) string {
+	name := sr.nameFor(t)
+	if owner, ok := sr.owners[name]; ok && owner != t {
+		panicDuplicateName(name, owner, t)
+	}
+	sr.owners[name] = t
+	return name
 }
 
 func dominantJSONFields(t reflect.Type) []reflect.StructField {
@@ -141,15 +121,6 @@ func dominantJSONFields(t reflect.Type) []reflect.StructField {
 		}
 	}
 	return nil
-}
-
-func (sr *schemaRegistry) normalizeUnions(name string, s *jsonschema.Schema) {
-	if sr.normalizing[name] {
-		return
-	}
-	sr.normalizing[name] = true
-	defer delete(sr.normalizing, name)
-	normalizeOneOf(s, sr, name)
 }
 
 func validateAnonymousEmbeddings(t reflect.Type, checked map[reflect.Type]bool) {
@@ -168,13 +139,20 @@ func validateAnonymousEmbeddings(t reflect.Type, checked map[reflect.Type]bool) 
 	}
 	checkPromotionCycle(t, map[reflect.Type]bool{t: true})
 	for f := range t.Fields() {
+		if f.Tag.Get("json") == "-" || parts0(f.Tag.Get("jsonschema")) == "-" || (f.PkgPath != "" && !f.Anonymous) {
+			continue
+		}
+		options := strings.Split(f.Tag.Get("json"), ",")[1:]
+		if !promotes(f) && (slices.Contains(options, "inline") || slices.Contains(options, "embed")) {
+			panic("specout: explicit JSON embedding requires an anonymous struct field")
+		}
 		validateAnonymousEmbeddings(f.Type, checked)
 	}
 }
 
 func checkPromotionCycle(t reflect.Type, stack map[reflect.Type]bool) {
 	for f := range t.Fields() {
-		if !promotes(f) {
+		if parts0(f.Tag.Get("jsonschema")) == "-" || !promotes(f) {
 			continue
 		}
 		ft := deref(f.Type)
@@ -185,48 +163,6 @@ func checkPromotionCycle(t reflect.Type, stack map[reflect.Type]bool) {
 		checkPromotionCycle(ft, stack)
 		delete(stack, ft)
 	}
-}
-
-// isBuiltin reports whether t's schema is small enough to inline: predeclared
-// scalars and containers of them. A component named after a Go type string
-// ("int", "string") is junk in components.schemas, and real specs inline
-// scalars (response headers, simple bodies) instead of ref-ing them.
-func isBuiltin(t reflect.Type) bool {
-	// time.Time reflects to {type: string, format: date-time} — a scalar in
-	// every published spec. Without this it becomes a $ref to a component
-	// named "Time" when it is a bare body or a header type, while the same
-	// type used as a struct field inlines. One type, one shape.
-	if t == reflect.TypeFor[time.Time]() {
-		return true
-	}
-	switch t.Kind() {
-	case reflect.Slice, reflect.Array, reflect.Map:
-		// Named containers need components, including recursive types whose
-		// elements can lead back to the container itself.
-		return t.PkgPath() == "" && isBuiltin(t.Elem())
-	case reflect.Bool, reflect.String,
-		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
-		reflect.Float32, reflect.Float64:
-		// PkgPath is empty for the predeclared types only: a named alias
-		// (type Password string) keeps its own component.
-		return t.PkgPath() == ""
-	default:
-		// structs, pointers, interfaces, channels and funcs are never inlined.
-		return false
-	}
-}
-
-// schemaFor returns the inline schema for a builtin type and a component
-// $ref for everything else.
-func schemaFor(t reflect.Type, sr *schemaRegistry) any {
-	if !isBuiltin(t) {
-		return newObj().set("$ref", sr.refFor(t))
-	}
-	if s := sr.propSchema(t, ""); s != nil {
-		return s
-	}
-	return newObj().set("$ref", sr.refFor(t))
 }
 
 // nameFor picks a component name: override > generic-aware > simple.
@@ -281,4 +217,26 @@ func sanitizeName(t reflect.Type) string {
 func panicDuplicateName(name string, owner, t reflect.Type) {
 	panic("specout: duplicate component name " + name +
 		" (" + owner.String() + " vs " + t.String() + "), call SchemaName to disambiguate")
+}
+
+// schemaObjs is the hoisted components.schemas object: the typed components
+// in registration order, then the $defs with no Go type behind them. Empty
+// when nothing was hoisted, so the caller can skip the key.
+func (sr *schemaRegistry) schemaObjs() *obj {
+	sr.normalizeUnions()
+	if len(sr.order) == 0 {
+		return newObj()
+	}
+	schemas := newObj()
+	for _, t := range sr.order {
+		e := sr.byType[t]
+		schemas.set(e.name, e.s)
+	}
+	// hoisted $defs with no Go type: emitted after the typed components
+	for _, n := range sr.nameOrder {
+		if schemas.get(n) == nil {
+			schemas.set(n, sr.byName[n])
+		}
+	}
+	return schemas
 }

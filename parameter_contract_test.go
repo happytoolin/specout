@@ -43,6 +43,43 @@ func TestParameterEnumsSplitBeforeNullability(t *testing.T) {
 	}
 }
 
+func TestParameterLocationsKeepTheirContracts(t *testing.T) {
+	type request struct {
+		ID     *int `jsonschema:"description=Item ID,style=simple,explode=false" path:"id,omitempty"`
+		Limit  int  `jsonschema:"description=Page size,style=form,default=7"     query:"limit"`
+		Header *int `header:"X-Count"                                            jsonschema:"description=Header count,style=simple"`
+		Cookie *int `cookie:"count,omitempty"                                    jsonschema:"description=Cookie count,style=form"`
+	}
+	doc := docOf(t, "GET", "/items/{id}/{untyped}", specout.Handler[request, string]{HandlerFunc: noop})
+	parameters := paramsOf(t, opOf(t, doc, "/items/{id}/{untyped}", "get"))
+	for _, tc := range []struct {
+		name, location, description, style string
+		required, nullable                 bool
+	}{
+		{"id", "path", "Item ID", "simple", true, false},
+		{"untyped", "path", "", "", true, false},
+		{"limit", "query", "Page size", "form", false, false},
+		{"X-Count", "header", "Header count", "simple", true, true},
+		{"count", "cookie", "Cookie count", "form", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := parameters[tc.name]
+			assert.Equal(t, tc.location, p["in"])
+			assert.Equal(t, tc.required, p["required"])
+			schema := p["schema"].(map[string]any)
+			assert.Equal(t, tc.nullable, isNullable(schema))
+			assert.NotContains(t, schema, "description")
+			if tc.description != "" {
+				assert.Equal(t, tc.description, p["description"])
+				assert.Equal(t, tc.style, p["style"])
+			}
+		})
+	}
+	assert.Equal(t, false, parameters["id"]["explode"])
+	assert.Equal(t, "string", parameters["untyped"]["schema"].(map[string]any)["type"])
+	assert.InDelta(t, 7, parameters["limit"]["schema"].(map[string]any)["default"], 0)
+}
+
 func TestEmbeddedParametersUseSameBodyView(t *testing.T) {
 	type page struct {
 		Limit int    `query:"limit,omitempty"`

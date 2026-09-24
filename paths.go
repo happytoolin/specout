@@ -25,11 +25,11 @@ func docPath(p string) string {
 }
 
 // isCatchAll reports patterns OpenAPI cannot express: trailing wildcards,
-// both the chi/std form (/files/*) and the std multi-segment form
+// both the chi form (/files/*) and the std multi-segment form
 // (/files/{path...}).
-func isCatchAll(p string) bool {
-	p = docPath(p)
-	return strings.Contains(p, "*") || strings.Contains(p, "...}")
+func (rec *routeRecord) isCatchAll() bool {
+	p := docPath(rec.full)
+	return (!rec.literalStars && strings.Contains(p, "*")) || strings.Contains(p, "...}")
 }
 
 // openAPIMethods is the path-item key set (finding 17): a token like CONNECT

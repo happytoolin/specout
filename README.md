@@ -122,6 +122,8 @@ More router adapters and feedback from real services are welcome.
 
 ## Development
 
+See the [code guide](CONTRIBUTING.md) for the build flow and file layout.
+
 ```sh
 just check  # All CI and release checks.
 just lint   # Go lint rules and formatting.

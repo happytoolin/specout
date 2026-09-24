@@ -22,8 +22,8 @@ type Handler[Req, Res any] struct {
 	ExternalDocs *ExternalDocs
 	// RequestContentTypes overrides the request body media types
 	// (application/x-www-form-urlencoded, application/xml, ...). The schema
-	// still comes from Req; only the media type changes. One entry per media
-	// type: two entries publish one shape under both.
+	// comes from Req; form media types use its form field names, while other
+	// media types use its JSON field names.
 	RequestContentTypes []string
 	// Raw splices arbitrary keys into this operation object: x- extensions,
 	// or any other OpenAPI operation field specout does not model.

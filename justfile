@@ -8,7 +8,7 @@ lintbin := "go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.
 default: lint test
 
 # run every CI and release check (Go, Python 3 and Node.js/npm required)
-check: mod-check build lint workflow-lint test race validate client-types vuln
+check: mod-check build lint workflow-lint test race validate adversarial client-types vuln
 
 # check module files and downloaded dependency integrity without changing files
 mod-check:
@@ -32,6 +32,10 @@ validation-deps:
 # validate generated test documents and served examples
 validate: validation-deps
     .venv/bin/python tools/validate_suite.py
+
+# exercise launch blockers and validate actual Go-serialized payloads
+adversarial: validation-deps
+    .venv/bin/python tools/validate_adversarial.py
 
 # check all packages with the race detector
 race:

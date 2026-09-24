@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"maps"
 	"net/http"
 	"slices"
@@ -62,7 +61,7 @@ func notFound(w http.ResponseWriter, msg string) { writeJSON(w, 404, map[string]
 // with msg; act runs only on a decoded body.
 func withBody[T any](w http.ResponseWriter, r *http.Request, msg string, act func(T)) {
 	var v T
-	if json.NewDecoder(r.Body).Decode(&v) != nil {
+	if examplekit.DecodeJSON(r.Body, &v) != nil {
 		writeJSON(w, 400, map[string]any{"message": msg})
 		return
 	}

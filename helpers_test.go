@@ -166,13 +166,14 @@ func props(t *testing.T, doc map[string]any, name string) map[string]any {
 	return s["properties"].(map[string]any)
 }
 
-// isNullable reports whether a property schema admits null: a two-arm oneOf,
-// or a type array ending in "null".
+// isNullable recognizes explicit null types and arms in generated schemas.
+// Full payload validation lives in the Python validation checks.
 func isNullable(p map[string]any) bool {
-	if arms, _ := p["oneOf"].([]any); len(arms) == 2 {
+	if p["type"] == "null" {
 		return true
 	}
-	if arms, _ := p["anyOf"].([]any); len(arms) >= 2 {
+	for _, keyword := range []string{"oneOf", "anyOf"} {
+		arms, _ := p[keyword].([]any)
 		for _, arm := range arms {
 			if schema, _ := arm.(map[string]any); schema["type"] == "null" {
 				return true
@@ -180,7 +181,7 @@ func isNullable(p map[string]any) bool {
 		}
 	}
 	typ, _ := p["type"].([]any)
-	return len(typ) == 2 && typ[1] == "null"
+	return slices.Contains(typ, any("null"))
 }
 
 // paramsOf indexes an operation's parameters by name.
