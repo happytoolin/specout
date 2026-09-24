@@ -41,8 +41,9 @@ func New() (*specout.Generator, http.Handler) {
 
 func requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") && r.Header.Get("X-API-Key") == "" {
-			http.Error(w, "missing credentials", http.StatusUnauthorized)
+		token, bearer := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if r.Method != http.MethodGet && (!bearer || strings.TrimSpace(token) == "") && strings.TrimSpace(r.Header.Get("X-API-Key")) == "" {
+			writeProblem(w, http.StatusUnauthorized, "missing credentials")
 			return
 		}
 		next.ServeHTTP(w, r)

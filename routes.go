@@ -27,7 +27,7 @@ type routeRecord struct {
 	pattern         string // as passed at registration
 	full            string // resolved canonical path; absolute sources set it here
 	absolute        bool   // std mux, gorilla, Document: full is final
-	omit            bool   // catch-all: excluded from paths, kept for drift
+	literalStars    bool   // std mux and gorilla treat stars outside parameters literally
 	req, res        reflect.Type
 	responses       []Response
 	tags            []string
@@ -192,7 +192,7 @@ func (d *Generator) validateRecords() error {
 		// Catch-alls stay out of paths, so only emitted templates participate
 		// in the OpenAPI hierarchy check. Exact method duplicates still fail
 		// below because they would overwrite one drift-status entry.
-		if !isCatchAll(rec.full) {
+		if !rec.isCatchAll() {
 			// OpenAPI forbids two templated paths with the same hierarchy but
 			// different parameter names, even when they hold different methods.
 			// The same documented path may carry several methods.

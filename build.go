@@ -1,15 +1,14 @@
 package specout
 
-import (
-	"slices"
-	"strings"
-)
+import "strings"
 
 // build assembles the OpenAPI document: resolve the routes, reflect schemas,
 // emit operations in path order.
 func (d *Generator) build() (*obj, error) {
-	records, err := d.buildRecords()
-	if err != nil {
+	if err := d.resolveLocked(); err != nil {
+		return nil, err
+	}
+	if err := checkOperationIDs(d.records); err != nil {
 		return nil, err
 	}
 
@@ -18,15 +17,9 @@ func (d *Generator) build() (*obj, error) {
 		spec.set("servers", servers)
 	}
 
-	sr := newSchemaRegistry(d.cfg)
-	for name, t := range d.variants {
-		sr.registerVariant(t, name)
-	}
-	for t, name := range d.nameOverrides {
-		sr.overrideName(t, name)
-	}
+	sr := d.newSchemaRegistry()
 	// paths first: it is what fills sr, and components reads sr back.
-	spec.set("paths", d.pathObj(records, sr))
+	spec.set("paths", d.pathObj(d.records, sr))
 	if tags := d.tagObjs(); len(tags) > 0 {
 		spec.set("tags", tags)
 	}
@@ -39,7 +32,7 @@ func (d *Generator) build() (*obj, error) {
 		components.set("securitySchemes", schemes)
 		spec.set("security", alts)
 	}
-	if schemas := d.schemaObjs(sr); len(schemas.keys) > 0 {
+	if schemas := sr.schemaObjs(); len(schemas.keys) > 0 {
 		components.set("schemas", schemas)
 	}
 	if len(components.keys) > 0 {
@@ -49,25 +42,6 @@ func (d *Generator) build() (*obj, error) {
 		spec.set("externalDocs", externalDocsObj(d.cfg.ExternalDocs))
 	}
 	return spec, nil
-}
-
-// buildRecords resolves every route, checks operationId uniqueness, and drops
-// catch-alls from the documented paths.
-func (d *Generator) buildRecords() ([]*routeRecord, error) {
-	if err := d.resolveLocked(); err != nil {
-		return nil, err
-	}
-	// No sort here: paths come out in the order the code declares them, so the
-	// document reads like the router. Sorting put every DELETE first and
-	// scattered one resource across the paths object.
-	records := slices.Clone(d.records)
-	for _, rec := range records {
-		rec.omit = isCatchAll(rec.full)
-	}
-	if err := checkOperationIDs(records); err != nil {
-		return nil, err
-	}
-	return records, nil
 }
 
 // infoObj is the document's info object.
@@ -118,33 +92,12 @@ func (d *Generator) securityObjs() (*obj, []any) {
 	return schemes, alts
 }
 
-// schemaObjs is the hoisted components.schemas object: the typed components
-// in registration order, then the $defs with no Go type behind them. Empty
-// when nothing was hoisted, so the caller can skip the key.
-func (d *Generator) schemaObjs(sr *schemaRegistry) *obj {
-	if len(sr.order) == 0 {
-		return newObj()
-	}
-	schemas := newObj()
-	for _, t := range sr.order {
-		e := sr.byType[t]
-		schemas.set(e.name, e.s)
-	}
-	// hoisted $defs with no Go type: emitted after the typed components
-	for _, n := range sr.nameOrder {
-		if schemas.get(n) == nil {
-			schemas.set(n, sr.byName[n])
-		}
-	}
-	return schemas
-}
-
-// pathObj reflects one operation per record and groups them by documented
-// path. It is what fills sr.
+// pathObj reflects operations in registration order and groups them by
+// documented path. It is what fills sr.
 func (d *Generator) pathObj(records []*routeRecord, sr *schemaRegistry) *obj {
 	paths := newObj()
 	for _, rec := range records {
-		if rec.omit {
+		if rec.isCatchAll() {
 			continue
 		}
 		op := d.operationFor(rec, sr)

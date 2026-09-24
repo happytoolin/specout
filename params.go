@@ -43,8 +43,9 @@ func paramTag(f reflect.StructField) (string, string) {
 // requiredParam reports whether a parameter field is required: it is optional
 // when the query tag ends in ",omitempty", the json tag says omitempty, or the
 // jsonschema tag supplies a default.
-func requiredParam(f reflect.StructField, qt string) bool {
-	return !optionalTag(qt) && !optionalTag(f.Tag.Get("json")) &&
+func requiredParam(f reflect.StructField) bool {
+	_, tag := paramTag(f)
+	return !optionalTag(tag) && !optionalTag(f.Tag.Get("json")) &&
 		tagValue(f.Tag.Get("jsonschema"), "default") == ""
 }
 
@@ -87,24 +88,36 @@ func (sr *schemaRegistry) taggedParams(req reflect.Type) []any {
 			panic("specout: empty or duplicate " + loc + " parameter " + name)
 		}
 		seen[loc+"\x00"+name] = true
-		// reflect a one-field wrapper so the field's jsonschema tag applies
-		fs := sr.reflectParam(f)
-		if f.Type.Kind() == reflect.Pointer {
-			nullable(fs)
-		}
-		p := newObj().
-			set("name", name).
-			set("in", loc).
-			set("required", requiredParam(f, qt)).
-			set("schema", fs)
-		applyParamStyle(p, f, loc)
-		if desc := tagValue(f.Tag.Get("jsonschema"), "description"); desc != "" {
-			fs.Description = ""
-			p.set("description", desc)
-		}
-		params = append(params, p)
+		params = append(params, sr.parameter(name, loc, f))
 	}
 	return params
+}
+
+// parameter builds every location from the same field metadata. An untyped
+// path placeholder has no field and uses the default required string schema.
+func (sr *schemaRegistry) parameter(name, loc string, f reflect.StructField) *obj {
+	schema := &jsonschema.Schema{Type: "string"}
+	if f.Type != nil {
+		schema = sr.reflectParam(f)
+		if loc != pathLocation && f.Type.Kind() == reflect.Pointer {
+			nullable(schema)
+		}
+	}
+	p := newObj().set("name", name).set("in", loc).
+		set("required", loc == pathLocation || requiredParam(f)).set("schema", schema)
+	applyParamStyle(p, f, loc)
+	if desc := tagValue(f.Tag.Get("jsonschema"), "description"); desc != "" {
+		schema.Description = ""
+		p.set("description", desc)
+	}
+	return p
+}
+
+var parameterStyles = map[string][]string{
+	pathLocation: {"matrix", "label", "simple"},
+	"header":     {"simple"},
+	"cookie":     {"form"},
+	"query":      {"form", "spaceDelimited", "pipeDelimited", "deepObject"},
 }
 
 // applyParamStyle copies style= and explode= onto the parameter object. They
@@ -113,10 +126,7 @@ func (sr *schemaRegistry) taggedParams(req reflect.Type) []any {
 func applyParamStyle(p *obj, f reflect.StructField, loc string) {
 	tag := f.Tag.Get("jsonschema")
 	if st := tagValue(tag, "style"); st != "" {
-		valid := loc == pathLocation && slices.Contains([]string{"matrix", "label", "simple"}, st) ||
-			loc == "header" && st == "simple" || loc == "cookie" && st == "form" ||
-			loc == "query" && slices.Contains([]string{"form", "spaceDelimited", "pipeDelimited", "deepObject"}, st)
-		if !valid {
+		if !slices.Contains(parameterStyles[loc], st) {
 			panic("specout: field " + f.Name + " has invalid " + loc + " parameter style=" + st)
 		}
 		p.set("style", st)
@@ -171,106 +181,10 @@ func (sr *schemaRegistry) pathParamObjs(pattern string, req reflect.Type) []any 
 			continue
 		}
 		seen[name] = true
-		var schema any = newObj().set("type", "string")
-		param := newObj().
-			set("name", name).
-			set("in", pathLocation).
-			set("required", true)
-		if f, ok := pathField(req, name); ok {
-			applyParamStyle(param, f, pathLocation)
-			if s := sr.reflectParam(f); s != nil {
-				// the description belongs on the parameter object, not inside
-				// its schema: that is where every published spec puts it.
-				if desc := tagValue(f.Tag.Get("jsonschema"), "description"); desc != "" {
-					s.Description = ""
-					param.set("description", desc)
-				}
-				schema = s
-			}
-		}
-		out = append(out, param.set("schema", schema))
+		f, _ := pathField(req, name)
+		out = append(out, sr.parameter(name, pathLocation, f))
 	}
 	return out
-}
-
-// propSchema builds a synthetic struct with one field shaped like f, so
-// invopop applies the field's jsonschema tag, then returns the property.
-func (sr *schemaRegistry) propSchema(t reflect.Type, tag reflect.StructTag) *jsonschema.Schema {
-	validateAnonymousEmbeddings(t, make(map[reflect.Type]bool))
-	wrap := reflect.StructOf([]reflect.StructField{{Name: "Wrap", Type: t, Tag: tag}})
-	inlineRoot := true
-	r := &jsonschema.Reflector{
-		Anonymous: true, DoNotReference: true,
-		AdditionalFields: dominantJSONFields,
-		// Keep the property and ordinary arrays inline so their field tags
-		// still apply. References stop recursive object and container expansion.
-		Mapper: func(t reflect.Type) *jsonschema.Schema {
-			if t == wrap {
-				return nil
-			}
-			if inlineRoot {
-				inlineRoot = false
-				return nil
-			}
-			if !isBuiltin(t) {
-				switch t.Kind() {
-				case reflect.Struct, reflect.Map:
-					return &jsonschema.Schema{Ref: sr.refFor(t)}
-				case reflect.Slice, reflect.Array:
-					if recursiveContainer(t) {
-						return &jsonschema.Schema{Ref: sr.refFor(t)}
-					}
-				default:
-				}
-			}
-			return nil
-		},
-	}
-	s := r.Reflect(reflect.New(wrap).Interface())
-	s.Version = ""
-	if s.Properties == nil {
-		return nil
-	}
-	var p *jsonschema.Schema
-	for k := range s.Properties.KeysFromOldest() {
-		p, _ = s.Properties.Get(k)
-		break
-	}
-	applyFormatTag(p, tag)
-	applyBoolEnumTag(p, t, tag)
-	splitEnums(p)
-	sr.applySchemaFixes(t, p)
-	return p
-}
-
-// Recursive container chains have no struct boundary to stop inline expansion.
-func recursiveContainer(t reflect.Type) bool {
-	seen := make(map[reflect.Type]bool)
-	for {
-		t = deref(t)
-		switch t.Kind() {
-		case reflect.Array, reflect.Slice, reflect.Map:
-			if seen[t] {
-				return true
-			}
-			seen[t] = true
-			t = t.Elem()
-		default:
-			return false
-		}
-	}
-}
-
-// applyFormatTag copies a format= tag onto the schema. invopop only reads
-// format in its string-keyword branch, so format=int64 on an integer (every
-// published spec names int32/int64) is otherwise dropped on the floor.
-func applyFormatTag(p *jsonschema.Schema, tag reflect.StructTag) {
-	if p == nil || p.Format != "" {
-		return
-	}
-	if f := tagValue(tag.Get("jsonschema"), "format"); f != "" {
-		p.Format = f
-	}
 }
 
 // Parameters have their own wire names; json:"-" only hides a body property.
@@ -279,7 +193,11 @@ func (sr *schemaRegistry) reflectParam(f reflect.StructField) *jsonschema.Schema
 	for _, key := range []string{"jsonschema", "jsonschema_description", "jsonschema_extras"} {
 		tag.WriteString(key + ":" + strconv.Quote(f.Tag.Get(key)) + " ")
 	}
-	return sr.propSchema(f.Type, reflect.StructTag(tag.String()))
+	s := sr.propSchema(f.Type, reflect.StructTag(tag.String()))
+	if s == nil {
+		panic("specout: field " + f.Name + " has no parameter schema")
+	}
+	return s
 }
 
 func parts0(s string) string {

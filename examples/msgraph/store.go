@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"maps"
 	"net/http"
@@ -62,7 +61,7 @@ func notFound(w http.ResponseWriter, segment string) {
 // decode reads the JSON body, answering the published 400 when it is malformed.
 func decode[T any](w http.ResponseWriter, r *http.Request) (T, bool) {
 	var v T
-	err := json.NewDecoder(r.Body).Decode(&v)
+	err := examplekit.DecodeJSON(r.Body, &v)
 	if err != nil {
 		writeError(w, 400, "The request body is malformed.")
 	}

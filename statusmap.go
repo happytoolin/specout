@@ -27,34 +27,22 @@ func (d *Generator) statusMap(withDefaults bool) (map[RouteKey]map[int]bool, err
 	}
 	out := make(map[RouteKey]map[int]bool)
 	for _, rec := range d.records {
-		if rec.full == "" {
-			continue
-		}
 		codes := map[int]bool{}
 		for _, e := range d.responsePlan(rec, withDefaults) {
+			// A default permits any code, but only an explicit status creates
+			// a coverage expectation. SpecStatuses uses 0 for "any code".
 			if e.key == defaultResponseKey && withDefaults {
 				codes[0] = true
 				continue
 			}
-			if lo, hi, ok := rangeOf(e.key); ok {
-				if e.code != 0 {
-					// the caller named one code of the range for coverage
-					codes[e.code] = true
-				}
-				if withDefaults {
-					for c := lo; c <= hi; c++ {
-						codes[c] = true
-					}
-				}
-				continue
+			if e.code != 0 {
+				codes[e.code] = true
 			}
-			// status 0 is the "default" response: it names no code, so it is
-			// a coverage expectation nothing can satisfy. SpecStatuses keeps
-			// it as the "any code allowed" marker instead.
-			if e.code == 0 && !withDefaults {
-				continue
+			if lo, hi, ok := rangeOf(e.key); ok && withDefaults {
+				for c := lo; c <= hi; c++ {
+					codes[c] = true
+				}
 			}
-			codes[e.code] = true
 		}
 		out[NewRouteKey(rec.method, rec.full)] = codes
 	}

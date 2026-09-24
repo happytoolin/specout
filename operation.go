@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode/utf8"
 )
 
 // operationFor builds one operation object: the metadata fields, the path and
@@ -30,7 +31,7 @@ func (d *Generator) operationFor(rec *routeRecord, sr *schemaRegistry) *obj {
 		op.set("security", []any{})
 	}
 	if len(rec.tags) > 0 {
-		op.set("tags", toAny(rec.tags))
+		op.set("tags", rec.tags)
 	}
 	// path params from the resolved pattern, query params from Req tags
 	params := slices.Concat(sr.pathParamObjs(rec.full, rec.req), sr.taggedParams(rec.req))
@@ -40,15 +41,12 @@ func (d *Generator) operationFor(rec *routeRecord, sr *schemaRegistry) *obj {
 	// the body is Req minus its parameter fields; no body type means no body
 	if bt, name := sr.bodyType(rec.req); bt != nil {
 		if name != "" {
-			sr.overrideName(bt, name)
+			sr.overrides[bt] = name
 		}
 		op.set("requestBody", requestBodyObj(rec, bt, sr))
 	}
 	op.set("responses", d.responsesFor(rec, sr))
-	if len(rec.raw) > 0 {
-		op = mergeRaw(op, rec.raw)
-	}
-	return op
+	return mergeRaw(op, rec.raw)
 }
 
 // operationID derives a deterministic id from method+path:
@@ -65,8 +63,9 @@ func operationID(method, path string) string {
 		if seg == "" {
 			return ""
 		}
-		b.WriteString(strings.ToUpper(seg[:1]))
-		b.WriteString(seg[1:])
+		_, size := utf8.DecodeRuneInString(seg)
+		b.WriteString(strings.ToUpper(seg[:size]))
+		b.WriteString(seg[size:])
 	}
 	return b.String()
 }
@@ -76,7 +75,7 @@ func operationID(method, path string) string {
 func checkOperationIDs(records []*routeRecord) error {
 	seen := make(map[string]string)
 	for _, rec := range records {
-		if rec.omit {
+		if rec.isCatchAll() {
 			continue
 		}
 		id := rec.operationID

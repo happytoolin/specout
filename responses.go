@@ -1,9 +1,13 @@
 package specout
 
 import (
+	"encoding/json/jsontext"
+	json "encoding/json/v2"
 	"net/http"
 	"reflect"
+	"slices"
 	"strconv"
+	"strings"
 )
 
 const defaultResponseKey = "default"
@@ -24,6 +28,9 @@ type respEntry struct {
 // and the two drift-check views (statusMap) both read this one walk, so the
 // document and the drift check cannot disagree about what a route returns.
 func (d *Generator) responsePlan(rec *routeRecord, withDefaults bool) []respEntry {
+	if raw, ok := rec.raw["responses"]; ok {
+		return rawResponsePlan(raw)
+	}
 	var order []string
 	byKey := map[string]respEntry{}
 	omitted := map[string]bool{}
@@ -78,6 +85,38 @@ func (d *Generator) responsePlan(rec *routeRecord, withDefaults bool) []respEntr
 		}
 	}
 	return out
+}
+
+// Raw replaces the entire responses object, including inherited defaults.
+// Read its JSON keys so typed maps and json.RawMessage behave like plain maps.
+func rawResponsePlan(raw any) []respEntry {
+	data, err := json.Marshal(raw)
+	if err != nil {
+		panic("specout: invalid Raw.responses: " + err.Error())
+	}
+	var responses map[string]jsontext.Value
+	if err := json.Unmarshal(data, &responses); err != nil || responses == nil {
+		panic("specout: Raw.responses must be an object")
+	}
+	var entries []respEntry
+	for _, key := range sortedKeys(responses) {
+		if strings.HasPrefix(key, "x-") {
+			continue
+		}
+		if _, _, isRange := rangeOf(key); key == defaultResponseKey || isRange {
+			entries = append(entries, respEntry{key: key})
+			continue
+		}
+		code, err := strconv.Atoi(key)
+		if err != nil || code < 100 || code > 599 || strconv.Itoa(code) != key {
+			panic("specout: invalid Raw.responses status " + key)
+		}
+		entries = append(entries, respEntry{key: key, code: code})
+	}
+	if len(entries) == 0 {
+		panic("specout: Raw.responses must declare a response")
+	}
+	return entries
 }
 
 // newRespEntry builds a response the route derived rather than declared.
@@ -163,22 +202,14 @@ func responseBody(e respEntry, sr *schemaRegistry) *obj {
 		}
 		body.set("headers", hdrs)
 	}
-	if len(resp.Raw) > 0 {
-		body = mergeRaw(body, resp.Raw)
-	}
-	return body
+	return mergeRaw(body, resp.Raw)
 }
 
 // anyExplicit reports whether a route declares a response of its own. One
 // non-omitted entry is enough to replace the Res default (e.g. a 200 binary
 // download on a handler whose Res is struct{}).
 func anyExplicit(responses []Response) bool {
-	for _, r := range responses {
-		if !r.Omit {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(responses, func(r Response) bool { return !r.Omit })
 }
 
 func isEmptyStruct(t reflect.Type) bool {

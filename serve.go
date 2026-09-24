@@ -57,7 +57,6 @@ func (d *Generator) bytes() ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("specout: encode spec: %w", err)
 	}
-	d.frozen = true
 	b = append(b, '\n') // trailing newline, like a text file
 	d.specJSON = b
 	return d.specJSON, nil

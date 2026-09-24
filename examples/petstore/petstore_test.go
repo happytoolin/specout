@@ -99,7 +99,7 @@ func TestSpecKeepsPublishedShapes(t *testing.T) {
 	// the property, not the Go field
 	schemas := dig(t, doc, "components", "schemas").(map[string]any)
 	assert.NotContains(t, schemas, "File", "File marker leaked into components.schemas")
-	req := schemas["uploadImageReqBody"].(map[string]any)
+	req := dig(t, content, "multipart/form-data", "schema").(map[string]any)
 	assert.Equal(t, []any{"file"}, req["required"], "uploadImageReq required")
 	assert.Contains(t, dig(t, req, "properties", "file").(map[string]any), "format")
 

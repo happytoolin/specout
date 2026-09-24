@@ -6,14 +6,6 @@ import (
 	"strings"
 )
 
-// bodyView is the request-body view of a Req type that mixes parameters and
-// body fields: the synthetic body-only struct, and the component name it is
-// registered under.
-type bodyView struct {
-	t    reflect.Type
-	name string
-}
-
 // bodyType returns the type whose schema is Req's request body plus the
 // component name to register it under, or (nil, "") when Req carries no body.
 //
@@ -22,9 +14,7 @@ type bodyView struct {
 // parameter fields instead. Any other Req is itself the body — []User is a
 // JSON array body, and File is an octet-stream payload.
 //
-// The synthetic type is memoized per Req: StructOf must yield exactly one type
-// per Req, or two operations sharing a Req type would each register a
-// component under the same name.
+// StructOf reuses identical types, so repeated requests share one component.
 func (sr *schemaRegistry) bodyType(req reflect.Type) (reflect.Type, string) {
 	if req == nil {
 		return nil, ""
@@ -44,24 +34,20 @@ func (sr *schemaRegistry) bodyType(req reflect.Type) (reflect.Type, string) {
 	if !hasParamField(req) {
 		return req, ""
 	}
-	if v, ok := sr.bodyViews[req]; ok {
-		return v.t, v.name
-	}
 	fields := bodyFields(req)
 	if len(fields) == 0 {
 		// every field is a parameter: the operation has no body at all
 		return nil, ""
 	}
-	v := bodyView{t: reflect.StructOf(fields), name: sr.nameFor(req) + "Body"}
-	sr.bodyViews[req] = v
-	return v.t, v.name
+	return reflect.StructOf(fields), sr.nameFor(req) + "Body"
 }
 
 type bodyFieldCandidate struct {
-	field  reflect.StructField
-	name   string
-	depth  int
-	tagged bool
+	field    reflect.StructField
+	name     string
+	depth    int
+	tagged   bool
+	optional bool
 }
 
 // bodyFields follows encoding/json's wire-name dominance. Parameter fields
@@ -85,7 +71,7 @@ func bodyFields(req reflect.Type) []reflect.StructField {
 // object-valued parameters intact so bodyFields can remove them afterwards.
 func jsonFields(req reflect.Type, splitParameters bool) []reflect.StructField {
 	var candidates []bodyFieldCandidate
-	collectBodyFields(req, 0, &candidates, make(map[reflect.Type]bool), splitParameters)
+	collectBodyFields(req, 0, &candidates, make(map[reflect.Type]bool), splitParameters, false)
 	byName := make(map[string][]bodyFieldCandidate)
 	var names []string
 	for _, candidate := range candidates {
@@ -111,7 +97,7 @@ func bodyJSONTag(tag reflect.StructTag, name string) reflect.StructTag {
 }
 
 func collectBodyFields(
-	t reflect.Type, depth int, out *[]bodyFieldCandidate, stack map[reflect.Type]bool, splitParameters bool,
+	t reflect.Type, depth int, out *[]bodyFieldCandidate, stack map[reflect.Type]bool, splitParameters, optional bool,
 ) {
 	t = deref(t)
 	if t == nil || t.Kind() != reflect.Struct || stack[t] {
@@ -120,45 +106,38 @@ func collectBodyFields(
 	stack[t] = true
 	defer delete(stack, t)
 	for f := range t.Fields() {
+		if f.Tag.Get("json") == "-" {
+			continue
+		}
 		if promotes(f) && (!splitParameters || !isParamField(f)) {
-			collectBodyFields(f.Type, depth+1, out, stack, splitParameters)
+			if parts0(f.Tag.Get("jsonschema")) != "-" {
+				collectBodyFields(f.Type, depth+1, out, stack, splitParameters, optional || f.Type.Kind() == reflect.Pointer)
+			}
 			continue
 		}
 		if f.PkgPath != "" && !f.Anonymous {
 			continue
 		}
 		name := parts0(f.Tag.Get("json"))
-		if name == "-" {
-			continue
+		if optional {
+			f.Tag = reflect.StructTag("json:" + strconv.Quote(f.Tag.Get("json")+",omitempty") + " " + string(f.Tag))
 		}
 		*out = append(*out, bodyFieldCandidate{
-			field: f, name: fieldName(f), depth: depth, tagged: name != "",
+			field: f, name: fieldName(f), depth: depth, tagged: name != "", optional: optional,
 		})
 	}
 }
 
 func dominantBodyField(fields []bodyFieldCandidate) (bodyFieldCandidate, bool) {
-	bestDepth := fields[0].depth
+	winner, unique := fields[0], true
 	for _, field := range fields[1:] {
-		bestDepth = min(bestDepth, field.depth)
-	}
-	var best []bodyFieldCandidate
-	for _, field := range fields {
-		if field.depth == bestDepth {
-			best = append(best, field)
+		// Shallower fields win; an explicit JSON name breaks a depth tie.
+		switch {
+		case field.depth < winner.depth || (field.depth == winner.depth && field.tagged && !winner.tagged):
+			winner, unique = field, true
+		case field.depth == winner.depth && field.tagged == winner.tagged:
+			unique = false
 		}
 	}
-	if len(best) == 1 {
-		return best[0], true
-	}
-	var tagged []bodyFieldCandidate
-	for _, field := range best {
-		if field.tagged {
-			tagged = append(tagged, field)
-		}
-	}
-	if len(tagged) == 1 {
-		return tagged[0], true
-	}
-	return bodyFieldCandidate{}, false
+	return winner, unique
 }
