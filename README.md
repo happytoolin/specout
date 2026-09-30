@@ -1,6 +1,6 @@
 # specout
 
-![specout — OpenAPI 3.1 from plain Go handlers](release-assets/v0.0.1/specout-v0.0.1-og.png)
+![specout — OpenAPI from Go types. Keep your HTTP handlers.](release-assets/social/specout-og.png)
 
 Generate OpenAPI 3.1 from Go types. Keep your usual HTTP handlers.
 

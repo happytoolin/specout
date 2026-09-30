@@ -1,0 +1,18 @@
+I built specout because I wanted OpenAPI docs without changing how I write Go HTTP handlers.
+
+It uses request and response types, plus field tags, to describe the API contract. Your handler still receives http.ResponseWriter and *http.Request. Your code handles request parsing, validation, headers, and responses.
+
+The library supports:
+
+- net/http, chi, and gorilla/mux.
+- Request and response schemas from Go types.
+- Checks for undocumented routes with chi and gorilla/mux.
+- An optional test recorder that compares declared response statuses with the statuses your handlers return during tests.
+
+There are no comment annotations or generated handlers to maintain. You attach the request and response types to a handler through a small metadata wrapper.
+
+The metadata is explicit, so you still need to keep it correct. Tags describe the contract; your application must enforce it. The response recorder checks status codes, not response bodies.
+
+Repository: https://github.com/happytoolin/specout
+
+I would like feedback on the registration API, generated schemas, and router support. Which router do you use, and would this approach fit your service?

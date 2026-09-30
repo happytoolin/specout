@@ -1,0 +1,7 @@
+I built specout, a Go library that generates OpenAPI from request and response types. You keep your plain HTTP handlers and control request parsing, validation, and responses.
+
+It supports net/http, chi, and gorilla/mux. Test helpers can check for undocumented routes with chi and gorilla/mux. An optional recorder checks declared response statuses against the statuses observed during HTTP tests.
+
+Repository: https://github.com/happytoolin/specout
+
+I would like feedback on the API and generated schemas. Which router should I add next?

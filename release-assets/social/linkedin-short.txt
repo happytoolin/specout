@@ -1,0 +1,9 @@
+Introducing specout: OpenAPI from Go types, with your usual HTTP handlers.
+
+It supports net/http, chi, and gorilla/mux. Your application still controls request parsing, validation, and responses. Test helpers can check route documentation and observed response statuses.
+
+I would like feedback on the API, generated schemas, and router support.
+
+https://github.com/happytoolin/specout
+
+#Golang #OpenAPI #OpenSource

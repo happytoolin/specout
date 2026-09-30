@@ -1,0 +1,1 @@
+specout. OpenAPI from Go types. Keep your HTTP handlers. A black document symbol sits beside a turquoise square and a right arrow. The background is off-white.

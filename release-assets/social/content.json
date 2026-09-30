@@ -1,0 +1,21 @@
+{
+  "product": "specout",
+  "link": "https://github.com/happytoolin/specout",
+  "image": {
+    "eyebrow": "GO / OPENAPI",
+    "name": "specout",
+    "headline": "OpenAPI from Go types.",
+    "subline": "Keep your HTTP handlers.",
+    "footer": "github.com/happytoolin/specout"
+  },
+  "reddit": {
+    "title": "I built specout to generate OpenAPI from Go types and keep plain HTTP handlers",
+    "post": "I built specout because I wanted OpenAPI docs without changing how I write Go HTTP handlers.\n\nIt uses request and response types, plus field tags, to describe the API contract. Your handler still receives http.ResponseWriter and *http.Request. Your code handles request parsing, validation, headers, and responses.\n\nThe library supports:\n\n- net/http, chi, and gorilla/mux.\n- Request and response schemas from Go types.\n- Checks for undocumented routes with chi and gorilla/mux.\n- An optional test recorder that compares declared response statuses with the statuses your handlers return during tests.\n\nThere are no comment annotations or generated handlers to maintain. You attach the request and response types to a handler through a small metadata wrapper.\n\nThe metadata is explicit, so you still need to keep it correct. Tags describe the contract; your application must enforce it. The response recorder checks status codes, not response bodies.\n\nRepository: https://github.com/happytoolin/specout\n\nI would like feedback on the registration API, generated schemas, and router support. Which router do you use, and would this approach fit your service?",
+    "short": "I built specout, a Go library that generates OpenAPI from request and response types. You keep your plain HTTP handlers and control request parsing, validation, and responses.\n\nIt supports net/http, chi, and gorilla/mux. Test helpers can check for undocumented routes with chi and gorilla/mux. An optional recorder checks declared response statuses against the statuses observed during HTTP tests.\n\nRepository: https://github.com/happytoolin/specout\n\nI would like feedback on the API and generated schemas. Which router should I add next?"
+  },
+  "linkedin": {
+    "post": "I wanted OpenAPI docs for our Go APIs without changing how we write HTTP handlers.\n\nSo I built specout.\n\nIt generates OpenAPI from Go request and response types. You keep your handlers, router, and middleware. Your code still controls request parsing, validation, headers, and responses.\n\nThe library supports net/http, chi, and gorilla/mux. You describe the contract with types and field tags, then attach that metadata to your handlers.\n\nIt also provides checks for a common problem: API docs that no longer match the service. With chi and gorilla/mux, tests can find undocumented routes. An optional recorder compares declared response statuses with the statuses returned during HTTP tests.\n\nThe project is open source. I would like feedback from Go developers who want to add API docs to existing services.\n\nWhich router should I add next?\n\nhttps://github.com/happytoolin/specout\n\n#Golang #OpenAPI #OpenSource",
+    "short": "Introducing specout: OpenAPI from Go types, with your usual HTTP handlers.\n\nIt supports net/http, chi, and gorilla/mux. Your application still controls request parsing, validation, and responses. Test helpers can check route documentation and observed response statuses.\n\nI would like feedback on the API, generated schemas, and router support.\n\nhttps://github.com/happytoolin/specout\n\n#Golang #OpenAPI #OpenSource"
+  },
+  "alt": "specout. OpenAPI from Go types. Keep your HTTP handlers. A black document symbol sits beside a turquoise square and a right arrow. The background is off-white."
+}

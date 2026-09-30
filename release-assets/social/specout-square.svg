@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1200" viewBox="0 0 1200 1200" role="img" aria-labelledby="title desc">
+    <title id="title">specout social launch image</title>
+    <desc id="desc">specout. OpenAPI from Go types. Keep your HTTP handlers. A black document symbol sits beside a turquoise square and a right arrow. The background is off-white.</desc>
+    <rect width="1200" height="1200" fill="#F7F7F2"/>
+    <rect x="80" y="92" width="15" height="15" fill="#00A995"/>
+    <text x="113" y="112" fill="#16191C" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="400" letter-spacing="2">GO / OPENAPI</text>
+    <text x="75" y="296" fill="#16191C" font-family="Arial, Helvetica, sans-serif" font-size="156" font-weight="700" letter-spacing="-8">specout</text>
+    <text x="80" y="444" fill="#16191C" font-family="Arial, Helvetica, sans-serif" font-size="82" font-weight="400" letter-spacing="-2.8">OpenAPI from</text>
+<text x="80" y="540" fill="#16191C" font-family="Arial, Helvetica, sans-serif" font-size="82" font-weight="400" letter-spacing="-2.8">Go types.</text>
+    <text x="82" y="630" fill="#16191C" font-family="Arial, Helvetica, sans-serif" font-size="36" font-weight="400" letter-spacing="-0.8">Keep your HTTP handlers.</text>
+    <g transform="translate(700 739) scale(0.8636363636363636)" aria-label="Go types produce an API document">
+    <rect x="12" y="124" width="76" height="76" rx="6" fill="#00A995"/>
+    <g fill="none" stroke="#16191C" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M101 162H182M165 145L182 162L165 179"/>
+      <path d="M220 18H343L418 93V285Q418 296 407 296H220Q209 296 209 285V29Q209 18 220 18Z"/>
+      <path d="M343 18V82Q343 93 354 93H418"/>
+      <path d="M250 132H370M250 169H370"/>
+      <path d="M289 214C276 214 276 221 276 231C276 242 265 242 265 247C265 252 276 252 276 263C276 273 276 280 289 280"/>
+      <path d="M339 214C352 214 352 221 352 231C352 242 363 242 363 247C363 252 352 252 352 263C352 273 352 280 339 280"/>
+    </g>
+  </g>
+    <path d="M80 1042H1120" stroke="#D9DAD3" stroke-width="2"/>
+    <text x="80" y="1110" fill="#16191C" font-family="Courier New, monospace" font-size="28" font-weight="400" letter-spacing="-0.3">github.com/happytoolin/specout</text>
+  </svg>
