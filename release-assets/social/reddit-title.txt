@@ -1,1 +1,0 @@
-I built specout to generate OpenAPI from Go types and keep plain HTTP handlers
