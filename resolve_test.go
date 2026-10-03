@@ -369,3 +369,24 @@ func TestPathFieldMatchesPattern(t *testing.T) {
 	specout.Document(d, http.MethodGet, "/x/{id}", specout.Handler[req, specout.NoContent]{HandlerFunc: okBody})
 	require.Contains(t, docPaths(t, d), "/x/{id}", "path-typed route missing")
 }
+
+type S1 struct{ V string }
+
+// A shared handler, the same relative pattern inside two different groups —
+// the suffix-match trap. /a/x and /b/x must both appear, with the right ops.
+func TestSharedHandlerTwoGroups(t *testing.T) {
+	h := specout.Handler[struct{}, S1]{HandlerFunc: noop, Summary: "shared"}
+	d, r := newGen(), chi.NewRouter()
+	for _, group := range []string{"/a", "/b"} {
+		r.Route(group, func(r chi.Router) { specout.Chi(d, r).Get("/x", h) })
+	}
+	// adopting twice stays one walk source, not two
+	adopt(t, specout.Chi(d, r))
+	adopt(t, specout.Chi(d, r))
+
+	doc := serve(t, d, r)
+	// both paths exist and carry the shared operation
+	for _, p := range []string{"/a/x", "/b/x"} {
+		assert.Equal(t, "shared", opOf(t, doc, p, "get")["summary"], p)
+	}
+}
