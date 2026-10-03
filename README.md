@@ -81,7 +81,17 @@ go get github.com/happytoolin/specout@v0.0.1
 
 ## Example
 
-This example serves a greeting and its OpenAPI document.
+This example has three routes:
+
+| Route | Purpose |
+|---|---|
+| `GET /hello/{name}` | Read a path parameter and an optional query parameter. |
+| `POST /greetings` | Read a JSON body and return a list of greetings. |
+| `GET /health` | Return a response with no request data. |
+
+The field tags add validation rules to the API document. The handlers enforce
+those rules. specout does not parse or validate requests.
+
 Only `Title` and `Version` are required in `Config`.
 
 Save this as `main.go` in your Go module:
@@ -91,25 +101,39 @@ package main
 
 import (
 	"encoding/json/v2"
+	"errors"
 	"log"
 	"net/http"
+	"unicode/utf8"
 
 	"github.com/happytoolin/specout"
 )
 
 type HelloRequest struct {
-	Name string `path:"name"`
+	Name     string `path:"name" jsonschema:"minLength=1,maxLength=40,description=Name to greet"`
+	Language string `query:"language,omitempty" jsonschema:"enum=en|es,default=en"`
+}
+
+type RepeatRequest struct {
+	Name     string `json:"name" jsonschema:"minLength=1,maxLength=40"`
+	Language string `json:"language,omitempty" jsonschema:"enum=en|es,default=en"`
+	Times    int    `json:"times" jsonschema:"minimum=1,maximum=3"`
 }
 
 type Greeting struct {
-	Message string `json:"message"`
+	Message string `json:"message" jsonschema:"description=Greeting text"`
 }
 
-func hello(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.MarshalWrite(w, Greeting{Message: "Hello, " + r.PathValue("name")}); err != nil {
-		log.Print(err)
-	}
+type GreetingList struct {
+	Messages []string `json:"messages" jsonschema:"minItems=1,maxItems=3"`
+}
+
+type Problem struct {
+	Error string `json:"error"`
+}
+
+type Health struct {
+	Status string `json:"status" jsonschema:"enum=ok"`
 }
 
 func main() {
@@ -126,34 +150,168 @@ func main() {
 		},
 		Tags: []specout.Tag{
 			{Name: "greetings", Description: "Greeting operations"},
+			{Name: "health", Description: "Service health"},
 		},
+		ClosedSchemas: true,
 	})
 	mux := http.NewServeMux()
+	routes := specout.Std(doc, mux)
 
-	specout.Std(doc, mux).Get("/hello/{name}", specout.Handler[HelloRequest, Greeting]{
+	routes.Get("/hello/{name}", specout.Handler[HelloRequest, Greeting]{
 		HandlerFunc: hello,
 		Summary:     "Say hello",
 		OperationID: "sayHello",
 		Tags:        []string{"greetings"},
+		Responses: []specout.Response{
+			{Status: http.StatusBadRequest, Type: Problem{}},
+		},
+	})
+	routes.Post("/greetings", specout.Handler[RepeatRequest, GreetingList]{
+		HandlerFunc: repeatGreeting,
+		Summary:     "Repeat a greeting",
+		OperationID: "repeatGreeting",
+		Tags:        []string{"greetings"},
+		Responses: []specout.Response{
+			{Status: http.StatusBadRequest, Type: Problem{}},
+		},
+	})
+	routes.Get("/health", specout.Get[Health]{
+		HandlerFunc: health,
+		Summary:     "Check service health",
+		OperationID: "getHealth",
+		Tags:        []string{"health"},
 	})
 	mux.Handle("GET /openapi.json", doc)
 
 	log.Fatal(http.ListenAndServe("localhost:8080", mux))
 }
+
+func hello(w http.ResponseWriter, r *http.Request) {
+	input := HelloRequest{Name: r.PathValue("name"), Language: "en"}
+	if values, ok := r.URL.Query()["language"]; ok {
+		input.Language = values[0]
+	}
+	message, err := greetingMessage(input.Name, input.Language)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, Problem{Error: err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, Greeting{Message: message})
+}
+
+func repeatGreeting(w http.ResponseWriter, r *http.Request) {
+	input := RepeatRequest{Language: "en"}
+	if err := json.UnmarshalRead(r.Body, &input, json.RejectUnknownMembers(true)); err != nil {
+		writeJSON(w, http.StatusBadRequest, Problem{Error: "Invalid JSON body"})
+		return
+	}
+	if input.Times < 1 || input.Times > 3 {
+		writeJSON(w, http.StatusBadRequest, Problem{Error: "Times must be between 1 and 3"})
+		return
+	}
+	message, err := greetingMessage(input.Name, input.Language)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, Problem{Error: err.Error()})
+		return
+	}
+	messages := make([]string, input.Times)
+	for i := range input.Times {
+		messages[i] = message
+	}
+	writeJSON(w, http.StatusOK, GreetingList{Messages: messages})
+}
+
+func health(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, Health{Status: "ok"})
+}
+
+func greetingMessage(name, language string) (string, error) {
+	if !utf8.ValidString(name) {
+		return "", errors.New("Name must use valid UTF-8")
+	}
+	if length := utf8.RuneCountInString(name); length < 1 || length > 40 {
+		return "", errors.New("Name must have 1 to 40 characters")
+	}
+	switch language {
+	case "en":
+		return "Hello, " + name, nil
+	case "es":
+		return "Hola, " + name, nil
+	default:
+		return "", errors.New("Language must be en or es")
+	}
+}
+
+func writeJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.MarshalWrite(w, value); err != nil {
+		log.Print(err)
+	}
+}
 ```
 
 Run `go run .`.
 
-Open [localhost:8080/hello/Ada](http://localhost:8080/hello/Ada) to get a greeting:
+Request a greeting in Spanish:
 
-```json
-{"message":"Hello, Ada"}
+```sh
+curl 'http://localhost:8080/hello/Ada?language=es'
 ```
 
+```json
+{"message":"Hola, Ada"}
+```
+
+Send a JSON body to repeat a greeting:
+
+```sh
+curl http://localhost:8080/greetings \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Ada","times":2}'
+```
+
+```json
+{"messages":["Hello, Ada","Hello, Ada"]}
+```
+
+Send an invalid repeat count:
+
+```sh
+curl -i http://localhost:8080/greetings \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Ada","times":0}'
+```
+
+The handler returns `400 Bad Request` with this JSON body:
+
+```json
+{"error":"Times must be between 1 and 3"}
+```
+
+Open [localhost:8080/health](http://localhost:8080/health) to check service health.
 Open [localhost:8080/openapi.json](http://localhost:8080/openapi.json) to get the API document.
 
-`HelloRequest` describes the path parameter. `Greeting` describes the JSON
-response. The `hello` function handles the request.
+### What the example shows
+
+| Setting | Effect |
+|---|---|
+| `path` and `query` | Describe where request parameters come from. |
+| `json` | Set the JSON field name. `omitempty` makes a field optional in the schema. |
+| `minLength` and `maxLength` | Describe string length limits. |
+| `minimum` and `maximum` | Describe number limits. |
+| `enum` | List the allowed values. |
+| `default` | Document a default value. The handler must apply it. |
+| `minItems` and `maxItems` | Describe array length limits. |
+| `Responses` | Add a typed `400` error response beside the inferred `200` response. |
+| `specout.Get[Health]` | Describe a route with no request data and a JSON response. |
+
+`ClosedSchemas` marks object schemas as closed. The JSON handler uses
+`json.RejectUnknownMembers(true)` to reject extra fields. It also rejects
+invalid JSON and checks each input value before it writes a response.
+
+The `greetingMessage` and `writeJSON` functions are local helpers. They are part
+of the example, not the specout library.
 
 `Config.Tags` describes each group of routes. `Handler.Tags` puts a route in a
 group. `OperationID` sets a stable name for client code.
