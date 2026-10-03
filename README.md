@@ -27,6 +27,50 @@ Tags describe the API contract. Your code must enforce it. specout does not
 decode or validate requests. You do not need comment annotations or generated
 handlers.
 
+## Why specout?
+
+Use specout when you want API docs for an existing Go service. Keep your router,
+middleware, and `http.HandlerFunc` handlers. Your code keeps control of request
+parsing, validation, authentication, and response writing.
+
+Each tool has a different approach:
+
+- [Huma](https://huma.rocks/features/operations/) uses typed operation handlers.
+  It provides request parsing, validation, and response encoding. It supports
+  [several routers](https://huma.rocks/features/bring-your-own-router/).
+- [Fuego](https://github.com/go-fuego/fuego#features) is a web framework with
+  OpenAPI generation, parsing, validation, and response encoding. It also
+  supports standard HTTP handlers.
+- [Swaggo's swag](https://github.com/swaggo/swag#getting-started) builds API docs
+  from comment annotations. Its CLI generates the documentation files.
+
+specout uses Go types and field tags to describe your API. You do not need
+comment annotations or a code generation step. Choose it when you want to add
+docs while keeping your current request handling code.
+
+## Supported features
+
+Request and response types describe the API contract. Your code must implement
+that contract.
+
+| Feature | Support |
+|---|---|
+| Document format | OpenAPI 3.1 and JSON Schema 2020-12. |
+| Router adapters | `http.ServeMux`, chi, and gorilla/mux. |
+| Other routers | Use `specout.Document` for metadata. Register handlers with your router. |
+| Request parameters | Path, query, header, and cookie parameters. |
+| Request bodies | JSON, binary files, multipart uploads, and custom media types. |
+| Response contracts | Status codes, headers, media types, shared errors, and responses without a body. |
+| Go type schemas | Nested and recursive types, collections, optional fields, and nullable values. |
+| Schema rules | Enums, formats, value limits, and registered discriminated unions. |
+| Authentication docs | Bearer tokens, API keys, OAuth 2.0, and OpenID Connect. Your middleware checks credentials. |
+| Route metadata | Summaries, descriptions, tags, operation IDs, and deprecation. |
+| Document output | Serve JSON over HTTP or export it with `WriteJSON`. The output has a stable order. |
+| Route documentation checks | chi and gorilla/mux can report routes that have no docs. |
+| Response status checks | The optional `recorder` package checks statuses from HTTP tests with supported routers. It does not check response bodies. |
+| Automatic parsing and validation | Not provided. Your handlers or middleware do this. |
+| Echo and Fiber adapters | Not available yet. See [future router support](#future-router-support). |
+
 ## Install
 
 Use **Go 1.27 or later**.
