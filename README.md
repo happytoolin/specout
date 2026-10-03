@@ -1,46 +1,35 @@
 # specout
 
-![specout — OpenAPI 3.1 from plain Go handlers](release-assets/v0.0.1/specout-v0.0.1-og.png)
+We built specout to add API docs without replacing your router or changing the
+request lifecycle.
 
-Generate OpenAPI 3.1 from Go types. Keep your usual HTTP handlers.
+![specout: OpenAPI from Go types. Keep your HTTP handlers.](release-assets/social/specout-og.png)
 
-Your code reads the request, validates input, and writes the response. specout
-uses the types and tags you provide to document that contract.
+Generate OpenAPI from Go types. Keep your existing HTTP handlers.
 
-## Why we built it
+specout supports `net/http`, chi, and gorilla/mux. You can keep your router and
+middleware.
 
-For our day-to-day APIs, we wanted useful docs without changing how we handle
-HTTP. We wanted to keep our routers, middleware, validation, and error responses.
+> **Experimental**
+>
+> specout is experimental. The public API may change.
+> Feedback and reports from real services are welcome.
 
-Tools such as Huma and Fuego connect API documentation with request handling:
+## How it works
 
-- [Huma](https://huma.rocks/features/operations/) uses handlers shaped like
-  `func(context.Context, *Input) (*Output, error)`. Its input and output models
-  describe parameters, headers, and bodies. The framework handles parsing,
-  validation, and response encoding.
-- [Fuego](https://github.com/go-fuego/fuego/blob/main/documentation/docs/guides/controllers.md)
-  normally uses its own context types, such as `fuego.ContextWithBody[T]`.
-  Handlers return a response and an error. The framework provides body decoding
-  and [response encoding](https://github.com/go-fuego/fuego/blob/main/documentation/docs/guides/serialization.md).
+Define request and response types. Add field tags to describe parameters and
+bodies. Attach the types to your handler with `specout.Handler[Request, Response]`.
 
-Those conventions can save work. Both also allow lower-level HTTP access through
-[Huma's adapters](https://huma.rocks/features/middleware/#unwrapping) and
-[Fuego's standard handlers](https://github.com/go-fuego/fuego/blob/main/documentation/docs/guides/routing.md).
-The part we did not want was adopting another handler model just to get docs.
+Your handler still gets `http.ResponseWriter` and `*http.Request`. It reads the
+request. It validates input. It writes the response.
 
-So we kept the part we needed: describe the request and response with Go types,
-attach them to an existing `http.HandlerFunc`, and generate the specification.
-The handler still gets `http.ResponseWriter` and `*http.Request` directly.
-It decides how to read the body, check input, set headers, stream data, and return
-errors. Existing middleware and HTTP tests still work.
-
-specout adds a metadata wrapper, `Handler[Request, Response]`. It does not decode
-or validate requests for you. Tags describe the contract; your code must enforce
-it. There are no comment annotations or generated handlers to maintain.
+Tags describe the API contract. Your code must enforce it. specout does not
+decode or validate requests. You do not need comment annotations or generated
+handlers.
 
 ## Install
 
-Requires **Go 1.27 or later**. The API is pre-1.0.
+Use **Go 1.27 or later**.
 
 ```sh
 go get github.com/happytoolin/specout@v0.0.1
@@ -94,35 +83,62 @@ func main() {
 }
 ```
 
-Run `go run .`. Visit `/hello/Ada` for the response and `/openapi.json` for the
-specification. `HelloRequest` documents the path parameter. `Greeting` documents
-the JSON response. The `hello` function does the actual HTTP work.
+Run `go run .`.
 
-## Use it in your service
+Open `/hello/Ada` to get a greeting. Open `/openapi.json` to get the API document.
 
-Adapters support `net/http`, `chi/v5`, and `gorilla/mux`. With chi, call `Adopt`
-on the outermost router after registration to resolve grouped and mounted paths.
-Other routers can use `specout.Document` to record routes registered separately.
+`HelloRequest` describes the path parameter. `Greeting` describes the JSON
+response. The `hello` function handles the request.
 
-The output is deterministic OpenAPI 3.1 with JSON Schema 2020-12. Register all
-routes before the first call to `ServeHTTP` or `WriteJSON`; that call freezes
-the document.
+## Use your router
 
-Tests can check for undocumented routes with chi and gorilla/mux. The optional
-`recorder` package compares declared response statuses with those observed in
-HTTP tests. It does not validate response bodies. `http.ServeMux` cannot list its
-routes, so register documented endpoints through `specout.Std`.
+Use `specout.Std` with `http.ServeMux`. Use `specout.Chi` with chi. Use
+`specout.Gorilla` with gorilla/mux.
 
-- [Runnable examples](examples/README.md) and a [sample specification](examples/onboarding/openapi.json).
-- [Request types, tags, and responses](skills/specout/references/types-and-responses.md).
-- [Router setup and contract tests](skills/specout/references/routers-and-verification.md).
-- [Configuration and authentication metadata](skills/specout/references/configuration.md).
+With chi, call `Adopt` on the outermost router after you register the routes.
+This resolves paths from route groups and mounted routers.
 
-More router adapters and feedback from real services are welcome.
+With other routers, register the routes separately. Use `specout.Document` to
+record their API contracts.
+
+### Future router support
+
+We are interested in adding adapters for Echo, Fiber, and other routers.
+Community demand will guide this work.
+
+Request router support in the [issue tracker](https://github.com/happytoolin/specout/issues).
+
+## Serve or export the document
+
+The output uses OpenAPI 3.1 and JSON Schema 2020-12. The JSON output has a stable
+order.
+
+Register all routes before you call `ServeHTTP` or `WriteJSON`. After a successful
+document build, you cannot add routes.
+
+## Check the API docs
+
+With chi and gorilla/mux, tests can find routes that have no documentation.
+
+`http.ServeMux` cannot list its routes. Use `specout.Std` to register each route
+that needs documentation.
+
+The optional `recorder` package can compare response statuses from HTTP tests
+with the declared statuses. It does not check response bodies.
+
+## More information
+
+- [Runnable examples](examples/README.md).
+- [Sample API document](examples/onboarding/openapi.json).
+- [Request types and responses](skills/specout/references/types-and-responses.md).
+- [Router setup and documentation checks](skills/specout/references/routers-and-verification.md).
+- [Configuration and authentication](skills/specout/references/configuration.md).
+
+Feedback and contributions are welcome. More router adapters are also welcome.
 
 ## Development
 
-See the [code guide](CONTRIBUTING.md) for the build flow and file layout.
+Read the [code guide](CONTRIBUTING.md) for build steps and the file layout.
 
 ```sh
 just check  # All CI and release checks.
@@ -130,11 +146,14 @@ just lint   # Go lint rules and formatting.
 just demo   # Run the onboarding example.
 ```
 
-`just check` needs Go, Python 3, and Node.js/npm. It runs builds, linting, tests,
-race checks, OpenAPI validation, client type compilation, and vulnerability scans.
-It also checks module files and GitHub Actions workflows.
+`just check` requires Go, Python 3, and Node.js with npm. It checks builds,
+formatting, and lint rules. It runs tests, race checks, and vulnerability scans.
+It validates API documents. It generates and compiles client types. It also
+checks module files and GitHub Actions workflows.
 
-For coding agents, an optional [specout skill](skills/specout/SKILL.md) is available:
+Coding agents can use the optional [specout skill](skills/specout/SKILL.md).
+
+Install it with this command:
 
 ```sh
 npx skills add happytoolin/specout --skill specout

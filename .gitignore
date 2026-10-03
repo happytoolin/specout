@@ -33,6 +33,17 @@ go.work.sum
 .venv
 __pycache__/
 
+# Keep launch drafts local. Track image assets only.
+/release-assets/**
+!/release-assets/**/
+!/release-assets/**/*.png
+!/release-assets/**/*.svg
+!/release-assets/**/*.jpg
+!/release-assets/**/*.jpeg
+!/release-assets/**/*.webp
+!/release-assets/**/*.gif
+!/release-assets/**/*.avif
+
 # Built example binaries (go build ./examples/...)
 /demo
 /msgraph
