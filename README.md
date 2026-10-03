@@ -1,5 +1,8 @@
 # specout
 
+We built specout to add API docs without replacing your router or changing the
+request lifecycle.
+
 ![specout: OpenAPI from Go types. Keep your HTTP handlers.](release-assets/social/specout-og.png)
 
 Generate OpenAPI from Go types. Keep your existing HTTP handlers.
@@ -7,9 +10,12 @@ Generate OpenAPI from Go types. Keep your existing HTTP handlers.
 specout supports `net/http`, chi, and gorilla/mux. You can keep your router and
 middleware.
 
-## How it works
+> **Experimental**
+>
+> specout is experimental. The public API may change.
+> Feedback and reports from real services are welcome.
 
-We built specout to add API docs to our existing Go services.
+## How it works
 
 Define request and response types. Add field tags to describe parameters and
 bodies. Attach the types to your handler with `specout.Handler[Request, Response]`.
@@ -23,7 +29,7 @@ handlers.
 
 ## Install
 
-Use **Go 1.27 or later**. The library API can change.
+Use **Go 1.27 or later**.
 
 ```sh
 go get github.com/happytoolin/specout@v0.0.1
@@ -94,6 +100,13 @@ This resolves paths from route groups and mounted routers.
 
 With other routers, register the routes separately. Use `specout.Document` to
 record their API contracts.
+
+### Future router support
+
+We are interested in adding adapters for Echo, Fiber, and other routers.
+Community demand will guide this work.
+
+Request router support in the [issue tracker](https://github.com/happytoolin/specout/issues).
 
 ## Serve or export the document
 
