@@ -35,7 +35,10 @@ Use **Go 1.27 or later**.
 go get github.com/happytoolin/specout@v0.0.1
 ```
 
-## A small example
+## Example
+
+This example serves a greeting and its OpenAPI document.
+Only `Title` and `Version` are required in `Config`.
 
 Save this as `main.go` in your Go module:
 
@@ -46,7 +49,6 @@ import (
 	"encoding/json/v2"
 	"log"
 	"net/http"
-	"time"
 
 	"github.com/happytoolin/specout"
 )
@@ -60,35 +62,76 @@ type Greeting struct {
 }
 
 func hello(w http.ResponseWriter, r *http.Request) {
-	message := Greeting{Message: "Hello, " + r.PathValue("name")}
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.MarshalWrite(w, message); err != nil {
+	if err := json.MarshalWrite(w, Greeting{Message: "Hello, " + r.PathValue("name")}); err != nil {
 		log.Print(err)
 	}
 }
 
 func main() {
-	doc := specout.New(specout.Config{Title: "Hello API", Version: "1.0.0"})
+	doc := specout.New(specout.Config{
+		Title:       "Hello API",
+		Version:     "1.0.0",
+		Description: "A simple greeting service.",
+		Contact: &specout.Contact{
+			Name:  "API team",
+			Email: "api@example.com",
+		},
+		Servers: []specout.Server{
+			{URL: "http://localhost:8080", Description: "Local server"},
+		},
+		Tags: []specout.Tag{
+			{Name: "greetings", Description: "Greeting operations"},
+		},
+	})
 	mux := http.NewServeMux()
+
 	specout.Std(doc, mux).Get("/hello/{name}", specout.Handler[HelloRequest, Greeting]{
 		HandlerFunc: hello,
 		Summary:     "Say hello",
+		OperationID: "sayHello",
+		Tags:        []string{"greetings"},
 	})
-	mux.Handle("/openapi.json", doc)
+	mux.Handle("GET /openapi.json", doc)
 
-	server := &http.Server{
-		Addr: ":8080", Handler: mux, ReadHeaderTimeout: 5 * time.Second,
-	}
-	log.Fatal(server.ListenAndServe())
+	log.Fatal(http.ListenAndServe("localhost:8080", mux))
 }
 ```
 
 Run `go run .`.
 
-Open `/hello/Ada` to get a greeting. Open `/openapi.json` to get the API document.
+Open [localhost:8080/hello/Ada](http://localhost:8080/hello/Ada) to get a greeting:
+
+```json
+{"message":"Hello, Ada"}
+```
+
+Open [localhost:8080/openapi.json](http://localhost:8080/openapi.json) to get the API document.
 
 `HelloRequest` describes the path parameter. `Greeting` describes the JSON
 response. The `hello` function handles the request.
+
+`Config.Tags` describes each group of routes. `Handler.Tags` puts a route in a
+group. `OperationID` sets a stable name for client code.
+
+`Servers` sets the base URLs in the API document. It does not set the address of
+the HTTP server or change route paths.
+
+### More configuration options
+
+Add these fields to `specout.Config` when your API needs them:
+
+| Field | Purpose |
+|---|---|
+| `TermsOfService` | Add a link to the terms of service. |
+| `License` | Add the API license name and URL. |
+| `ExternalDocs` | Add a link to an API guide. |
+| `Auth` | Describe authentication. Your middleware must check credentials. |
+| `ErrorType` and `DefaultErrors` | Describe a shared error body and its status codes. Your handlers write the error responses. |
+| `ClosedSchemas` | Declare that object schemas do not allow unknown fields. Your code must enforce this rule. |
+
+See [configuration and authentication](skills/specout/references/configuration.md)
+for code examples.
 
 ## Use your router
 
