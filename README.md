@@ -76,7 +76,7 @@ that contract.
 Use **Go 1.27 or later**.
 
 ```sh
-go get github.com/happytoolin/specout@v0.0.1
+go get github.com/happytoolin/specout@v0.0.2
 ```
 
 ## Example
