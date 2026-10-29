@@ -368,6 +368,17 @@ func TestBraceInParameterNameFails(t *testing.T) {
 	}
 }
 
+// chi and gorilla read net/http's {$} as a parameter named $, so /a/{$}
+// serves /a/xyz and not /a/, the path the document would name.
+func TestEndAnchorOutsideStdPanics(t *testing.T) {
+	assert.PanicsWithValue(t, "specout: chi route GET /a/{$}: {$} is net/http syntax; chi reads it as a "+
+		"parameter named $, so the route serves /a/xyz and not /a/. Register the path without {$}",
+		func() { specout.Chi(newGen(), chi.NewRouter()).Get("/a/{$}", okGet) })
+	assert.PanicsWithValue(t, "specout: gorilla route GET /a/{$}: {$} is net/http syntax; gorilla reads it "+
+		"as a parameter named $, so the route serves /a/xyz and not /a/. Register the path without {$}",
+		func() { specout.Gorilla(newGen(), gmux.NewRouter()).Get("/a/{$}", okGet) })
+}
+
 // One name for two path segments (/x/{id}/y/{id}) gives the handler one
 // value, so the build fails. chi rejects it inside one pattern, but not
 // across a Mount, and a group prefix can repeat a route's name.

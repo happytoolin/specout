@@ -64,3 +64,13 @@ func checkMethod(method string) {
 		panic("specout: method must be one of GET/HEAD/POST/PUT/PATCH/DELETE/OPTIONS/TRACE, got " + method)
 	}
 }
+
+// endAnchor is net/http's end-of-path anchor, as in /a/{$}.
+const endAnchor = "{$}"
+
+// endAnchorMsg explains why router, chi or gorilla, cannot take endAnchor:
+// it reads {$} as a parameter named $, so /a/{$} serves /a/xyz and not /a/.
+func endAnchorMsg(router string) string {
+	return "{$} is net/http syntax; " + router + " reads it as a parameter named $, so the route " +
+		"serves /a/xyz and not /a/. Register the path without {$}"
+}

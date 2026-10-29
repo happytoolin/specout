@@ -27,6 +27,9 @@ type GorillaRouter struct {
 }
 
 func (g *GorillaRouter) register(method, pattern string, rec routeRecord) {
+	if strings.Contains(pattern, endAnchor) {
+		panic("specout: gorilla route " + method + " " + pattern + ": " + endAnchorMsg("gorilla"))
+	}
 	rec.method, rec.pattern = method, pattern
 	rec.absolute = true
 	rec.literalStars = true

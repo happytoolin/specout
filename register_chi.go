@@ -46,6 +46,9 @@ func (c *ChiRouter) register(method, pattern string, rec routeRecord) {
 	if msg := checkSegments(pattern); msg != "" {
 		panic("specout: chi route " + method + " " + pattern + ": " + msg)
 	}
+	if strings.Contains(pattern, endAnchor) {
+		panic("specout: chi route " + method + " " + pattern + ": " + endAnchorMsg("chi"))
+	}
 	rec.method, rec.pattern = method, pattern
 	c.d.addRoute(rec, func(rec *routeRecord) {
 		c.r.Method(method, pattern, rec)
