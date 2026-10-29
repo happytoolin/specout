@@ -179,8 +179,10 @@ func TestRegistrationPanicLeavesNoRecord(t *testing.T) {
 		{"/users/:id?", "specoutfiberv2: GET /users/:id?: optional parameter :id?"},
 		{"/plus/:name+", "specoutfiberv2: GET /plus/:name+: parameter :name is followed by '+'"},
 		{"/:param*", "specoutfiberv2: GET /:param*: parameter :param is followed by '*'"},
-		{`/:id<regex(\d{4})>\:x`, "a Fiber v2 bug reads the \\: after a constraint with a backslash"},
-		{`/v1/:id<regex(\d)>\:x`, "a Fiber v2 bug reads the \\: after a constraint with a backslash"},
+		{`/:id<regex(\d{4})>\:x`, `a Fiber v2 bug skips the \ after the constraint`},
+		{`/v1/:id<regex(\d)>\:x`, `a Fiber v2 bug skips the \ after the constraint`},
+		{`/:id<regex(a.b)>.x`, "a Fiber v2 bug skips the . after the constraint"},
+		{`/:id<regex(a-b)>-x`, "a Fiber v2 bug skips the - after the constraint"},
 	} {
 		t.Run(tc.route, func(t *testing.T) {
 			d, app := adaptertest.Generator(), fiber.New()
@@ -478,6 +480,19 @@ func TestRegexConstraintBeforeEscapedColon(t *testing.T) {
 	assert.Equal(t, "1001", header.Get("X-Value"))
 	assert.Contains(t, adaptertest.Paths(t, d), "/{id}:x")
 	require.NoError(t, specoutfiberv2.Adopt(d, app))
+}
+
+// A constraint that writes a dot as \x2e does not hold the . after it, so
+// Fiber v2 ends the parameter at that dot.
+func TestRegexConstraintWithoutTheDelimiter(t *testing.T) {
+	d, app := adaptertest.Generator(), fiber.New()
+	specoutfiberv2.New(d, app).Get(`/:id<regex(^a\x2eb$)>.x`, pathValueRoute("id"))
+	status, header := do(t, app, http.MethodGet, "/a.b.x")
+	require.Equal(t, http.StatusNoContent, status)
+	assert.Equal(t, "a.b", header.Get("X-Value"))
+	status, _ = do(t, app, http.MethodGet, "/a.b")
+	assert.Equal(t, http.StatusNotFound, status)
+	assert.Contains(t, adaptertest.Paths(t, d), "/{id}.x")
 }
 
 // A skipped guard route that calls c.Next lets the later routes run, so it

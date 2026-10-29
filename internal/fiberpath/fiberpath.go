@@ -187,10 +187,14 @@ func checkFollower(name string, c byte, constrained bool) error {
 	return nil
 }
 
-// RegexEscapeColon reports whether p has a constraint that holds a backslash
-// and ends right before an escaped colon, as /:id<regex(\d+)>\:x. Fiber v2
-// reads that colon as the start of a parameter; Fiber v3 reads a literal.
-func RegexEscapeColon(p string) bool {
+// V2Misread returns the character after a constraint of p that Fiber v2
+// misreads, or 0. Fiber v2 looks for the end of a parameter only at the first
+// copy of each delimiter, so it skips a delimiter that the constraint holds
+// (gofiber/fiber#4817). It then ends the parameter later: /:id<regex(a.b)>.x
+// takes the .x into id, and /:id<regex(\d)>\:x reads :x as a parameter. A
+// backslash that the constraint holds is harmless only before a /, - or .
+// that the constraint does not hold. Fiber v3 reads all of these correctly.
+func V2Misread(p string) byte {
 	for i := 0; i < len(p); i++ {
 		switch p[i] {
 		case '\\':
@@ -198,15 +202,34 @@ func RegexEscapeColon(p string) bool {
 		case '<':
 			end := constraintEnd(p, i+1)
 			if end < 0 {
-				return false
+				return 0
 			}
-			if strings.Contains(p[i:end], `\`) && strings.HasPrefix(p[end+1:], `\:`) {
-				return true
+			if c := misreadAfter(p[i+1:end], p[end+1:]); c != 0 {
+				return c
 			}
 			i = end
 		}
 	}
-	return false
+	return 0
+}
+
+// misreadAfter returns the delimiter at the start of rest that Fiber v2
+// skips, because the constraint text inside holds it, or 0.
+func misreadAfter(inside, rest string) byte {
+	if rest == "" {
+		return 0
+	}
+	c := rest[0]
+	if c == '\\' && strings.Contains(inside, `\`) {
+		if len(rest) < 2 || strings.IndexByte("/-.", rest[1]) < 0 {
+			return c
+		}
+		c = rest[1]
+	}
+	if strings.IndexByte(inside, c) >= 0 {
+		return c
+	}
+	return 0
 }
 
 // constraintEnd returns the index of the > that closes a constraint opened

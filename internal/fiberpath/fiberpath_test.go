@@ -102,17 +102,24 @@ func TestShadowedByFold(t *testing.T) {
 	}
 }
 
-func TestRegexEscapeColon(t *testing.T) {
-	for p, want := range map[string]bool{
-		`/:id<regex(\d{4})>\:x`:     true,
-		`/:a<int>-:b<regex(\d)>\:x`: true,
-		`/:id<regex([0-9])>\:x`:     false,
-		`/:id<regex(\d)>\-x`:        false,
-		`/:id<regex(\d)>/\:x`:       false,
-		`/:id<regex(a\:b)>`:         false,
-		`/x\:y/:id<int>`:            false,
-		`/:id<regex(\d)`:            false,
+func TestV2Misread(t *testing.T) {
+	for p, want := range map[string]byte{
+		`/:id<regex(\d{4})>\:x`:     '\\',
+		`/:a<int>-:b<regex(\d)>\:x`: '\\',
+		`/:id<regex(\d)>\ax`:        '\\',
+		`/:id<regex(a.b)>.x`:        '.',
+		`/:id<regex(a-b)>-x`:        '-',
+		`/:id<regex(\d-)>\-x`:       '-',
+		`/:id<regex(a\.b)>.x`:       '.',
+		`/:id<regex([0-9])>\:x`:     0,
+		`/:id<regex(\d)>\-x`:        0,
+		`/:id<regex(\d)>/\:x`:       0,
+		`/:id<regex(a.b)>-x`:        0,
+		`/:id<regex(a\x2eb)>.x`:     0,
+		`/:id<regex(a\:b)>`:         0,
+		`/x\:y/:id<int>`:            0,
+		`/:id<regex(\d)`:            0,
 	} {
-		assert.Equal(t, want, fiberpath.RegexEscapeColon(p), p)
+		assert.Equal(t, want, fiberpath.V2Misread(p), p)
 	}
 }

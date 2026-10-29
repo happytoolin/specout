@@ -304,6 +304,13 @@ differences remain:
 - Fiber v2 appends a later route on the same path to the earlier one and runs
   the earlier one first. So a `Head` after a `Get` on the same path panics.
   Register `Head` first.
+- A Fiber v2 bug ends a parameter at the wrong place when its constraint
+  holds the delimiter that follows it
+  ([gofiber/fiber#4817](https://github.com/gofiber/fiber/issues/4817)). For
+  example, `/:id<regex(a.b)>.x` takes `.x` into `id`, and
+  `/:id<regex(\d)>\:x` reads `:x` as a parameter. Such a route panics at
+  registration. Remove the delimiter from the constraint, as `[0-9]` for `\d`
+  or `\x2e` for a dot.
 - Fiber v2 has no domain router.
 ## Path rules for Echo, Gin, and Fiber
 
