@@ -270,6 +270,20 @@ func TestAdoptReportsExplicitHeadBesideGet(t *testing.T) {
 	assert.Equal(t, []string{"HEAD /explicit"}, adaptertest.Strays(t, specoutfiber.Adopt(d, app)))
 }
 
+// Fiber v3 tries the HEAD copies of GET routes after the explicit HEAD routes,
+// so a Head route after a GET route that matches it still runs.
+func TestHeadAfterMatchingGetRuns(t *testing.T) {
+	d, app := adaptertest.Generator(), fiber.New()
+	r := specoutfiber.New(d, app)
+	r.Get("/users/:id", okRoute)
+	r.Head("/users/me", specout.Handler[struct{}, specout.NoContent]{
+		HandlerFunc: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusAccepted) },
+	})
+	status, _ := do(t, app, http.MethodHead, "/users/me")
+	assert.Equal(t, http.StatusAccepted, status)
+	require.NoError(t, specoutfiber.Adopt(d, app))
+}
+
 // Middleware that answers before the endpoint still counts for the route the
 // request would have reached, for GET and for the HEAD copy of GET.
 func TestRecordSeesMiddlewareResponses(t *testing.T) {

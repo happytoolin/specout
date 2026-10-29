@@ -333,6 +333,21 @@ func TestHeadBeforeGetRunsForHead(t *testing.T) {
 	assert.Equal(t, "head", header.Get("X-Route"))
 }
 
+// The HEAD route that Fiber's Get adds takes the HEAD requests of a later
+// Head route that it matches, so Adopt reports that route.
+func TestAdoptReportsHeadAfterMatchingGet(t *testing.T) {
+	d, app := adaptertest.Generator(), fiber.New()
+	r := specoutfiberv2.New(d, app)
+	r.Get("/users/:id", okRoute)
+	r.Head("/users/me", specout.Handler[struct{}, specout.NoContent]{
+		HandlerFunc: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusAccepted) },
+	})
+	status, _ := do(t, app, http.MethodHead, "/users/me")
+	assert.Equal(t, http.StatusNoContent, status, "the HEAD route of GET /users/:id runs")
+	require.EqualError(t, specoutfiberv2.Adopt(d, app), "specoutfiberv2: HEAD /users/me never runs: "+
+		"Fiber sends its requests to HEAD /users/:id, the HEAD route that an earlier Get adds")
+}
+
 // deniedApp serves GET /items/:id, declaring 401, behind Record and middleware
 // that answers 401 for ?deny=1 before the endpoint runs.
 func deniedApp() (*specout.Generator, *fiber.App, *recorder.Recorder) {

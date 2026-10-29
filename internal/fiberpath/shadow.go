@@ -8,8 +8,13 @@ import (
 	utilsstrings "github.com/gofiber/utils/v2/strings"
 )
 
-// Route is one endpoint route of a Fiber route table.
-type Route struct{ Method, Path string }
+// Route is one endpoint route of a Fiber route table. Added marks a route
+// that Fiber adds itself, as Fiber v2's Get adds a HEAD route: it takes the
+// requests of later routes, but no error names it as a route that never runs.
+type Route struct {
+	Method, Path string
+	Added        bool
+}
 
 // Reading is how one Fiber app reads route paths: its Config.CaseSensitive
 // and Config.StrictRouting, and Match, fiber.RoutePatternMatch with that
@@ -41,12 +46,20 @@ func Shadowed(pkg string, table []Route, rd Reading) error {
 	}
 	var errs []error
 	for i, r := range table {
-		if j, ok := rd.shadow(table[:i], folds, r); ok {
-			errs = append(errs, fmt.Errorf("%s: %s %s never runs: Fiber sends its requests to %s %s, an earlier route",
-				pkg, r.Method, r.Path, table[j].Method, table[j].Path))
+		if j, ok := rd.shadow(table[:i], folds, r); ok && !r.Added {
+			errs = append(errs, fmt.Errorf("%s: %s %s never runs: Fiber sends its requests to %s %s, %s",
+				pkg, r.Method, r.Path, table[j].Method, table[j].Path, table[j].earlier()))
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// earlier names r as the route that takes the requests of a later one.
+func (r Route) earlier() string {
+	if r.Added {
+		return "the HEAD route that an earlier Get adds"
+	}
+	return "an earlier route"
 }
 
 // shadow returns the index of the first route of earlier that takes every

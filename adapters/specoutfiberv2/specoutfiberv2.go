@@ -192,17 +192,20 @@ func serve(next http.Handler, route observed) fiber.Handler {
 // Adopt also reports a route that never runs. Fiber tries the routes of one
 // method in registration order, and an earlier route can take every request
 // of a later one: /users/:id takes /users/me, and with the default Config,
-// /users takes /Users and /users/. Register the specific route first, or set
-// Config.CaseSensitive or Config.StrictRouting. Skipped routes take no part
-// in this check.
+// /users takes /Users and /users/. The HEAD route that Fiber's Get adds takes
+// requests too, so HEAD /users/me after GET /users/:id never runs. Register
+// the specific route first, or set Config.CaseSensitive or
+// Config.StrictRouting. Skipped routes take no part in this check.
 //
 // The routes of a mounted app join app's table, at the mount path, when app
 // starts; a Router on the mounted app documents them without that path.
 func Adopt(d *specout.Generator, app *fiber.App, skips ...specout.SkipRule) error {
-	table := endpoints(app)
-	if err := shadowed(app, table, skips); err != nil {
+	table := app.GetRoutes(true)
+	added := getHeads(table)
+	if err := shadowed(app, table, added, skips); err != nil {
 		return err
 	}
+	table = slices.DeleteFunc(table, added)
 	routes := make([]specout.RouteKey, 0, len(table))
 	for i := range table {
 		r := &table[i]
@@ -220,13 +223,15 @@ func Adopt(d *specout.Generator, app *fiber.App, skips ...specout.SkipRule) erro
 }
 
 // shadowed reports the routes of table that never run on app, because an
-// earlier route takes their requests. A skipped route takes no part: it can
-// be a guard that calls c.Next, which lets the later routes run.
-func shadowed(app *fiber.App, table []fiber.Route, skips []specout.SkipRule) error {
+// earlier route takes their requests. The HEAD route that Fiber's Get adds
+// takes requests too: an explicit HEAD /users/me after GET /users/:id never
+// runs. added reports those routes. A skipped route takes no part: it can be
+// a guard that calls c.Next, which lets the later routes run.
+func shadowed(app *fiber.App, table []fiber.Route, added func(fiber.Route) bool, skips []specout.SkipRule) error {
 	cfg := app.Config()
 	routes := make([]fiberpath.Route, 0, len(table))
 	for i := range table {
-		r := fiberpath.Route{Method: table[i].Method, Path: table[i].Path}
+		r := fiberpath.Route{Method: table[i].Method, Path: table[i].Path, Added: added(table[i])}
 		if !slices.ContainsFunc(skips, func(s specout.SkipRule) bool { return s.Matches(fiberpath.Table(r.Path)) }) {
 			routes = append(routes, r)
 		}
@@ -239,19 +244,25 @@ func shadowed(app *fiber.App, table []fiber.Route, skips []specout.SkipRule) err
 }
 
 // endpoints lists the routes of app that run endpoint handlers, in Fiber's
-// match order, without the HEAD routes Fiber's Get adds. Get passes one
-// handler slice to its HEAD and GET routes, so the two share it.
+// match order, without the HEAD routes Fiber's Get adds.
 func endpoints(app *fiber.App) []fiber.Route {
 	table := app.GetRoutes(true)
+	return slices.DeleteFunc(table, getHeads(table))
+}
+
+// getHeads returns a report of whether a route of table is a HEAD route that
+// Fiber's Get adds. Get passes one handler slice to its HEAD and GET routes,
+// so the two share it.
+func getHeads(table []fiber.Route) func(fiber.Route) bool {
 	gets := make(map[string][]*fiber.Handler)
 	for i := range table {
 		if r := &table[i]; r.Method == http.MethodGet && len(r.Handlers) > 0 {
 			gets[r.Path] = append(gets[r.Path], &r.Handlers[0])
 		}
 	}
-	return slices.DeleteFunc(table, func(r fiber.Route) bool {
+	return func(r fiber.Route) bool {
 		return r.Method == http.MethodHead && len(r.Handlers) > 0 && slices.Contains(gets[r.Path], &r.Handlers[0])
-	})
+	}
 }
 
 // RequireDocumented fails the test when app holds routes specout cannot
