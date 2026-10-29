@@ -446,6 +446,34 @@ func TestLaunchPromotedEncoderSetsTheSchema(t *testing.T) {
 	assert.Contains(t, props(t, doc, "schemaOwnStamp"), "note", "a declared MarshalJSON keeps the reflected fields")
 }
 
+// regexp.Regexp writes text through a pointer method, so the reflector would
+// read its Go fields.
+func TestLaunchPointerTextMarshalerIsAString(t *testing.T) {
+	type response struct {
+		Pattern  *regexp.Regexp  `json:"pattern"`
+		Patterns []regexp.Regexp `json:"patterns"`
+	}
+	d := newGen()
+	specout.Document(d, http.MethodGet, "/x", specout.Get[response]{HandlerFunc: noop})
+	doc := buildDoc(t, d)
+	value := response{Pattern: regexp.MustCompile(`^a+$`), Patterns: []regexp.Regexp{*regexp.MustCompile(`b`)}}
+	wire, err := jsonv1.Marshal(value)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"pattern":"^a+$","patterns":["b"]}`, string(wire))
+	exportLaunchSamples(t, doc,
+		launchSample{"pointer text values", launchResponseSchema(t, doc, "/x", "get"), value, true},
+		launchSample{"null pointer text value", launchResponseSchema(t, doc, "/x", "get"), response{}, true},
+		launchSample{
+			"object for a pointer text value", launchResponseSchema(t, doc, "/x", "get"),
+			map[string]any{"pattern": map[string]any{}, "patterns": []any{}},
+			false,
+		},
+	)
+	p := props(t, doc, "response")
+	assert.Equal(t, []any{"string", "null"}, p["pattern"].(map[string]any)["type"])
+	assert.Equal(t, map[string]any{"type": "string"}, p["patterns"].(map[string]any)["items"])
+}
+
 // The math/big types write a number or text through pointer methods, so the
 // reflector would read their Go fields.
 func TestLaunchBigNumbers(t *testing.T) {

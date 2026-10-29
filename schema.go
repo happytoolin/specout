@@ -123,17 +123,20 @@ var (
 )
 
 // writesText reports whether the JSON encoders write t through its
-// MarshalText method, as a JSON string. A JSON marshaler takes precedence. A
-// string kind, a JSONSchema method and net.IP keep the reflector's schema.
+// MarshalText method, as a JSON string. The method can have a pointer
+// receiver, as on regexp.Regexp: the encoders call it on a value behind a
+// pointer or in a slice. A JSON marshaler takes precedence. A string kind, a
+// JSONSchema method and net.IP keep the reflector's schema.
 func writesText(t reflect.Type) bool {
-	return t.Kind() != reflect.Interface && t.Kind() != reflect.String && t.Implements(textMarshalerType) &&
-		!t.Implements(jsonMarshalerType) && !t.Implements(jsonMarshalerToType) &&
+	p := reflect.PointerTo(t)
+	return t.Kind() != reflect.String && p.Implements(textMarshalerType) &&
+		!p.Implements(jsonMarshalerType) && !p.Implements(jsonMarshalerToType) &&
 		!t.Implements(schemaMethodType) && t != reflect.TypeFor[net.IP]()
 }
 
-// bigTypes maps the math/big types to their JSON type. Their encoder methods
-// have pointer receivers, which writesText does not see: *big.Int writes a
-// number, *big.Float and *big.Rat write text.
+// bigTypes maps the math/big types to their JSON type. They are scalars, so
+// isBuiltin inlines them. *big.Int writes a number through MarshalJSON, and
+// *big.Float and *big.Rat write text.
 var bigTypes = map[reflect.Type]string{
 	reflect.TypeFor[big.Int]():   typeInteger,
 	reflect.TypeFor[big.Float](): typeString,
