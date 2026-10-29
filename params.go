@@ -85,10 +85,15 @@ func (sr *schemaRegistry) taggedParams(req reflect.Type) []any {
 			continue
 		}
 		name := parts0(qt)
-		if name == "" || seen[loc+"\x00"+name] {
+		key := loc + "\x00" + name
+		if loc == InHeader {
+			// HTTP header names are case-insensitive: X-Id and x-id are one header
+			key = strings.ToLower(key)
+		}
+		if name == "" || seen[key] {
 			panic("specout: empty or duplicate " + loc + " parameter " + name)
 		}
-		seen[loc+"\x00"+name] = true
+		seen[key] = true
 		params = append(params, sr.parameter(name, loc, f))
 	}
 	return params
@@ -208,10 +213,24 @@ func parts0(s string) string {
 
 // tagValue extracts key=value from a jsonschema tag string.
 func tagValue(tag, key string) string {
-	for part := range strings.SplitSeq(tag, ",") {
+	for _, part := range tagParts(tag) {
 		if after, ok := strings.CutPrefix(part, key+"="); ok {
 			return after
 		}
 	}
 	return ""
+}
+
+// tagParts splits a jsonschema tag on its commas as invopop does: a comma
+// after a backslash belongs to the value, as in description=a\, b.
+func tagParts(tag string) []string {
+	var parts []string
+	for part := range strings.SplitSeq(tag, ",") {
+		if n := len(parts); n > 0 && strings.HasSuffix(parts[n-1], `\`) {
+			parts[n-1] = strings.TrimSuffix(parts[n-1], `\`) + "," + part
+			continue
+		}
+		parts = append(parts, part)
+	}
+	return parts
 }

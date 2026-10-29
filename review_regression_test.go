@@ -376,6 +376,21 @@ func TestDuplicateFormNamesFail(t *testing.T) {
 	})
 }
 
+// Form binders skip a form:"-" field, so the form schema must not list it.
+func TestFormDashFieldLeavesTheFormSchema(t *testing.T) {
+	type request struct {
+		Name   string `form:"name" json:"name"`
+		Secret string `form:"-"    json:"secret"`
+	}
+	doc := docOf(t, http.MethodPost, "/x", specout.Handler[request, specout.NoContent]{HandlerFunc: noop}.
+		WithRequestContentTypes("application/json", "application/x-www-form-urlencoded"))
+	content := opOf(t, doc, "/x", "post")["requestBody"].(map[string]any)["content"].(map[string]any)
+	form := content["application/x-www-form-urlencoded"].(map[string]any)["schema"].(map[string]any)
+	assert.Equal(t, []string{"name"}, keys(form["properties"].(map[string]any)))
+	assert.Equal(t, []any{"name"}, form["required"])
+	assert.Contains(t, props(t, doc, "request"), "secret", "the JSON body keeps the field")
+}
+
 func TestParameterNamesAreNotOptionalTagOptions(t *testing.T) {
 	type request struct {
 		EmptyName string `query:"omitempty"`

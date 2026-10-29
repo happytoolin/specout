@@ -47,31 +47,37 @@ func (sr *schemaRegistry) formSchema(body reflect.Type, base *jsonschema.Schema)
 }
 
 // formRenames maps the JSON name of each body field to its form tag name,
-// for the fields where the two differ. No form name is empty.
+// for the fields where the two differ. No form name is empty. A form:"-"
+// field maps to "-": form binders skip it, so the form schema drops it.
 func formRenames(body reflect.Type) map[string]string {
 	renames := make(map[string]string)
 	for _, f := range jsonFields(body, false) {
 		name, form := fieldName(f), parts0(f.Tag.Get("form"))
-		if form != "" && form != "-" && form != name {
+		if form != "" && form != name {
 			renames[name] = form
 		}
 	}
 	return renames
 }
 
-// renamedSchema copies source with its property and required names renamed.
+// renamedSchema copies source with its property and required names renamed,
+// and without the properties that renames drops.
 func renamedSchema(source *jsonschema.Schema, renames map[string]string) jsonschema.Schema {
+	dropped := func(name string) bool { return renames[name] == "-" }
 	form := *source
 	form.Extras = maps.Clone(source.Extras)
 	form.Properties = jsonschema.NewProperties()
 	for name := range source.Properties.KeysFromOldest() {
+		if dropped(name) {
+			continue
+		}
 		wireName := cmp.Or(renames[name], name)
 		if _, duplicate := form.Properties.Get(wireName); duplicate {
 			panic("specout: duplicate form field " + wireName)
 		}
 		form.Properties.Set(wireName, source.Properties.Value(name))
 	}
-	form.Required = slices.Clone(source.Required)
+	form.Required = slices.DeleteFunc(slices.Clone(source.Required), dropped)
 	for i, name := range form.Required {
 		form.Required[i] = cmp.Or(renames[name], name)
 	}

@@ -174,6 +174,26 @@ func TestInvalidParameterDeclarationsFail(t *testing.T) {
 	type badStyle struct {
 		A string `header:"X-Value" jsonschema:"style=deepObject"`
 	}
+	// HTTP header names ignore case, so these two fields name one header.
+	type duplicateHeader struct {
+		A string `header:"X-Id"`
+		B string `header:"x-id"`
+	}
 	assert.PanicsWithValue(t, "specout: empty or duplicate query parameter q", func() { docOf(t, "GET", "/x", specout.Handler[duplicate, string]{HandlerFunc: noop}) })
+	assert.PanicsWithValue(t, "specout: empty or duplicate header parameter x-id", func() { docOf(t, "GET", "/x", specout.Handler[duplicateHeader, string]{HandlerFunc: noop}) })
 	assert.PanicsWithValue(t, "specout: field A has invalid header parameter style=deepObject", func() { docOf(t, "GET", "/x", specout.Handler[badStyle, string]{HandlerFunc: noop}) })
+}
+
+// invopop reads a backslash-escaped comma as part of the value; the parameter
+// description and style must read the tag the same way.
+func TestParameterTagsKeepEscapedCommas(t *testing.T) {
+	type request struct {
+		Q string `jsonschema:"description=Page size\\, at most 100,style=form" query:"q"`
+		B string `json:"b"                                                     jsonschema:"description=Body text\\, plain"`
+	}
+	doc := docOf(t, "POST", "/x", specout.Handler[request, string]{HandlerFunc: noop})
+	q := paramsOf(t, opOf(t, doc, "/x", "post"))["q"]
+	assert.Equal(t, "Page size, at most 100", q["description"])
+	assert.Equal(t, "form", q["style"])
+	assert.Equal(t, "Body text, plain", props(t, doc, "requestBody")["b"].(map[string]any)["description"])
 }
