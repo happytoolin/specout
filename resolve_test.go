@@ -358,6 +358,26 @@ func TestStrayPathFieldFails(t *testing.T) {
 	wantBuildErr(t, d, `path:"Id"`)
 }
 
+// Braces balance in /x/{{id}}, but no OpenAPI path template has a brace inside
+// a parameter name. Every router path reaches the same check.
+func TestBraceInParameterNameFails(t *testing.T) {
+	for name, register := range map[string]func(d *specout.Generator){
+		"document": func(d *specout.Generator) { specout.Document(d, http.MethodGet, "/x/{{id}}", okGet) },
+		"chi": func(d *specout.Generator) {
+			r := chi.NewRouter()
+			specout.Chi(d, r).Get("/x/{a{b}}", okGet)
+			require.NoError(t, specout.Chi(d, r).Adopt())
+		},
+		"gorilla": func(d *specout.Generator) { specout.Gorilla(d, gmux.NewRouter()).Get("/x/{a{b}}", okGet) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := newGen()
+			register(d)
+			wantBuildErr(t, d, "has a brace inside a path parameter name")
+		})
+	}
+}
+
 // The same tag on the matching pattern builds, and a path:"-" opt-out is not
 // a stray.
 func TestPathFieldMatchesPattern(t *testing.T) {

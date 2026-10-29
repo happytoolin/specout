@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -208,12 +209,20 @@ func (d *Generator) checkResolved(rec *routeRecord) error {
 	)
 }
 
+// templateParamRe matches one OpenAPI path template parameter, {name}.
+var templateParamRe = regexp.MustCompile(`{[^{}]*}`)
+
 // checkPathParams checks a resolved record's path parameters.
 func checkPathParams(rec *routeRecord) error {
 	// an empty parameter name (/{} ) is not a legal OpenAPI path template.
 	// chi accepts the route, so fail here instead of emitting a broken path.
 	if strings.Contains(docPath(rec.full), "{}") {
 		return fmt.Errorf("specout: %s %q has an empty path parameter {}; give it a name", rec.method, rec.pattern)
+	}
+	// /x/{{id}} and /x/{a{b}} balance their braces, and chi and gorilla accept
+	// them, but a template parameter name holds no brace.
+	if strings.ContainsAny(templateParamRe.ReplaceAllString(docPath(rec.full), ""), "{}") {
+		return fmt.Errorf("specout: %s %q has a brace inside a path parameter name", rec.method, rec.pattern)
 	}
 	// a Req field tagged path:"name" with no {name} in the pattern is a
 	// typo: the field leaves the body and the placeholder stays a plain
