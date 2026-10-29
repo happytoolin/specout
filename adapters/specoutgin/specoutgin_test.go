@@ -145,6 +145,22 @@ func TestEscapedColonRecordAfterFirstRequest(t *testing.T) {
 	assert.Empty(t, ft.Errs)
 }
 
+// After the first request, Gin's table spells a literal colon and a parameter
+// the same way, so Adopt must find the reading that is documented.
+func TestEscapedColonBesideParameterAfterFirstRequest(t *testing.T) {
+	for _, tc := range []struct{ route, target string }{
+		{`/items/:id/x\:y`, "/items/7/x:y"},
+		{`/v1/a\:b/:id`, "/v1/a:b/7"},
+	} {
+		t.Run(tc.route, func(t *testing.T) {
+			d, e := adaptertest.Generator(), gin.New()
+			specoutgin.New(d, e).Get(tc.route, specout.Handler[idReq, specout.NoContent]{HandlerFunc: noContent})
+			require.Equal(t, http.StatusNoContent, get(t, e, tc.target).Code)
+			assert.NoError(t, specoutgin.Adopt(d, e))
+		})
+	}
+}
+
 func TestRegistrationPanicLeavesNoRecord(t *testing.T) {
 	for _, tc := range []struct {
 		name, want string
