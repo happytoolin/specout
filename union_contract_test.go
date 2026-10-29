@@ -67,42 +67,21 @@ func TestUnionBranchesPreserveEnvelopeFieldsAndFixups(t *testing.T) {
 	}
 }
 
-func TestUnionBranchesCloseObjects(t *testing.T) {
+// closedUnionSchemas documents Req on POST path, with ClosedSchemas set and
+// both union branches registered, and returns the component schemas.
+func closedUnionSchemas[Req any](t *testing.T, path string) map[string]any {
+	t.Helper()
 	d := specout.New(specout.Config{Title: "t", Version: "1", ClosedSchemas: true})
 	d.Register[unionEmail]("email")
 	d.Register[unionSlack]("slack")
-	specout.Document(d, http.MethodPost, "/union", specout.Handler[unionEnvelope, specout.NoContent]{HandlerFunc: noop})
-	doc := buildDoc(t, d)
-	components := schemas(t, doc)
-	root := components["unionEnvelope"].(map[string]any)
-	assert.NotContains(t, root, "additionalProperties")
-	for _, raw := range root["oneOf"].([]any) {
-		ref := raw.(map[string]any)["$ref"].(string)
-		branch := components[strings.TrimPrefix(ref, "#/components/schemas/")].(map[string]any)
-		assert.Equal(t, false, branch["additionalProperties"])
-	}
+	specout.Document(d, http.MethodPost, path, specout.Handler[Req, specout.NoContent]{HandlerFunc: noop})
+	return schemas(t, buildDoc(t, d))
 }
 
-func TestClosedNestedUnionRootValidatesPayload(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1", ClosedSchemas: true})
-	d.Register[unionEmail]("email")
-	d.Register[unionSlack]("slack")
-	specout.Document(d, http.MethodPost, "/nested-union", specout.Handler[unionNestedHolder, specout.NoContent]{HandlerFunc: noop})
-	doc := buildDoc(t, d)
-	root := schemas(t, doc)["unionNestedHolder"].(map[string]any)
-	for _, name := range []string{"email", "slack"} {
-		child := root["properties"].(map[string]any)[name].(map[string]any)
-		assert.NotContains(t, child, "additionalProperties")
-	}
-}
-
-func TestClosedNamedUnionRootValidatesPayload(t *testing.T) {
-	d := specout.New(specout.Config{Title: "t", Version: "1", ClosedSchemas: true})
-	d.Register[unionEmail]("email")
-	d.Register[unionSlack]("slack")
-	specout.Document(d, http.MethodPost, "/named-union", specout.Handler[unionNamedHolder, specout.NoContent]{HandlerFunc: noop})
-	doc := buildDoc(t, d)
-	components := schemas(t, doc)
+// assertClosedUnion checks that the unionEnvelope root stays open, so that
+// oneOf can choose a branch, and that each branch is closed.
+func assertClosedUnion(t *testing.T, components map[string]any) {
+	t.Helper()
 	union := components["unionEnvelope"].(map[string]any)
 	assert.NotContains(t, union, "additionalProperties")
 	for _, raw := range union["oneOf"].([]any) {
@@ -110,6 +89,22 @@ func TestClosedNamedUnionRootValidatesPayload(t *testing.T) {
 		branch := components[strings.TrimPrefix(ref, "#/components/schemas/")].(map[string]any)
 		assert.Equal(t, false, branch["additionalProperties"])
 	}
+}
+
+func TestUnionBranchesCloseObjects(t *testing.T) {
+	assertClosedUnion(t, closedUnionSchemas[unionEnvelope](t, "/union"))
+}
+
+func TestClosedNestedUnionRootValidatesPayload(t *testing.T) {
+	root := closedUnionSchemas[unionNestedHolder](t, "/nested-union")["unionNestedHolder"].(map[string]any)
+	for _, name := range []string{"email", "slack"} {
+		child := root["properties"].(map[string]any)[name].(map[string]any)
+		assert.NotContains(t, child, "additionalProperties")
+	}
+}
+
+func TestClosedNamedUnionRootValidatesPayload(t *testing.T) {
+	assertClosedUnion(t, closedUnionSchemas[unionNamedHolder](t, "/named-union"))
 }
 
 func TestNestedUnionsUseDistinctBranchNames(t *testing.T) {
