@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -13,10 +14,20 @@ import (
 // Chi returns the chi binder for d on r: verb methods register handlers and
 // metadata in one step; Adopt and RequireDocumented cover existing routers.
 func Chi(d *Generator, r chi.Router) *ChiRouter {
-	if d == nil || r == nil {
+	if d == nil || nilRouter(r) {
 		panic("specout: Chi needs a generator and a chi.Router")
 	}
 	return &ChiRouter{d: d, r: r}
+}
+
+// nilRouter reports a nil router, also a nil *chi.Mux in the interface, which
+// r == nil does not catch.
+func nilRouter(r chi.Router) bool {
+	if r == nil {
+		return true
+	}
+	v := reflect.ValueOf(r)
+	return v.Kind() == reflect.Pointer && v.IsNil()
 }
 
 // ChiRouter registers specout handlers on a chi.Router. Relative patterns

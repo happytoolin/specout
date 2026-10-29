@@ -218,7 +218,9 @@ func TestReplacedChiRouteNamesTheCause(t *testing.T) {
 }
 
 func TestGorillaBadTemplatePanicsWithGorillaReason(t *testing.T) {
-	for _, pattern := range []string{"/items/{id", "items"} {
+	// "" gives an empty template on a router without a path prefix, and an
+	// empty template matches no request.
+	for _, pattern := range []string{"/items/{id", "items", ""} {
 		t.Run(pattern, func(t *testing.T) {
 			d := newGen()
 			msg := fmt.Sprint(panicValue(func() { specout.Gorilla(d, mux.NewRouter()).Get(pattern, okGet) }))
@@ -331,6 +333,7 @@ func TestBindersRejectNilArguments(t *testing.T) {
 	for name, fn := range map[string]func(){
 		"chi generator":     func() { specout.Chi(nil, chi.NewRouter()) },
 		"chi router":        func() { specout.Chi(newGen(), nil) },
+		"chi typed nil":     func() { specout.Chi(newGen(), (*chi.Mux)(nil)) },
 		"gorilla generator": func() { specout.Gorilla(nil, mux.NewRouter()) },
 		"gorilla router":    func() { specout.Gorilla(newGen(), nil) },
 		"std generator":     func() { specout.Std(nil, http.NewServeMux()) },

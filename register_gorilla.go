@@ -37,6 +37,11 @@ func (g *GorillaRouter) register(method, pattern string, rec routeRecord) {
 		if err != nil {
 			panic(fmt.Sprintf("specout: gorilla route %s %s: %v", method, pattern, err))
 		}
+		// An empty pattern on a router without a path prefix gives an empty
+		// template, which matches no request path.
+		if msg := checkOpenAPIPath(tpl); msg != "" {
+			panic(fmt.Sprintf("specout: gorilla route %s %s: %s", method, pattern, msg))
+		}
 		// gorilla folds subrouter prefixes into the route template.
 		rec.full = tpl
 		rec.catchAll = spansSegments(tpl)
