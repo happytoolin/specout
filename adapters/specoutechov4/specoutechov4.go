@@ -1,7 +1,7 @@
 // Package specoutechov4 binds specout handlers to Echo v4. Handlers stay plain
 // net/http handlers: each route copies Echo's path parameters into
 // r.PathValue before the handler runs, which echo.WrapHandler does not do in
-// v4. Adopt checks Echo's route table for routes that carry no specout
+// v4. The values are decoded, as on http.ServeMux. Adopt checks Echo's route table for routes that carry no specout
 // metadata, and Record feeds the recorder status check.
 package specoutechov4
 
@@ -9,6 +9,7 @@ import (
 	"cmp"
 	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
 	"sync/atomic"
 
@@ -71,18 +72,33 @@ func (b *Router) Handle[Req, Res any](method, path string, h specout.Handler[Req
 
 // serve runs next for one request. Echo v4 keeps path parameters on its own
 // context, so they are copied onto the request first, as Echo v5's
-// WrapHandler does.
+// WrapHandler does. Echo v4 routes on r.URL.RawPath when the request has one,
+// and then its values are still encoded: they are decoded here, as
+// http.ServeMux reports them.
 func serve(c echo.Context, next http.Handler) error {
 	r := c.Request()
 	r.Pattern = c.Path()
 	values := c.ParamValues()
+	encoded := r.URL.RawPath != ""
 	for i, name := range c.ParamNames() {
 		if i < len(values) {
-			r.SetPathValue(name, values[i])
+			r.SetPathValue(name, pathValue(values[i], encoded))
 		}
 	}
 	next.ServeHTTP(c.Response(), r)
 	return nil
+}
+
+// pathValue returns v decoded when Echo read it from the encoded path. A value
+// that does not decode stays as Echo gave it.
+func pathValue(v string, encoded bool) string {
+	if !encoded {
+		return v
+	}
+	if decoded, err := url.PathUnescape(v); err == nil {
+		return decoded
+	}
+	return v
 }
 
 // Get registers a GET route on p.

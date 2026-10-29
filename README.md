@@ -359,6 +359,11 @@ Each adapter writes the router's path syntax in OpenAPI form. For example,
 `/items/:id` becomes `/items/{id}`. Your handler reads the parameter with
 `r.PathValue("id")` on every router.
 
+The Echo v4, Gin, and Fiber adapters decode the values, as `http.ServeMux`
+does: `/users/a%40b` gives `a@b`. Echo v5 gives `a%40b`, the same value that
+Echo's own handlers get. To get `a@b`, set `UnescapePathParamValues` in
+`echo.RouterConfig`.
+
 This Gin example registers a route on a group and checks the route table:
 
 ```go

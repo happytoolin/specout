@@ -2,6 +2,11 @@
 // net/http handlers: echo.WrapHandler copies Echo's path parameters into
 // r.PathValue. Adopt checks Echo's route table for routes that carry no
 // specout metadata, and Record feeds the recorder status check.
+//
+// Echo v5 leaves a path value encoded when the request path is encoded:
+// /users/a%40b gives a%40b. To get a@b, as on http.ServeMux, set
+// echo.RouterConfig.UnescapePathParamValues. specout does not decode the
+// values itself: it cannot read that setting, and would decode them twice.
 package specoutecho
 
 import (

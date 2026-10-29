@@ -76,6 +76,32 @@ func TestHandlerSeesPathValues(t *testing.T) {
 	}
 }
 
+// Echo v5 leaves path values encoded, as Echo's own handlers see them, unless
+// the router sets UnescapePathParamValues. specout copies them as they are.
+func TestUnescapePathParamValuesDecodesPathValues(t *testing.T) {
+	for _, tc := range []struct {
+		unescape bool
+		want     string
+	}{
+		{false, "a%40b%20c"},
+		{true, "a@b c"},
+	} {
+		d := adaptertest.Generator()
+		e := echo.NewWithConfig(echo.Config{
+			Router: echo.NewRouter(echo.RouterConfig{UnescapePathParamValues: tc.unescape}),
+		})
+		specoutecho.New(d, e).Get("/users/:id", specout.Handler[struct{}, specout.NoContent]{
+			HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("X-Value", r.PathValue("id"))
+				w.WriteHeader(http.StatusNoContent)
+			},
+		})
+		w := get(t, e, "/users/a%40b%20c")
+		require.Equal(t, http.StatusNoContent, w.Code)
+		assert.Equal(t, tc.want, w.Header().Get("X-Value"), "UnescapePathParamValues=%v", tc.unescape)
+	}
+}
+
 func TestRouteMiddlewareRunsFirst(t *testing.T) {
 	d, e := adaptertest.Generator(), echo.New()
 	var order []string

@@ -97,6 +97,28 @@ func TestHandlerSeesPathValues(t *testing.T) {
 	}
 }
 
+// Echo v4 routes on the encoded path when the request has one, so its values
+// stay encoded. The handler sees them decoded, and only once, as on
+// http.ServeMux.
+func TestHandlerSeesDecodedPathValues(t *testing.T) {
+	for target, want := range map[string]string{
+		"/users/a%40b%20c": "a@b c",
+		"/users/a%2541":    "a%41",
+		"/users/plain":     "plain",
+	} {
+		d, e := adaptertest.Generator(), echo.New()
+		specoutechov4.New(d, e).Get("/users/:id", specout.Handler[struct{}, specout.NoContent]{
+			HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("X-Value", r.PathValue("id"))
+				w.WriteHeader(http.StatusNoContent)
+			},
+		})
+		w := get(t, e, target)
+		require.Equal(t, http.StatusNoContent, w.Code, target)
+		assert.Equal(t, want, w.Header().Get("X-Value"), target)
+	}
+}
+
 func TestCatchAllSeesRest(t *testing.T) {
 	for _, route := range []string{"/files/*", "/files/*rest", "/files/*/ignored"} {
 		t.Run(route, func(t *testing.T) {
