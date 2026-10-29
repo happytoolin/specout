@@ -446,6 +446,31 @@ func TestLaunchPromotedEncoderSetsTheSchema(t *testing.T) {
 	assert.Contains(t, props(t, doc, "schemaOwnStamp"), "note", "a declared MarshalJSON keeps the reflected fields")
 }
 
+// schemaInnerStamp gets MarshalJSON from its time.Time.
+type schemaInnerStamp struct{ time.Time }
+
+// schemaOuterStamp gets MarshalJSON from its own time.Time, which is
+// shallower than the time.Time in schemaInnerStamp.
+type schemaOuterStamp struct {
+	time.Time
+	schemaInnerStamp
+}
+
+func TestLaunchShallowestPromotedEncoderSetsTheSchema(t *testing.T) {
+	d := newGen()
+	specout.Document(d, http.MethodGet, "/x", specout.Get[schemaOuterStamp]{HandlerFunc: noop})
+	doc := buildDoc(t, d)
+	value := schemaOuterStamp{Time: time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)}
+	wire, err := jsonv1.Marshal(value)
+	require.NoError(t, err)
+	require.JSONEq(t, `"2026-10-29T12:00:00Z"`, string(wire), "encoding/json writes the shallowest time")
+	exportLaunchSamples(t, doc,
+		launchSample{"shallowest promoted encoder", launchResponseSchema(t, doc, "/x", "get"), value, true},
+		launchSample{"object for a promoted encoder", launchResponseSchema(t, doc, "/x", "get"), map[string]any{}, false},
+	)
+	assert.Equal(t, map[string]any{"type": "string", "format": "date-time"}, componentsSchema(t, doc, "schemaOuterStamp"))
+}
+
 // regexp.Regexp writes text through a pointer method, so the reflector would
 // read its Go fields.
 func TestLaunchPointerTextMarshalerIsAString(t *testing.T) {
