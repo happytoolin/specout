@@ -31,6 +31,7 @@ coverage.
 | Public types and registration state | `specout.go`, `handler.go`, `config.go`, `response.go` |
 | Router binding and route identity | `register_*.go`, `bind.go`, `document.go`, `routes.go` |
 | Echo, Gin, and Fiber adapters | `adapters/specoutecho`, `adapters/specoutechov4`, `adapters/specoutgin`, `adapters/specoutfiber`, `adapters/specoutfiberv2` |
+| Shared adapter code | `internal/echopath`, `internal/fiberpath` (path translation and Fiber route checks), `internal/adaptertest` (test helpers) |
 | Path normalization and route checks | `paths.go`, `stray.go`, `verify.go` |
 | Document and operation assembly | `build.go`, `operation.go`, `security.go` |
 | Parameter metadata and styles | `params.go` |
@@ -41,7 +42,7 @@ coverage.
 | Discriminated union generation | `unions.go` |
 | Response plans and status expectations | `responses.go`, `statusmap.go` |
 | Ordered JSON output and serving | `ordered.go`, `emit.go`, `serve.go` |
-| Observed HTTP status checks | `recorder/` |
+| Observed HTTP status checks | `recorder/`, `internal/hijack` (status of a hijacked connection) |
 
 Response generation and status checks use the same response plan. Change that
 plan when response precedence changes. Keep router-specific matching in the
