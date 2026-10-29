@@ -248,7 +248,7 @@ func (sr *schemaRegistry) addUnionBranch(source *jsonschema.Schema, u unionDecl,
 // is a list of variants.
 func (sr *schemaRegistry) payloadSchema(payload *jsonschema.Schema, ref string) *jsonschema.Schema {
 	t, ok := sr.payloads[payload]
-	if !ok {
+	if !ok || payload == nil {
 		return &jsonschema.Schema{Ref: ref}
 	}
 	s := variantShape(deref(t), ref)

@@ -208,7 +208,10 @@ func methodProvider(t reflect.Type, m reflect.Method) (reflect.Type, bool) {
 		}
 		provider = f.Type
 	}
-	return provider, provider != nil
+	if provider == nil {
+		return nil, false
+	}
+	return provider, true
 }
 
 // customJSON reports whether a method of t sets its JSON form or its schema.
