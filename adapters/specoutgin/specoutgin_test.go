@@ -56,10 +56,14 @@ func TestGroupRouteDocumentedAtFullPath(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, get(t, e, "/api/v1/users/7").Code)
 }
 
+// A catch-all value has no leading slash, as {filepath...} on http.ServeMux
+// gives it.
 func TestHandlerSeesPathValues(t *testing.T) {
 	for _, tc := range []struct{ route, target, name, want string }{
 		{"/users/:id", "/users/42", "id", "42"},
-		{"/files/*filepath", "/files/a/b.txt", "filepath", "/a/b.txt"},
+		{"/files/*filepath", "/files/a/b.txt", "filepath", "a/b.txt"},
+		{"/files/*filepath", "/files/", "filepath", ""},
+		{"/:dir/*filepath", "/d/a", "dir", "d"},
 	} {
 		t.Run(tc.route, func(t *testing.T) {
 			d, e := adaptertest.Generator(), gin.New()

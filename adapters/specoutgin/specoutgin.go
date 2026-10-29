@@ -55,7 +55,7 @@ func (b *Router) Handle[Req, Res any](method, p string, h specout.Handler[Req, R
 	// serves nothing, even when the caller recovers.
 	var bound atomic.Bool
 	specout.Bind(b.d, method, p, h, func(next http.Handler) string {
-		run := gate(&bound, serve(next, observed{method: method, path: documented}))
+		run := gate(&bound, serve(next, observed{method: method, path: documented}, strings.Contains(full, "*")))
 		b.r.Handle(method, p, append(slices.Clip(m), run)...)
 		return documented
 	})
@@ -122,11 +122,16 @@ type observed struct{ method, path string }
 type observedKey struct{}
 
 // serve runs next as the route's last handler. Gin keeps path parameters on
-// its own context, so they are copied onto the request first.
-func serve(next http.Handler, route observed) gin.HandlerFunc {
+// its own context, so they are copied onto the request first. The value of a
+// catch-all, Gin's last parameter, starts with a slash; the copy drops it, as
+// {path...} on http.ServeMux gives the value.
+func serve(next http.Handler, route observed, catchAll bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Set(observedKey{}, route)
-		for _, p := range c.Params {
+		for i, p := range c.Params {
+			if catchAll && i == len(c.Params)-1 {
+				p.Value = strings.TrimPrefix(p.Value, "/")
+			}
 			c.Request.SetPathValue(p.Key, p.Value)
 		}
 		next.ServeHTTP(c.Writer, c.Request)
