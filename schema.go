@@ -250,12 +250,22 @@ func dominantJSONFields(t reflect.Type) []reflect.StructField {
 	return nil
 }
 
+// ownSchema reports whether the schema of t comes from its JSONSchema method
+// or from wireSchema. The reflector then never reads the fields of t.
+func ownSchema(t reflect.Type) bool {
+	_, promoted := promotedEncoder(t)
+	return t.Implements(schemaMethodType) || bigTypes[t] != "" || writesText(t) || promoted
+}
+
 func validateAnonymousEmbeddings(t reflect.Type, checked map[reflect.Type]bool) {
 	t = deref(t)
 	if t == nil || checked[t] {
 		return
 	}
 	checked[t] = true
+	if ownSchema(t) {
+		return
+	}
 	switch t.Kind() {
 	case reflect.Array, reflect.Slice, reflect.Map:
 		validateAnonymousEmbeddings(t.Elem(), checked)

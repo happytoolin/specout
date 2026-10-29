@@ -507,6 +507,67 @@ func TestUnencodableTypesPanicClearly(t *testing.T) {
 	assert.NotPanics(t, func() { docOf(t, http.MethodGet, "/x", specout.Get[skipped]{HandlerFunc: noop}) })
 }
 
+// schemaJob declares its schema and writes its own JSON, so the encoders
+// never read its func field.
+type schemaJob struct {
+	Name string
+	Run  func()
+}
+
+func (j schemaJob) MarshalJSON() ([]byte, error) {
+	if j.Name == "" {
+		return nil, errors.New("empty job")
+	}
+	return []byte(strconv.Quote(j.Name)), nil
+}
+
+func (schemaJob) JSONSchema() *jsonschema.Schema { return &jsonschema.Schema{Type: "string"} }
+
+// schemaTextJob writes its JSON through MarshalText.
+type schemaTextJob struct {
+	Name string
+	Run  chan int
+}
+
+func (j schemaTextJob) MarshalText() ([]byte, error) {
+	if j.Name == "" {
+		return nil, errors.New("empty job")
+	}
+	return []byte(j.Name), nil
+}
+
+// schemaStampJob writes its JSON through the MarshalJSON of its time.Time.
+type schemaStampJob struct {
+	time.Time
+
+	Run func()
+}
+
+func TestOwnEncoderHidesUnencodableFields(t *testing.T) {
+	type response struct {
+		Job   schemaJob      `json:"job"`
+		Jobs  []schemaJob    `json:"jobs"`
+		Text  schemaTextJob  `json:"text"`
+		Stamp schemaStampJob `json:"stamp"`
+	}
+	var doc map[string]any
+	require.NotPanics(t, func() { doc = docOf(t, http.MethodGet, "/x", specout.Get[response]{HandlerFunc: noop}) })
+	value := response{
+		Job: schemaJob{Name: "a"}, Jobs: []schemaJob{{Name: "b"}}, Text: schemaTextJob{Name: "c"},
+		Stamp: schemaStampJob{Time: time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)},
+	}
+	wire, err := jsonv1.Marshal(value)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"job":"a","jobs":["b"],"text":"c","stamp":"2026-10-29T12:00:00Z"}`, string(wire))
+	exportLaunchSamples(t, doc,
+		launchSample{"own encoders", launchResponseSchema(t, doc, "/x", "get"), value, true},
+		launchSample{"fields for a text job", launchResponseSchema(t, doc, "/x", "get"), map[string]any{"text": map[string]any{}}, false},
+	)
+	p := props(t, doc, "response")
+	assert.Equal(t, "string", p["text"].(map[string]any)["type"])
+	assert.Equal(t, map[string]any{"type": "string", "format": "date-time"}, p["stamp"])
+}
+
 type (
 	dupA struct{ A string }
 	dupB struct{ B int }
