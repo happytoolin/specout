@@ -8,7 +8,7 @@ lintbin := "go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.
 default: lint test
 
 # run every CI and release check (Go, Python 3 and Node.js/npm required)
-check: mod-check build lint workflow-lint test race validate adversarial client-types vuln
+check: mod-check build lint nilaway workflow-lint test race validate adversarial client-types vuln
 
 # check module files and downloaded dependency integrity without changing files
 mod-check:
@@ -18,6 +18,12 @@ mod-check:
 # validate GitHub Actions workflows
 workflow-lint:
     go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
+# report nil flows that can panic at run time. Library and example code only:
+# nilaway cannot see that a testify require stops the test, so on test files
+# it reports only false positives.
+nilaway:
+    go run go.uber.org/nilaway/cmd/nilaway@v0.0.0-20260918162853-acb8859b9031 -include-pkgs=github.com/happytoolin/specout -test=false ./...
 
 # check code and tests against the current Go vulnerability database
 vuln:
@@ -37,9 +43,9 @@ validate: validation-deps
 adversarial: validation-deps
     .venv/bin/python tools/validate_adversarial.py
 
-# check all packages with the race detector
+# check all packages with the race detector, in random test order
 race:
-    go test -race ./...
+    go test -race -shuffle=on ./...
 
 # generate and compile client types for all served examples (Node.js/npm required)
 client-types:

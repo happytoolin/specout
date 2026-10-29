@@ -7,7 +7,12 @@ import (
 
 // Std returns the std-mux binder for d on mux. Patterns are absolute
 // "METHOD /path" with method tokens and wildcards; no walk needed.
-func Std(d *Generator, mux *http.ServeMux) *StdRouter { return &StdRouter{d: d, mux: mux} }
+func Std(d *Generator, mux *http.ServeMux) *StdRouter {
+	if d == nil || mux == nil {
+		panic("specout: Std needs a generator and an *http.ServeMux")
+	}
+	return &StdRouter{d: d, mux: mux}
+}
 
 // StdRouter registers specout handlers on an http.ServeMux. Patterns are
 // absolute ("METHOD /path"); no walk is needed.
@@ -30,7 +35,10 @@ func (s *StdRouter) Handle[Req, Res any](pattern string, h Handler[Req, Res]) {
 	rec.full = canonicalPath(path)
 	rec.absolute = true
 	rec.literalStars = true
-	s.d.register(rec, func(rec *routeRecord) {
+	// A path that ends in / without {$} matches every path below it, as
+	// /files/{path...} does: OpenAPI has no form for it.
+	rec.catchAll = strings.HasSuffix(path, "/")
+	s.d.addRoute(rec, func(rec *routeRecord) {
 		s.mux.Handle(pattern, rec)
 	})
 }

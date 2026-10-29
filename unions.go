@@ -35,7 +35,7 @@ func (sr *schemaRegistry) normalizeUnions() {
 	for i, j, k := 0, 0, 0; i < len(sr.order) || j < len(sr.nameOrder) || k < len(sr.inline); {
 		switch {
 		case i < len(sr.order):
-			register(sr.byType[sr.order[i]].s)
+			register(sr.order[i].s)
 			i++
 		case j < len(sr.nameOrder):
 			register(sr.byName[sr.nameOrder[j]])
@@ -45,8 +45,7 @@ func (sr *schemaRegistry) normalizeUnions() {
 			k++
 		}
 	}
-	for _, t := range sr.order {
-		e := sr.byType[t]
+	for _, e := range sr.order {
 		normalizeOneOf(e.s, sr, e.name)
 	}
 	for _, name := range sr.nameOrder {

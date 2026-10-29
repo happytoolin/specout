@@ -63,7 +63,7 @@ func strayHandler(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.S
 
 type captureT struct{ errs []string }
 
-func (c *captureT) Helper() {}
+func (*captureT) Helper() {}
 func (c *captureT) Errorf(format string, args ...any) {
 	c.errs = append(c.errs, fmt.Sprintf(format, args...))
 }

@@ -8,6 +8,9 @@ func (d *Generator) build() (*obj, error) {
 	if err := d.resolveLocked(); err != nil {
 		return nil, err
 	}
+	if err := d.checkChiMount(); err != nil {
+		return nil, err
+	}
 	if err := checkOperationIDs(d.records); err != nil {
 		return nil, err
 	}

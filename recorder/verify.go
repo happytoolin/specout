@@ -28,7 +28,15 @@ func Verify(t specout.TestingT, d *specout.Generator, rec *Recorder) {
 	for key, codes := range observed {
 		observed[key] = maps.Clone(codes)
 	}
+	unmatched := rec.unmatched
 	rec.mu.Unlock()
+
+	// Requests went through, but none reached a known route: the recorder
+	// most likely wraps middleware around the router, which hides its routes.
+	if len(observed) == 0 && unmatched > 0 && len(required) > 0 {
+		t.Errorf("recorder matched no route in %d requests; pass the router itself to recorder.New, "+
+			"and put middleware inside it", unmatched)
+	}
 
 	for key, codes := range required {
 		seen := observed[key]

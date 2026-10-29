@@ -6,12 +6,13 @@ import (
 )
 
 // strayScan collects the routes an adapter's walk reports that specout cannot
-// document. Both Adopt implementations report through it: they differ only in
-// how they ask their router for one entry at a time.
+// document. Every Adopt and CheckRoutes reports through it: they differ only
+// in how they ask their router for one entry at a time.
 type strayScan struct {
 	d       *Generator
 	skips   []SkipRule
 	unknown []string
+	seen    map[string]bool
 }
 
 // collect takes one router entry. methods is the joined method list, or "" when
@@ -29,14 +30,27 @@ func (s *strayScan) collect(pattern, methods string, h http.Handler) {
 		return
 	}
 	if methods == "" {
-		s.unknown = append(s.unknown, "? "+pattern+" (no method constraint)")
+		s.report("? " + pattern + " (no method constraint)")
 		return
 	}
 	for method := range strings.SplitSeq(methods, ",") {
 		if !s.d.lookup(method, pattern, h) {
-			s.unknown = append(s.unknown, method+" "+pattern)
+			s.report(method + " " + pattern)
 		}
 	}
+}
+
+// report names one stray once: a router table can list one route twice, and
+// a repeated name only hides the next one.
+func (s *strayScan) report(route string) {
+	if s.seen[route] {
+		return
+	}
+	if s.seen == nil {
+		s.seen = make(map[string]bool)
+	}
+	s.seen[route] = true
+	s.unknown = append(s.unknown, route)
 }
 
 func (s *strayScan) err() error {

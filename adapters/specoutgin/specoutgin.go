@@ -1,0 +1,229 @@
+// Package specoutgin binds specout handlers to Gin. Handlers stay plain
+// net/http handlers: each route copies Gin's path parameters into
+// r.PathValue before the handler runs. Adopt checks Gin's route table for
+// routes that carry no specout metadata, and Record feeds the recorder status
+// check.
+package specoutgin
+
+import (
+	"fmt"
+	"net/http"
+	"path"
+	"slices"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+	"github.com/happytoolin/specout"
+	"github.com/happytoolin/specout/recorder"
+)
+
+// Routes is what a Router registers through: *gin.Engine and *gin.RouterGroup.
+type Routes interface {
+	gin.IRoutes
+	BasePath() string
+}
+
+// Router registers specout handlers on a Gin engine or group. Each route is
+// documented at its full path, group prefix included.
+type Router struct {
+	d *specout.Generator
+	r Routes
+}
+
+// New returns the Gin binder for d on r.
+func New(d *specout.Generator, r Routes) *Router {
+	if d == nil || r == nil {
+		panic("specoutgin: New needs a generator and a *gin.Engine or *gin.RouterGroup")
+	}
+	return &Router{d: d, r: r}
+}
+
+// Handle registers h for method on p. Route middleware m runs before h.
+func (b *Router) Handle[Req, Res any](method, p string, h specout.Handler[Req, Res], m ...gin.HandlerFunc) {
+	full := joinPaths(b.r.BasePath(), p)
+	documented, err := openAPIPath(full)
+	if err != nil {
+		panic(fmt.Sprintf("specoutgin: %s %s: %v", method, full, err))
+	}
+	specout.Bind(b.d, method, p, h, func(next http.Handler) string {
+		b.r.Handle(method, p, append(slices.Clip(m), serve(next, observed{method: method, path: documented}))...)
+		return documented
+	})
+}
+
+// Get registers a GET route on p.
+func (b *Router) Get[Req, Res any](p string, h specout.Handler[Req, Res], m ...gin.HandlerFunc) {
+	b.Handle(http.MethodGet, p, h, m...)
+}
+
+// Head registers a HEAD route on p.
+func (b *Router) Head[Req, Res any](p string, h specout.Handler[Req, Res], m ...gin.HandlerFunc) {
+	b.Handle(http.MethodHead, p, h, m...)
+}
+
+// Post registers a POST route on p.
+func (b *Router) Post[Req, Res any](p string, h specout.Handler[Req, Res], m ...gin.HandlerFunc) {
+	b.Handle(http.MethodPost, p, h, m...)
+}
+
+// Put registers a PUT route on p.
+func (b *Router) Put[Req, Res any](p string, h specout.Handler[Req, Res], m ...gin.HandlerFunc) {
+	b.Handle(http.MethodPut, p, h, m...)
+}
+
+// Patch registers a PATCH route on p.
+func (b *Router) Patch[Req, Res any](p string, h specout.Handler[Req, Res], m ...gin.HandlerFunc) {
+	b.Handle(http.MethodPatch, p, h, m...)
+}
+
+// Delete registers a DELETE route on p.
+func (b *Router) Delete[Req, Res any](p string, h specout.Handler[Req, Res], m ...gin.HandlerFunc) {
+	b.Handle(http.MethodDelete, p, h, m...)
+}
+
+// Options registers an OPTIONS route on p.
+func (b *Router) Options[Req, Res any](p string, h specout.Handler[Req, Res], m ...gin.HandlerFunc) {
+	b.Handle(http.MethodOptions, p, h, m...)
+}
+
+// Trace registers a TRACE route on p.
+func (b *Router) Trace[Req, Res any](p string, h specout.Handler[Req, Res], m ...gin.HandlerFunc) {
+	b.Handle(http.MethodTrace, p, h, m...)
+}
+
+// observed is the route a request ran, as the document spells it. serve
+// stores it on the Gin context for Record.
+type observed struct{ method, path string }
+
+// observedKey types the Gin context key serve stores observed under.
+type observedKey struct{}
+
+// serve runs next as the route's last handler. Gin keeps path parameters on
+// its own context, so they are copied onto the request first.
+func serve(next http.Handler, route observed) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Set(observedKey{}, route)
+		for _, p := range c.Params {
+			c.Request.SetPathValue(p.Key, p.Value)
+		}
+		next.ServeHTTP(c.Writer, c.Request)
+	}
+}
+
+// Adopt reports the routes of e that specout cannot document: routes no
+// Router registered. Gin's Any registers one route per method, so its
+// CONNECT route is reported too. Skip the spec endpoint itself, as in
+// specout.Skip("/openapi.json").
+func Adopt(d *specout.Generator, e *gin.Engine, skips ...specout.SkipRule) error {
+	table := e.Routes()
+	routes := make([]specout.RouteKey, 0, len(table))
+	for _, ri := range table {
+		key := specout.RouteKey{Method: ri.Method, Path: tablePath(ri.Path)}
+		// Gin turns \: into : in its tree on the first request, so after it
+		// /a:b may be the literal /a\:b. Take that reading when only it is
+		// documented.
+		if strings.Contains(ri.Path, ":") && !strings.Contains(ri.Path, `\:`) {
+			literal := specout.RouteKey{Method: ri.Method, Path: tablePath(strings.ReplaceAll(ri.Path, ":", `\:`))}
+			if d.CheckRoutes([]specout.RouteKey{key}) != nil && d.CheckRoutes([]specout.RouteKey{literal}) == nil {
+				key = literal
+			}
+		}
+		routes = append(routes, key)
+	}
+	return d.CheckRoutes(routes, skips...)
+}
+
+// RequireDocumented fails the test when e holds routes specout cannot
+// document.
+func RequireDocumented(t specout.TestingT, d *specout.Generator, e *gin.Engine, skips ...specout.SkipRule) {
+	t.Helper()
+	if err := Adopt(d, e, skips...); err != nil {
+		t.Errorf("%v", err)
+	}
+}
+
+// Record returns Gin middleware that reports the status of every matched
+// route to rec, for recorder.Verify. Gin copies middleware into a route when
+// the route is registered, so call e.Use(Record(rec)) before any route. Gin
+// routes before it runs middleware, so a response that other middleware
+// writes, such as a 401, still counts for its route.
+func Record(rec *recorder.Recorder) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Next()
+		// A specout route names itself. FullPath loses Gin's \: escapes after
+		// the first request, so it is the fallback for other routes and for
+		// responses that middleware wrote before the handler.
+		if v, ok := c.Get(observedKey{}); ok {
+			if route, ok := v.(observed); ok {
+				rec.Observe(route.method, route.path, c.Writer.Status())
+				return
+			}
+		}
+		if full := c.FullPath(); full != "" {
+			rec.Observe(c.Request.Method, tablePath(full), c.Writer.Status())
+		}
+	}
+}
+
+// joinPaths is Gin's own join of a group base path and a route path: clean
+// the result, but keep a trailing slash the route asked for.
+func joinPaths(base, rel string) string {
+	if rel == "" {
+		return base
+	}
+	full := path.Join(base, rel)
+	if strings.HasSuffix(rel, "/") && !strings.HasSuffix(full, "/") {
+		return full + "/"
+	}
+	return full
+}
+
+// tablePath translates a path from Gin's route table. A path Handle could not
+// have registered stays as Gin spells it, so a report still names it.
+func tablePath(p string) string {
+	full, err := openAPIPath(p)
+	if err != nil {
+		return p
+	}
+	return full
+}
+
+// openAPIPath translates a Gin route path into OpenAPI syntax: /users/:id
+// becomes /users/{id}, a trailing *path becomes the catch-all {path...}, and
+// an escaped \: is a literal colon. A parameter name runs to the next slash,
+// as in Gin's findWildcard.
+func openAPIPath(p string) (string, error) {
+	var b strings.Builder
+	for i := 0; i < len(p); i++ {
+		switch c := p[i]; c {
+		case '\\':
+			if i+1 == len(p) || p[i+1] != ':' {
+				return "", fmt.Errorf("gin escapes only a colon, as in \\:, in %q", p)
+			}
+			b.WriteByte(':')
+			i++
+		case ':', '*':
+			end := strings.IndexByte(p[i:], '/')
+			if end < 0 {
+				end = len(p) - i
+			}
+			name := p[i+1 : i+end]
+			if name == "" || strings.ContainsAny(name, `{}:*\`) {
+				return "", fmt.Errorf("parameter name %q cannot be an OpenAPI parameter", name)
+			}
+			if c == '*' {
+				if i+end != len(p) {
+					return "", fmt.Errorf("catch-all *%s must end the path", name)
+				}
+				name += "..."
+			}
+			b.WriteString("{" + name + "}")
+			i += end - 1
+		case '{', '}':
+			return "", fmt.Errorf("literal braces in %q read as OpenAPI parameters", p)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String(), nil
+}

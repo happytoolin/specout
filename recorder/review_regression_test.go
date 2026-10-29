@@ -2,6 +2,8 @@ package recorder_test
 
 import (
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -98,4 +100,84 @@ func TestImplicitHeadCountsForGetHandler(t *testing.T) {
 	rec := recorder.New(r)
 	serve(rec, http.MethodHead, "/x")
 	assert.Empty(t, verify(d, rec))
+}
+
+func TestChiMountRootRouteRecordsTheDocumentedPath(t *testing.T) {
+	d, r := gen(), chi.NewRouter()
+	r.Route("/users", func(r chi.Router) {
+		specout.Chi(d, r).Get("/", nc(hit204))
+	})
+	require.NoError(t, specout.Chi(d, r).Adopt())
+	for _, target := range []string{"/users", "/users/"} {
+		t.Run(target, func(t *testing.T) {
+			rec := recorder.New(r)
+			serve(rec, http.MethodGet, target)
+			assert.Empty(t, verify(d, rec))
+		})
+	}
+}
+
+func TestChiUnmatchedMountStubIsNotAnOperation(t *testing.T) {
+	d, r := gen(), chi.NewRouter()
+	r.Route("/api", func(r chi.Router) {
+		specout.Chi(d, r).Get("/x", nc(hit204))
+	})
+	require.NoError(t, specout.Chi(d, r).Adopt())
+	rec := recorder.New(r)
+	serve(rec, http.MethodGet, "/api")
+	serve(rec, http.MethodGet, "/api/x")
+	assert.Empty(t, verify(d, rec))
+}
+
+func TestVerifyNamesARouterHiddenByMiddleware(t *testing.T) {
+	d, r := gen(), chi.NewRouter()
+	b := specout.Chi(d, r)
+	b.Get("/x", nc(hit204))
+	require.NoError(t, b.Adopt())
+	wrapped := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) { r.ServeHTTP(w, req) })
+	rec := recorder.New(wrapped)
+	serve(rec, http.MethodGet, "/x")
+	assert.NotEmpty(t, findErr(verify(d, rec), "recorder matched no route in 1 requests"))
+}
+
+func TestObserveFeedsVerify(t *testing.T) {
+	d := gen()
+	specout.Document(d, http.MethodGet, "/items/{id}", nc(hit204))
+	rec := recorder.New(nil, specout.Skip("/openapi.json"))
+	rec.Observe(http.MethodGet, "/items/{id}", http.StatusNoContent)
+	rec.Observe(http.MethodGet, "/openapi.json", http.StatusOK)
+	assert.Empty(t, verify(d, rec))
+	assert.Panics(t, func() { serve(rec, http.MethodGet, "/items/1") })
+}
+
+// A redirect the router makes, to the cleaned path or to the path with its
+// trailing slash added, is not the route's response.
+func TestRouterRedirectsAreNotRouteResponses(t *testing.T) {
+	for _, tc := range []struct{ name, target string }{
+		{"std clean", "/a/../items"},
+		{"std slash", "/dir"},
+		{"gorilla clean", "/a/../items"},
+		{"gorilla strict slash", "/dir"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := gen()
+			var router http.Handler
+			if strings.HasPrefix(tc.name, "std") {
+				r := http.NewServeMux()
+				specout.Std(d, r).Get("/items", nc(hit204))
+				specout.Std(d, r).Get("/dir/", nc(hit204))
+				router = r
+			} else {
+				r := mux.NewRouter().StrictSlash(true)
+				specout.Gorilla(d, r).Get("/items", nc(hit204))
+				specout.Gorilla(d, r).Get("/dir/", nc(hit204))
+				router = r
+			}
+			rec := recorder.New(router)
+			w := httptest.NewRecorder()
+			rec.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, tc.target, http.NoBody))
+			require.Contains(t, []int{http.StatusMovedPermanently, http.StatusTemporaryRedirect}, w.Code)
+			assert.Empty(t, findErr(verify(d, rec), "does not declare"))
+		})
+	}
 }

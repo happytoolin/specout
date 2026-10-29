@@ -3,6 +3,8 @@ package specout
 import (
 	"fmt"
 	"net/http"
+	"regexp/syntax"
+	"slices"
 	"strings"
 
 	"github.com/gorilla/mux"
@@ -10,7 +12,12 @@ import (
 
 // Gorilla returns the gorilla binder for d on r. Templates are absolute;
 // {id} and {id:re...} params map straight to OpenAPI path params.
-func Gorilla(d *Generator, r *mux.Router) *GorillaRouter { return &GorillaRouter{d: d, r: r} }
+func Gorilla(d *Generator, r *mux.Router) *GorillaRouter {
+	if d == nil || r == nil {
+		panic("specout: Gorilla needs a generator and a *mux.Router")
+	}
+	return &GorillaRouter{d: d, r: r}
+}
 
 // GorillaRouter registers specout handlers on a gorilla/mux router. Templates
 // are absolute, so Register needs no walk.
@@ -23,11 +30,16 @@ func (g *GorillaRouter) register(method, pattern string, rec routeRecord) {
 	rec.method, rec.pattern = method, pattern
 	rec.absolute = true
 	rec.literalStars = true
-	g.d.register(rec, func(rec *routeRecord) {
-		// gorilla folds subrouter prefixes into the route template.
-		if tpl, err := g.r.Handle(pattern, rec).Methods(method).GetPathTemplate(); err == nil {
-			rec.full = tpl
+	g.d.addRoute(rec, func(rec *routeRecord) {
+		// gorilla keeps a route with a bad template and never matches it, so
+		// fail with gorilla's reason rather than document a dead path.
+		tpl, err := g.r.Handle(pattern, rec).Methods(method).GetPathTemplate()
+		if err != nil {
+			panic(fmt.Sprintf("specout: gorilla route %s %s: %v", method, pattern, err))
 		}
+		// gorilla folds subrouter prefixes into the route template.
+		rec.full = tpl
+		rec.catchAll = spansSegments(tpl)
 	})
 }
 
@@ -78,14 +90,21 @@ func (g *GorillaRouter) Adopt(skips ...SkipRule) error {
 	s := strayScan{d: g.d, skips: skips}
 	err := g.r.Walk(func(route *mux.Route, _ *mux.Router, _ []*mux.Route) error {
 		// A route with no handler is a PathPrefix/Subrouter mount, not an
-		// endpoint: skip it like chi skips Mount stubs.
+		// endpoint: skip it like chi skips Mount stubs. A handler that is a
+		// router is a mount too; Walk visits its routes next.
 		h := route.GetHandler()
-		if h == nil {
+		if _, mounted := h.(*mux.Router); h == nil || mounted {
 			return nil
 		}
+		if err := route.GetError(); err != nil {
+			return fmt.Errorf("specout: gorilla route: %w", err)
+		}
+		// A route without a path matcher, such as a CORS preflight on
+		// Methods("OPTIONS") alone, serves every path. Report it as *, which
+		// Skip("*") matches, instead of stopping the walk.
 		tpl, err := route.GetPathTemplate()
 		if err != nil {
-			return fmt.Errorf("specout: read route template: %w", err)
+			tpl = "*"
 		}
 		methods, err := route.GetMethods()
 		if err != nil {
@@ -98,6 +117,45 @@ func (g *GorillaRouter) Adopt(skips ...SkipRule) error {
 		return fmt.Errorf("specout: walk gorilla router: %w", err)
 	}
 	return s.err()
+}
+
+// spansSegments reports a template parameter whose regex can match a slash,
+// as {path:.*} does. Such a parameter spans path segments, which an OpenAPI
+// path parameter cannot, so the route is a catch-all like chi's /*.
+func spansSegments(tpl string) bool {
+	for _, m := range pathParamRe.FindAllStringSubmatch(tpl, -1) {
+		if re, ok := strings.CutPrefix(m[2], ":"); ok && matchesSlash(re) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesSlash reports whether the regex can consume a slash anywhere.
+func matchesSlash(re string) bool {
+	tree, err := syntax.Parse(re, syntax.Perl)
+	if err != nil {
+		return false // gorilla has already rejected a regex it cannot compile
+	}
+	return regexpHasSlash(tree)
+}
+
+func regexpHasSlash(re *syntax.Regexp) bool {
+	switch re.Op {
+	case syntax.OpAnyChar, syntax.OpAnyCharNotNL:
+		return true
+	case syntax.OpLiteral:
+		return slices.Contains(re.Rune, '/')
+	case syntax.OpCharClass:
+		for i := 0; i+1 < len(re.Rune); i += 2 {
+			if re.Rune[i] <= '/' && '/' <= re.Rune[i+1] {
+				return true
+			}
+		}
+		return false
+	default:
+		return slices.ContainsFunc(re.Sub, regexpHasSlash)
+	}
 }
 
 // RequireDocumented fails the test when the gorilla router holds endpoint

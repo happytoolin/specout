@@ -3,6 +3,7 @@ package specout_test
 import (
 	"bytes"
 	"encoding/json"
+	"log"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -194,4 +195,14 @@ func paramsOf(t *testing.T, op map[string]any) map[string]map[string]any {
 		out[p["name"].(string)] = p
 	}
 	return out
+}
+
+// captureLog sends the standard logger to a buffer until the test ends.
+func captureLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+	return &buf
 }

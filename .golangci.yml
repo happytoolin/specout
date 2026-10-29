@@ -41,6 +41,60 @@ linters:
     # canonicalheader panics on go1.27 generics
     - canonicalheader
   settings:
+    govet:
+      # every analyzer, nilness and shadow included. fieldalignment would
+      # reorder structs by size and break their reading order.
+      enable-all: true
+      disable:
+        - fieldalignment
+    staticcheck:
+      checks: ["all"]
+    gocritic:
+      enabled-tags: [diagnostic, style, experimental, opinionated]
+      disabled-checks:
+        # nonamedreturns forbids what this check asks for
+        - unnamedResult
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+    revive:
+      enable-all-rules: true
+      rules:
+        # another linter here already enforces these, with this file's limits:
+        # lll, mnd and goconst, gocognit, cyclop, funlen, errcheck
+        - name: line-length-limit
+          disabled: true
+        - name: add-constant
+          disabled: true
+        - name: cognitive-complexity
+          disabled: true
+        - name: cyclomatic
+          disabled: true
+        - name: function-length
+          disabled: true
+        - name: unhandled-error
+          disabled: true
+        # nonamedreturns forbids what this rule asks for
+        - name: confusing-results
+          disabled: true
+        # the OpenAPI mirror types are public structs by design
+        - name: max-public-structs
+          disabled: true
+        # exhaustive checks enum switches; a switch over conditions needs no
+        # default
+        - name: enforce-switch-style
+          disabled: true
+        # anonymous structs are the clearest test-table rows
+        - name: nested-structs
+          disabled: true
+        # an internal helper may take a bool where two functions would repeat
+        # one body
+        - name: flag-parameter
+          disabled: true
+        # v, _ := x.(T) is a checked assertion that wants the zero value
+        - name: unchecked-type-assertion
+          arguments:
+            - acceptIgnoredAssertionResult: true
     cyclop:
       # the reflect-driven field walks and the response planner are branchy by
       # nature; 20 is the ceiling before a function has to split
@@ -60,6 +114,11 @@ linters:
       # a reflect.Kind switch is not an enum, so a default is the signifier for
       # the "every other kind" case
       default-signifies-exhaustive: true
+    wrapcheck:
+      # specout errors already say "specout:", and the adapter packages pass
+      # them on so callers can match *specout.StrayError
+      ignore-package-globs:
+        - github.com/happytoolin/specout*
   exclusions:
     rules:
       # tests: fixture literals, table rows and status codes are the readable
@@ -70,6 +129,12 @@ linters:
           - funlen
           - goconst
           - mnd
+      # tests: a fixture may carry a tag the encoder ignores, and a failed
+      # assertion on a decoded document panics, which fails the test
+      - path: _test.go
+        linters:
+          - revive
+        text: "^(struct-tag|unchecked-type-assertion):"
       # the examples mirror published documents: their type names, struct tags,
       # status codes and data literals are the published ones
       - path: ^examples/
@@ -83,12 +148,21 @@ linters:
         linters:
           - revive
         text: var-naming
+      - path: ^examples/
+        linters:
+          - staticcheck
+        text: "^ST1003:"
       # the demo app is sample code: its long inline descriptions and its
       # literal limits are the content
       - path: ^internal/demo/
         linters:
           - lll
           - mnd
+      # examplekit.Run is each example's main body, so it may exit
+      - path: ^internal/examplekit/
+        linters:
+          - revive
+        text: "^deep-exit:"
       # an example main prints its own URL: that is the demo's whole output
       - path: ^cmd/
         linters:

@@ -129,6 +129,9 @@ func collectBodyFields(
 }
 
 func dominantBodyField(fields []bodyFieldCandidate) (bodyFieldCandidate, bool) {
+	if len(fields) == 0 {
+		return bodyFieldCandidate{}, false
+	}
 	winner, unique := fields[0], true
 	for _, field := range fields[1:] {
 		// Shallower fields win; an explicit JSON name breaks a depth tie.

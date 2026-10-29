@@ -423,3 +423,30 @@ func TestSchemaNamePointerOverridesAreDeterministic(t *testing.T) {
 		assert.NotContains(t, schemas(t, doc), "Previous")
 	}
 }
+
+// A broken spec builds once, not once per request, and its 500 names no route.
+// Adopt changes the build input, so the next request builds again.
+func TestServeKeepsBuildErrorAndHidesIt(t *testing.T) {
+	logs := captureLog(t)
+	d, r := newGen(), chi.NewRouter()
+	r.Route("/api", func(r chi.Router) {
+		specout.Chi(d, r).Get("/secret", okGet)
+	})
+	serve := func() *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		d.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/openapi.json", http.NoBody))
+		return w
+	}
+	for range 3 {
+		w := serve()
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.NotContains(t, w.Body.String(), "secret")
+	}
+	assert.Equal(t, 1, strings.Count(logs.String(), "never resolved"), "one build, one log line: %s", logs.String())
+	wantBuildErr(t, d, "never resolved")
+
+	require.NoError(t, specout.Chi(d, r).Adopt())
+	w := serve()
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), "/api/secret")
+}

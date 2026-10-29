@@ -15,7 +15,7 @@ import (
 // names components.
 type schemaRegistry struct {
 	byType    map[reflect.Type]*schemaEntry
-	order     []reflect.Type
+	order     []*schemaEntry                // byType values, in registration order
 	byName    map[string]*jsonschema.Schema // hoisted $defs with no Go type
 	nameOrder []string
 	inline    []*jsonschema.Schema // parameter and media-specific schemas outside components
@@ -59,7 +59,7 @@ func (sr *schemaRegistry) refFor(t reflect.Type) string {
 
 	e := &schemaEntry{name: sr.claimName(t)}
 	sr.byType[t] = e
-	sr.order = append(sr.order, t)
+	sr.order = append(sr.order, e)
 
 	r := &jsonschema.Reflector{
 		Anonymous:                 true,
@@ -228,8 +228,7 @@ func (sr *schemaRegistry) schemaObjs() *obj {
 		return newObj()
 	}
 	schemas := newObj()
-	for _, t := range sr.order {
-		e := sr.byType[t]
+	for _, e := range sr.order {
 		schemas.set(e.name, e.s)
 	}
 	// hoisted $defs with no Go type: emitted after the typed components

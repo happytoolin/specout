@@ -27,6 +27,13 @@ type Generator struct {
 	nameOverrides map[reflect.Type]string
 
 	specJSON []byte
+	// outer is the outermost chi router of a spec request, for checkChiMount.
+	outer routeSource
+	// inputs counts changes to what a build reads. A failed build keeps its
+	// error, and the count it ran at, until the next change.
+	inputs   int
+	buildErr error
+	errAt    int
 }
 
 // New returns a Generator that collects routes for cfg. It is safe for
@@ -40,11 +47,13 @@ func New(cfg Config) *Generator {
 }
 
 // mustBeOpen panics when the spec was already built, so no registration can
-// slip into a frozen document. Caller holds d.mu.
+// slip into a frozen document. Every caller then changes a build input, so it
+// also clears a kept build error. Caller holds d.mu.
 func (d *Generator) mustBeOpen() {
 	if d.specJSON != nil {
 		panic("specout: registration after the spec was built")
 	}
+	d.inputs++
 }
 
 // Register declares T a union variant under name, for oneof_type tags on

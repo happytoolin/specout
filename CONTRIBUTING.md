@@ -7,23 +7,27 @@ coverage.
 ## Follow one route
 
 1. `Handler[Req, Res]` holds the types and operation metadata.
-2. A router adapter creates a `routeRecord`. `Document` records routes that use
+2. A router adapter creates a `routeRecord`. The Echo, Gin, and Fiber adapters
+   in `adapters/` use the exported `Bind`. `Document` records routes that use
    other routers.
 3. `Adopt` checks a live router for undocumented routes. Chi also uses the router
-   walk to resolve group and mount prefixes.
+   walk to resolve group and mount prefixes. The adapters in `adapters/` pass
+   their route tables to `CheckRoutes`.
 4. The first `WriteJSON` or `ServeHTTP` call resolves routes and builds operations.
    Each operation adds parameters, a request body, and responses.
 5. The schema registry reflects types and collects components. It resolves union
    variants before it assigns names to generated union branches.
 6. A successful build stores the JSON document. That stored document also marks
-   the generator as frozen. A failed build can be retried.
+   the generator as frozen. A failed build keeps its error until a registration
+   or an `Adopt` changes the input, then it can run again.
 
 ## Where to change code
 
 | Area | Files |
 | --- | --- |
 | Public types and registration state | `specout.go`, `handler.go`, `config.go`, `response.go` |
-| Router binding and route identity | `register_*.go`, `document.go`, `routes.go` |
+| Router binding and route identity | `register_*.go`, `bind.go`, `document.go`, `routes.go` |
+| Echo, Gin, and Fiber adapters | `adapters/specoutecho`, `adapters/specoutechov4`, `adapters/specoutgin`, `adapters/specoutfiber`, `adapters/specoutfiberv2` |
 | Path normalization and route checks | `paths.go`, `stray.go`, `verify.go` |
 | Document and operation assembly | `build.go`, `operation.go`, `security.go` |
 | Parameter metadata and styles | `params.go` |
@@ -44,8 +48,16 @@ and HEAD requests.
 ## Check a change
 
 Run `go test ./...` during development. Run `just check` before submitting a
-change. It includes race checks, generated schema validation, invalid payload
-checks, client type compilation, and vulnerability scans.
+change. It includes race checks in random test order, generated schema
+validation, invalid payload checks, client type compilation, and vulnerability
+scans.
+
+`just lint` runs golangci-lint with every linter enabled. The config lists each
+disabled linter or rule with its reason; a `nolint` comment must name the
+linter and give a reason. `just nilaway` runs [NilAway](https://github.com/uber-go/nilaway)
+on library and example code, and fails on any nil flow that can panic. Fix the
+code so the flow is guarded. NilAway has no suppression comment. It skips test
+files, because it cannot see that a testify `require` call stops the test.
 
 Keep regression tests when simplifying code. Check the emitted document as well
 as the Go values: JSON field names, nullability, required fields, and response

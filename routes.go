@@ -10,11 +10,10 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// routeSource is the unexported seam adapters implement: walk reports every
-// (method, canonical pattern, handler) the router can serve. In-repo
-// adapters share it; an exported hook waits for an out-of-repo router that
-// composes prefixes invisibly (echo, fiber, gin use absolute patterns and
-// Document instead).
+// routeSource is the unexported seam the chi binder implements: walk reports
+// every (method, canonical pattern, handler) the router can serve, so relative
+// group patterns resolve at build time. Routers that report full paths at
+// registration (echo, gin, fiber) use the exported Bind instead.
 type routeSource interface {
 	walk(fn func(method, pattern string, h http.Handler))
 }
@@ -26,8 +25,10 @@ type routeRecord struct {
 	method          string
 	pattern         string // as passed at registration
 	full            string // resolved canonical path; absolute sources set it here
-	absolute        bool   // std mux, gorilla, Document: full is final
-	literalStars    bool   // std mux and gorilla treat stars outside parameters literally
+	absolute        bool   // std mux, gorilla, Bind, Document: full is final
+	literalStars    bool   // std mux, gorilla and Bind treat stars outside parameters literally
+	byPath          bool   // Bind: the router table shows method and path, never the handler
+	catchAll        bool   // gorilla: a parameter regex can match a slash
 	req, res        reflect.Type
 	responses       []Response
 	tags            []string
@@ -45,11 +46,11 @@ type routeRecord struct {
 
 // ServeHTTP preserves the original handler while giving each registration a
 // distinct identity that router walks retain, including through chi middleware.
-func (r *routeRecord) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	r.fn(w, req)
+func (rec *routeRecord) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	rec.fn(w, r)
 }
 
-func (d *Generator) register(rec routeRecord, bind func(*routeRecord)) {
+func (d *Generator) addRoute(rec routeRecord, bind func(*routeRecord)) {
 	if rec.fn == nil {
 		panic("specout: nil HandlerFunc registered for " + rec.method + " " + rec.pattern)
 	}
@@ -65,8 +66,8 @@ func (d *Generator) register(rec routeRecord, bind func(*routeRecord)) {
 	d.records = append(d.records, &rec)
 }
 
-// lookup checks bound registration identity or an explicit Document declaration.
-// Manual declarations are authoritative for their absolute method and path.
+// lookup checks bound registration identity, or a Bind or Document record by
+// its absolute method and path: their routers never hand back the handler.
 func (d *Generator) lookup(method, pattern string, h http.Handler) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -75,7 +76,7 @@ func (d *Generator) lookup(method, pattern string, h http.Handler) bool {
 		return !rec.absolute || canonicalPath(rec.full) == pattern
 	}
 	for _, rec := range d.records {
-		if rec.owner == nil && rec.method == method && canonicalPath(rec.full) == pattern {
+		if (rec.owner == nil || rec.byPath) && rec.method == method && canonicalPath(rec.full) == pattern {
 			return true
 		}
 	}
@@ -90,6 +91,7 @@ func (d *Generator) addSource(s routeSource) {
 		return
 	}
 	d.sources = append(d.sources, s)
+	d.inputs++
 }
 
 // recOf pulls the metadata fields off a Handler into a routeRecord. Every
@@ -116,9 +118,9 @@ func (d *Generator) resolveLocked() error {
 
 // walkHits collects distinct paths by registration identity. Unknown handler
 // values are ignored here and reported by Adopt, without reflection assumptions.
-func (d *Generator) walkHits() map[*routeRecord][]string {
+func (d *Generator) walkHits(sources []routeSource) map[*routeRecord][]string {
 	hits := make(map[*routeRecord][]string)
-	for _, src := range d.sources {
+	for _, src := range sources {
 		src.walk(func(method, pattern string, h http.Handler) {
 			rec, ok := h.(*routeRecord)
 			if !ok || rec == nil || rec.owner != d || rec.method != method {
@@ -136,7 +138,7 @@ func (d *Generator) walkHits() map[*routeRecord][]string {
 // Re-walk resolved records too: status queries do not freeze the router, so a
 // mount added after a query must not silently leave the earlier path in place.
 func (d *Generator) pairPaths() error {
-	hits := d.walkHits()
+	hits := d.walkHits(d.sources)
 	for _, rec := range d.records {
 		if rec.absolute {
 			continue
@@ -167,6 +169,13 @@ func (d *Generator) validateRecords() error {
 	for _, rec := range d.records {
 		// unresolved: name the pattern
 		if rec.full == "" {
+			if len(d.sources) > 0 {
+				return fmt.Errorf(
+					"specout: %s %q is not served by any adopted router; a later route with the "+
+						"same method and path replaced it, or its router is not under the one passed to Adopt",
+					rec.method, rec.pattern,
+				)
+			}
 			return fmt.Errorf(
 				"specout: %s %q never resolved; adopt the outermost router "+
 					"(Adopt) or use Document",
@@ -224,13 +233,13 @@ func (d *Generator) validateRecords() error {
 // Routes implements chi.Routes. The generator has no subroutes, so chi.Walk
 // stops at a mounted spec instead of reporting its ten all-method mount paths
 // as strays. The four chi.Routes methods exist only for that interface.
-func (d *Generator) Routes() []chi.Route { return nil }
+func (*Generator) Routes() []chi.Route { return nil }
 
 // Middlewares implements chi.Routes. A Generator has none.
-func (d *Generator) Middlewares() chi.Middlewares { return nil }
+func (*Generator) Middlewares() chi.Middlewares { return nil }
 
 // Match implements chi.Routes. A Generator matches nothing.
-func (d *Generator) Match(*chi.Context, string, string) bool { return false }
+func (*Generator) Match(*chi.Context, string, string) bool { return false }
 
 // Find implements chi.Routes. A Generator finds nothing.
-func (d *Generator) Find(*chi.Context, string, string) string { return "" }
+func (*Generator) Find(*chi.Context, string, string) string { return "" }

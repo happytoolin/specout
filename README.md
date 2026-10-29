@@ -7,8 +7,8 @@ request lifecycle.
 
 Generate OpenAPI from Go types. Keep your existing HTTP handlers.
 
-specout supports `net/http`, chi, and gorilla/mux. You can keep your router and
-middleware.
+specout supports `net/http`, chi, gorilla/mux, Echo, Gin, and Fiber. You can
+keep your router and middleware.
 
 > **Experimental**
 >
@@ -56,8 +56,8 @@ that contract.
 | Feature | Support |
 |---|---|
 | Document format | OpenAPI 3.1 and JSON Schema 2020-12. |
-| Router adapters | `http.ServeMux`, chi, and gorilla/mux. |
-| Other routers | Use `specout.Document` for metadata. Register handlers with your router. |
+| Router adapters | `http.ServeMux`, chi, gorilla/mux, Echo v4 and v5, Gin, and Fiber v2 and v3. |
+| Other routers | Use `specout.Bind` to write a small adapter, or `specout.Document` for metadata only. |
 | Request parameters | Path, query, header, and cookie parameters. |
 | Request bodies | JSON, binary files, multipart uploads, and custom media types. |
 | Response contracts | Status codes, headers, media types, shared errors, and responses without a body. |
@@ -66,10 +66,9 @@ that contract.
 | Authentication docs | Bearer tokens, API keys, OAuth 2.0, and OpenID Connect. Your middleware checks credentials. |
 | Route metadata | Summaries, descriptions, tags, operation IDs, and deprecation. |
 | Document output | Serve JSON over HTTP or export it with `WriteJSON`. The output has a stable order. |
-| Route documentation checks | chi and gorilla/mux can report routes that have no docs. |
+| Route documentation checks | chi, gorilla/mux, Echo, Gin, and Fiber can report routes that have no docs. |
 | Response status checks | The optional `recorder` package checks statuses from HTTP tests with supported routers. It does not check response bodies. |
 | Automatic parsing and validation | Not provided. Your handlers or middleware do this. |
-| Echo and Fiber adapters | Not available yet. See [future router support](#future-router-support). |
 
 ## Install
 
@@ -337,21 +336,52 @@ for code examples.
 
 ## Use your router
 
-Use `specout.Std` with `http.ServeMux`. Use `specout.Chi` with chi. Use
-`specout.Gorilla` with gorilla/mux.
+| Router | Adapter | Package |
+|---|---|---|
+| `http.ServeMux` | `specout.Std` | `github.com/happytoolin/specout` |
+| chi | `specout.Chi` | `github.com/happytoolin/specout` |
+| gorilla/mux | `specout.Gorilla` | `github.com/happytoolin/specout` |
+| Echo v5 | `specoutecho.New` | `github.com/happytoolin/specout/adapters/specoutecho` |
+| Echo v4 | `specoutechov4.New` | `github.com/happytoolin/specout/adapters/specoutechov4` |
+| Gin | `specoutgin.New` | `github.com/happytoolin/specout/adapters/specoutgin` |
+| Fiber v3 | `specoutfiber.New` | `github.com/happytoolin/specout/adapters/specoutfiber` |
+| Fiber v2 | `specoutfiberv2.New` | `github.com/happytoolin/specout/adapters/specoutfiberv2` |
+
+The Echo, Gin, and Fiber adapters are separate packages. The root package does
+not import those frameworks.
 
 With chi, call `Adopt` on the outermost router after you register the routes.
-This resolves paths from route groups and mounted routers.
+This resolves paths from route groups and mounted routers. When the document is
+served through chi, the build fails if an adopted router is mounted under a
+prefix that no server URL declares.
 
-With other routers, register the routes separately. Use `specout.Document` to
-record their API contracts.
+Each adapter writes the router's path syntax in OpenAPI form. For example,
+`/items/:id` becomes `/items/{id}`. Your handler reads the parameter with
+`r.PathValue("id")` on every router.
 
-### Future router support
+This Gin example registers a route on a group and checks the route table:
 
-We are interested in adding adapters for Echo, Fiber, and other routers.
-Community demand will guide this work.
+```go
+doc := specout.New(specout.Config{Title: "Inventory API", Version: "1.0.0"})
+engine := gin.New()
+routes := specoutgin.New(doc, engine.Group("/v1"))
+routes.Get("/items/:id", specout.Handler[getItemRequest, item]{
+	HandlerFunc: getItem,
+	Summary:     "Get an item",
+})
+engine.GET("/openapi.json", gin.WrapH(doc))
 
-Request router support in the [issue tracker](https://github.com/happytoolin/specout/issues).
+if err := specoutgin.Adopt(doc, engine, specout.Skip("/openapi.json")); err != nil {
+	log.Fatal(err)
+}
+```
+
+With other routers, use `specout.Bind` to register and record each route. Use
+`specout.Document` when the router registers the handler and you only record
+the API contract.
+
+Request support for another router in the
+[issue tracker](https://github.com/happytoolin/specout/issues).
 
 ## Serve or export the document
 
@@ -361,15 +391,21 @@ order.
 Register all routes before you call `ServeHTTP` or `WriteJSON`. After a successful
 document build, you cannot add routes.
 
+If the build fails, `WriteJSON` returns the error. `ServeHTTP` returns `500`
+without the error text, and it writes the error to the standard `log` package
+once.
+
 ## Check the API docs
 
-With chi and gorilla/mux, tests can find routes that have no documentation.
+With chi, gorilla/mux, Echo, Gin, and Fiber, tests can find routes that have no
+documentation.
 
 `http.ServeMux` cannot list its routes. Use `specout.Std` to register each route
 that needs documentation.
 
 The optional `recorder` package can compare response statuses from HTTP tests
-with the declared statuses. It does not check response bodies.
+with the declared statuses. It does not check response bodies. With Echo, Gin,
+and Fiber, install the adapter's `Record` middleware.
 
 ## More information
 
@@ -386,13 +422,15 @@ Feedback and contributions are welcome. More router adapters are also welcome.
 Read the [code guide](CONTRIBUTING.md) for build steps and the file layout.
 
 ```sh
-just check  # All CI and release checks.
-just lint   # Go lint rules and formatting.
-just demo   # Run the onboarding example.
+just check    # All CI and release checks.
+just lint     # Go lint rules and formatting.
+just nilaway  # Nil-panic analysis.
+just demo     # Run the onboarding example.
 ```
 
 `just check` requires Go, Python 3, and Node.js with npm. It checks builds,
-formatting, and lint rules. It runs tests, race checks, and vulnerability scans.
+formatting, lint rules, and nil flows. It runs tests, race checks, and
+vulnerability scans.
 It validates API documents. It generates and compiles client types. It also
 checks module files and GitHub Actions workflows.
 
