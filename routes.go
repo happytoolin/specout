@@ -72,15 +72,22 @@ func (d *Generator) lookup(method, pattern string, h http.Handler) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	pattern = canonicalPath(pattern)
-	if rec, ok := h.(*routeRecord); ok && rec != nil && rec.owner == d && rec.method == method {
+	if rec := d.ownRecord(method, h); rec != nil {
 		return !rec.absolute || canonicalPath(rec.full) == pattern
 	}
-	for _, rec := range d.records {
-		if (rec.owner == nil || rec.byPath) && rec.method == method && canonicalPath(rec.full) == pattern {
-			return true
-		}
+	return slices.ContainsFunc(d.records, func(rec *routeRecord) bool {
+		return (rec.owner == nil || rec.byPath) && rec.method == method && canonicalPath(rec.full) == pattern
+	})
+}
+
+// ownRecord returns h when it is a record this generator registered for
+// method, and nil otherwise.
+func (d *Generator) ownRecord(method string, h http.Handler) *routeRecord {
+	rec, ok := h.(*routeRecord)
+	if !ok || rec == nil || rec.owner != d || rec.method != method {
+		return nil
 	}
-	return false
+	return rec
 }
 
 // addSource remembers a router to walk at build time. Idempotent per router.
@@ -122,11 +129,8 @@ func (d *Generator) walkHits(sources []routeSource) map[*routeRecord][]string {
 	hits := make(map[*routeRecord][]string)
 	for _, src := range sources {
 		src.walk(func(method, pattern string, h http.Handler) {
-			rec, ok := h.(*routeRecord)
-			if !ok || rec == nil || rec.owner != d || rec.method != method {
-				return
-			}
-			if !slices.Contains(hits[rec], pattern) {
+			rec := d.ownRecord(method, h)
+			if rec != nil && !slices.Contains(hits[rec], pattern) {
 				hits[rec] = append(hits[rec], pattern)
 			}
 		})
@@ -164,69 +168,101 @@ func (d *Generator) pairPaths() error {
 
 // validateRecords checks the resolved records. First problem wins.
 func (d *Generator) validateRecords() error {
-	seen := make(map[string]string)
-	templates := make(map[string]string)
+	claims := pathClaims{operations: map[string]string{}, templates: map[string]string{}}
 	for _, rec := range d.records {
-		// unresolved: name the pattern
-		if rec.full == "" {
-			if len(d.sources) > 0 {
-				return fmt.Errorf(
-					"specout: %s %q is not served by any adopted router; a later route with the "+
-						"same method and path replaced it, or its router is not under the one passed to Adopt",
-					rec.method, rec.pattern,
-				)
-			}
-			return fmt.Errorf(
-				"specout: %s %q never resolved; adopt the outermost router "+
-					"(Adopt) or use Document",
-				rec.method, rec.pattern,
-			)
+		if err := d.checkResolved(rec); err != nil {
+			return err
 		}
-		// an empty parameter name (/{} ) is not a legal OpenAPI path template.
-		// chi accepts the route, so fail here instead of emitting a broken path.
-		if strings.Contains(docPath(rec.full), "{}") {
-			return fmt.Errorf("specout: %s %q has an empty path parameter {}; give it a name", rec.method, rec.pattern)
+		if err := checkPathParams(rec); err != nil {
+			return err
 		}
-		// a Req field tagged path:"name" with no {name} in the pattern is a
-		// typo: the field leaves the body and the placeholder stays a plain
-		// string.
-		if name, ok := strayPathField(rec.req, rec.full); ok {
-			return fmt.Errorf(
-				"specout: %s %q has a Req field tagged path:%q, but the pattern "+
-					"has no {%s}",
-				rec.method, rec.pattern, name, name,
-			)
+		if err := claims.claim(rec); err != nil {
+			return err
 		}
-		documented := docPath(rec.full)
-		// Catch-alls stay out of paths, so only emitted templates participate
-		// in the OpenAPI hierarchy check. Exact method duplicates still fail
-		// below because they would overwrite one drift-status entry.
-		if !rec.isCatchAll() {
-			// OpenAPI forbids two templated paths with the same hierarchy but
-			// different parameter names, even when they hold different methods.
-			// The same documented path may carry several methods.
-			hierarchy := pathParamRe.ReplaceAllString(documented, "{}")
-			if first, dup := templates[hierarchy]; dup && first != documented {
-				return fmt.Errorf(
-					"specout: equivalent templated paths %s and %s use different parameter names",
-					first, documented,
-				)
-			}
-			templates[hierarchy] = documented
-		}
-		// duplicate canonical (path, method) from two registrations fails loud.
-		// Keyed on the documented path: /x/{id:[0-9]+} and /x/{id:[a-z]+} are
-		// two distinct route patterns but one OpenAPI path, and the later one
-		// would silently overwrite the earlier operation.
-		ck := documented + "|" + rec.method
-		if first, dup := seen[ck]; dup {
-			return fmt.Errorf(
-				"specout: duplicate route %s %s (registered as %q and %q)",
-				rec.method, documented, first, rec.pattern,
-			)
-		}
-		seen[ck] = rec.pattern
 	}
+	return nil
+}
+
+// checkResolved names a record that no router walk gave a full path.
+func (d *Generator) checkResolved(rec *routeRecord) error {
+	if rec.full != "" {
+		return nil
+	}
+	if len(d.sources) > 0 {
+		return fmt.Errorf(
+			"specout: %s %q is not served by any adopted router; a later route with the "+
+				"same method and path replaced it, or its router is not under the one passed to Adopt",
+			rec.method, rec.pattern,
+		)
+	}
+	return fmt.Errorf(
+		"specout: %s %q never resolved; adopt the outermost router "+
+			"(Adopt) or use Document",
+		rec.method, rec.pattern,
+	)
+}
+
+// checkPathParams checks a resolved record's path parameters.
+func checkPathParams(rec *routeRecord) error {
+	// an empty parameter name (/{} ) is not a legal OpenAPI path template.
+	// chi accepts the route, so fail here instead of emitting a broken path.
+	if strings.Contains(docPath(rec.full), "{}") {
+		return fmt.Errorf("specout: %s %q has an empty path parameter {}; give it a name", rec.method, rec.pattern)
+	}
+	// a Req field tagged path:"name" with no {name} in the pattern is a
+	// typo: the field leaves the body and the placeholder stays a plain
+	// string.
+	if name, ok := strayPathField(rec.req, rec.full); ok {
+		return fmt.Errorf(
+			"specout: %s %q has a Req field tagged path:%q, but the pattern "+
+				"has no {%s}",
+			rec.method, rec.pattern, name, name,
+		)
+	}
+	return nil
+}
+
+// pathClaims holds the documented paths that earlier records claimed.
+type pathClaims struct {
+	// operations maps "documented path|method" to the registered pattern.
+	operations map[string]string
+	// templates maps a path hierarchy, with its parameter names blanked, to
+	// the documented path that has it.
+	templates map[string]string
+}
+
+// claim adds rec's documented path. It fails when the path conflicts with an
+// earlier record.
+func (c *pathClaims) claim(rec *routeRecord) error {
+	documented := docPath(rec.full)
+	// Catch-alls stay out of paths, so only emitted templates participate
+	// in the OpenAPI hierarchy check. Exact method duplicates still fail
+	// below because they would overwrite one drift-status entry.
+	if !rec.isCatchAll() {
+		// OpenAPI forbids two templated paths with the same hierarchy but
+		// different parameter names, even when they hold different methods.
+		// The same documented path may carry several methods.
+		hierarchy := pathParamRe.ReplaceAllString(documented, "{}")
+		if first, dup := c.templates[hierarchy]; dup && first != documented {
+			return fmt.Errorf(
+				"specout: equivalent templated paths %s and %s use different parameter names",
+				first, documented,
+			)
+		}
+		c.templates[hierarchy] = documented
+	}
+	// duplicate canonical (path, method) from two registrations fails loud.
+	// Keyed on the documented path: /x/{id:[0-9]+} and /x/{id:[a-z]+} are
+	// two distinct route patterns but one OpenAPI path, and the later one
+	// would silently overwrite the earlier operation.
+	key := documented + "|" + rec.method
+	if first, dup := c.operations[key]; dup {
+		return fmt.Errorf(
+			"specout: duplicate route %s %s (registered as %q and %q)",
+			rec.method, documented, first, rec.pattern,
+		)
+	}
+	c.operations[key] = rec.pattern
 	return nil
 }
 

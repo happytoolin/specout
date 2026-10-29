@@ -59,25 +59,53 @@ func (rec *Recorder) Observe(method, path string, status int) {
 	rec.codes[key][cmp.Or(status, http.StatusOK)] = true
 }
 
+// ServeHTTP serves r through the wrapped router and records the status of the
+// route that ran.
 func (rec *Recorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if rec.next == nil {
 		panic("recorder: ServeHTTP on a Recorder without a router; route requests through the router, " +
 			"whose middleware reports to Observe")
 	}
-	pattern := rec.match(r)
-	rctx := chi.RouteContext(r.Context())
-	if routes, ok := rec.next.(chi.Routes); ok && rctx == nil {
-		// Own the context so chi does not return it to its pool before we
-		// read the final method and pattern chosen by routing middleware.
-		rctx = chi.NewRouteContext()
-		rctx.Routes = routes
-		r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
-	}
+	fallback := rec.match(r)
+	r, rctx := rec.withRouteContext(r)
 	rw := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 	rec.next.ServeHTTP(rw, r)
 
-	// std populates r.Pattern during dispatch, so read it only after.
-	method := r.Method
+	method, pattern := servedRoute(r, rctx, fallback)
+	// a redirect the router made ran no route
+	if routerRedirect(r, rw) {
+		return
+	}
+	// unmatched, or a skipped route: no key, no drift entry
+	if pattern == "" {
+		rec.mu.Lock()
+		rec.unmatched++
+		rec.mu.Unlock()
+		return
+	}
+	rec.Observe(method, pattern, rw.Status())
+}
+
+// withRouteContext gives a chi router a route context the recorder owns, so
+// chi does not return it to its pool before ServeHTTP reads the final method
+// and pattern chosen by routing middleware. The context is nil when next is
+// not a chi router and r carries none.
+func (rec *Recorder) withRouteContext(r *http.Request) (*http.Request, *chi.Context) {
+	rctx := chi.RouteContext(r.Context())
+	routes, ok := rec.next.(chi.Routes)
+	if !ok || rctx != nil {
+		return r, rctx
+	}
+	rctx = chi.NewRouteContext()
+	rctx.Routes = routes
+	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx)), rctx
+}
+
+// servedRoute returns the method and pattern of the handler that ran. fallback
+// is the pattern that match found before dispatch. std populates r.Pattern
+// during dispatch, so call servedRoute only after it.
+func servedRoute(r *http.Request, rctx *chi.Context, fallback string) (string, string) {
+	method, pattern := r.Method, fallback
 	if rctx != nil && len(rctx.RoutePatterns) > 0 {
 		if actual := chiPattern(rctx); actual != "" {
 			pattern = actual
@@ -92,18 +120,7 @@ func (rec *Recorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			method = http.MethodGet
 		}
 	}
-	// a redirect the router made ran no route
-	if routerRedirect(r, rw) {
-		return
-	}
-	// unmatched, or a skipped route: no key, no drift entry
-	if pattern == "" {
-		rec.mu.Lock()
-		rec.unmatched++
-		rec.mu.Unlock()
-		return
-	}
-	rec.Observe(method, pattern, rw.Status())
+	return method, pattern
 }
 
 // routerRedirect reports a redirect that a router writes in place of the route:

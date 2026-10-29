@@ -9,35 +9,39 @@ func securitySchemeObj(a AuthScheme) *obj {
 	if a.Name == "" {
 		panic("specout: AuthScheme.Name must not be empty (it is the securitySchemes key)")
 	}
-	o := newObj()
 	switch a.Type {
 	case "httpBearer":
-		o.set("type", "http").set("scheme", "bearer")
+		return newObj().set("type", "http").set("scheme", "bearer")
 	case "apiKey":
-		if a.Key == "" {
-			panic("specout: AuthScheme " + a.Name + " is apiKey but has no Key (the parameter name)")
-		}
-		switch a.In {
-		case InHeader, InQuery, InCookie:
-		default:
-			panic("specout: AuthScheme " + a.Name + " has in=" + a.In + ", must be header, query or cookie")
-		}
-		o.set("type", "apiKey").set("name", a.Key).set("in", a.In)
+		return apiKeyScheme(a)
 	case "oauth2":
 		if len(a.Flows) == 0 {
 			panic("specout: AuthScheme " + a.Name + " is oauth2 but has no Flows")
 		}
-		o.set("type", "oauth2").set("flows", oauth2Flows(a))
+		return newObj().set("type", "oauth2").set("flows", oauth2Flows(a))
 	case "openIdConnect":
 		if a.URL == "" {
 			panic("specout: AuthScheme " + a.Name + " is openIdConnect but has no URL")
 		}
-		o.set("type", "openIdConnect").set("openIdConnectUrl", a.URL)
+		return newObj().set("type", "openIdConnect").set("openIdConnectUrl", a.URL)
 	default:
 		panic("specout: AuthScheme " + a.Name + " has type " + a.Type +
 			", must be httpBearer, apiKey, oauth2 or openIdConnect")
 	}
-	return o
+}
+
+// apiKeyScheme builds an apiKey scheme. It needs the parameter name, and a
+// location that OpenAPI allows.
+func apiKeyScheme(a AuthScheme) *obj {
+	if a.Key == "" {
+		panic("specout: AuthScheme " + a.Name + " is apiKey but has no Key (the parameter name)")
+	}
+	switch a.In {
+	case InHeader, InQuery, InCookie:
+	default:
+		panic("specout: AuthScheme " + a.Name + " has in=" + a.In + ", must be header, query or cookie")
+	}
+	return newObj().set("type", "apiKey").set("name", a.Key).set("in", a.In)
 }
 
 // oauth2Flows emits an oauth2 scheme's flows object. Flow and scope names are

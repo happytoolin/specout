@@ -25,28 +25,33 @@ func (d *Generator) statusMap(withDefaults bool) (map[RouteKey]map[int]bool, err
 	if err := d.resolveLocked(); err != nil {
 		return nil, err
 	}
-	out := make(map[RouteKey]map[int]bool)
+	out := make(map[RouteKey]map[int]bool, len(d.records))
 	for _, rec := range d.records {
-		codes := map[int]bool{}
-		for _, e := range d.responsePlan(rec, withDefaults) {
-			// A default permits any code, but only an explicit status creates
-			// a coverage expectation. SpecStatuses uses 0 for "any code".
-			if e.key == defaultResponseKey && withDefaults {
-				codes[0] = true
-				continue
-			}
-			if e.code != 0 {
-				codes[e.code] = true
-			}
-			if lo, hi, ok := rangeOf(e.key); ok && withDefaults {
-				for c := lo; c <= hi; c++ {
-					codes[c] = true
-				}
-			}
-		}
-		out[NewRouteKey(rec.method, rec.full)] = codes
+		out[NewRouteKey(rec.method, rec.full)] = planStatuses(d.responsePlan(rec, withDefaults), withDefaults)
 	}
 	return out, nil
+}
+
+// planStatuses folds one route's response plan into its codes. A default
+// permits any code, but only an explicit status creates a coverage
+// expectation. SpecStatuses uses 0 for "any code".
+func planStatuses(plan []respEntry, withDefaults bool) map[int]bool {
+	codes := map[int]bool{}
+	for _, e := range plan {
+		if e.key == defaultResponseKey && withDefaults {
+			codes[0] = true
+			continue
+		}
+		if e.code != 0 {
+			codes[e.code] = true
+		}
+		if lo, hi, ok := rangeOf(e.key); ok && withDefaults {
+			for c := lo; c <= hi; c++ {
+				codes[c] = true
+			}
+		}
+	}
+	return codes
 }
 
 // statusRangeSpan is the width of one OpenAPI status range: "4XX" is 400-499.

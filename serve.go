@@ -47,7 +47,7 @@ func (d *Generator) WriteJSON(w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if _, err := w.Write(b); err != nil {
+	if _, err = w.Write(b); err != nil {
 		return fmt.Errorf("specout: write spec: %w", err)
 	}
 	return nil

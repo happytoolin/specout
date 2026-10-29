@@ -31,92 +31,125 @@ func (d *Generator) responsePlan(rec *routeRecord, withDefaults bool) []respEntr
 	if raw, ok := rec.raw["responses"]; ok {
 		return rawResponsePlan(raw)
 	}
-	var order []string
-	byKey := map[string]respEntry{}
-	omitted := map[string]bool{}
-	put := func(e respEntry) {
-		if _, exists := byKey[e.key]; !exists {
-			order = append(order, e.key)
-		}
-		delete(omitted, e.key)
-		byKey[e.key] = e
+	p := plannedResponses{byKey: map[string]respEntry{}, omitted: map[string]bool{}}
+	if e, ok := resDefault(rec); ok {
+		p.put(e)
 	}
-
-	// default from Res
-	if isEmptyStruct(rec.res) {
-		// struct{} Res declares nothing on its own; any explicit Response
-		// replaces it (e.g. {Status:200, ContentType:"application/pdf"}).
-		if !anyExplicit(rec.responses) {
-			put(newRespEntry(http.StatusNoContent, nil))
-		}
-	} else {
-		put(newRespEntry(http.StatusOK, rec.res))
-	}
-
 	for i := range rec.responses {
 		resp := &rec.responses[i]
 		key := responseKey(resp.Status, resp.Key)
 		if resp.Omit {
 			// a later explicit entry with the same key un-omits it
-			omitted[key] = true
+			p.omitted[key] = true
 			continue
 		}
-		t := rec.res
-		if resp.Type != nil {
-			t = reflect.TypeOf(resp.Type)
-		}
-		// 204 and 304 carry no body: inheriting Res would emit content the
-		// HTTP spec forbids. An explicit Type still wins.
-		if resp.Type == nil && bodyless(resp.Status) {
-			t = nil
-		}
-		put(respEntry{key: key, code: resp.Status, typ: t, resp: resp})
+		p.put(respEntry{key: key, code: resp.Status, typ: declaredType(rec.res, resp), resp: resp})
 	}
-
 	// global defaults, exactly as the drift maps count them
 	if withDefaults {
-		d.putDefaultErrors(put, byKey, omitted)
+		d.putDefaultErrors(&p)
 	}
+	return p.entries()
+}
 
-	out := make([]respEntry, 0, len(order))
-	for _, key := range order {
-		if !omitted[key] {
-			out = append(out, byKey[key])
+// plannedResponses collects a route's responses by key, in the order each key
+// first appears. A later entry with the same key replaces the earlier one.
+type plannedResponses struct {
+	order   []string
+	byKey   map[string]respEntry
+	omitted map[string]bool
+}
+
+// put adds or replaces the entry for e.key, and un-omits the key.
+func (p *plannedResponses) put(e respEntry) {
+	if _, exists := p.byKey[e.key]; !exists {
+		p.order = append(p.order, e.key)
+	}
+	delete(p.omitted, e.key)
+	p.byKey[e.key] = e
+}
+
+// entries returns the entries that are not omitted, in key order.
+func (p *plannedResponses) entries() []respEntry {
+	out := make([]respEntry, 0, len(p.order))
+	for _, key := range p.order {
+		if !p.omitted[key] {
+			out = append(out, p.byKey[key])
 		}
 	}
 	return out
 }
 
+// resDefault is the response that Res declares on its own: 200 with Res as the
+// body. A struct{} Res declares nothing on its own: any explicit Response
+// replaces it (e.g. {Status:200, ContentType:"application/pdf"}), and with none
+// the route answers 204.
+func resDefault(rec *routeRecord) (respEntry, bool) {
+	if !isEmptyStruct(rec.res) {
+		return newRespEntry(http.StatusOK, rec.res), true
+	}
+	if anyExplicit(rec.responses) {
+		return respEntry{}, false
+	}
+	return newRespEntry(http.StatusNoContent, nil), true
+}
+
+// declaredType is the body type of an explicit Response: its Type, else Res.
+// 204 and 304 carry no body: inheriting Res would emit content the HTTP spec
+// forbids. An explicit Type still wins.
+func declaredType(res reflect.Type, resp *Response) reflect.Type {
+	if resp.Type != nil {
+		return reflect.TypeOf(resp.Type)
+	}
+	if bodyless(resp.Status) {
+		return nil
+	}
+	return res
+}
+
 // Raw replaces the entire responses object, including inherited defaults.
 // Read its JSON keys so typed maps and json.RawMessage behave like plain maps.
 func rawResponsePlan(raw any) []respEntry {
-	data, err := json.Marshal(raw)
-	if err != nil {
-		panic("specout: invalid Raw.responses: " + err.Error())
-	}
-	var responses map[string]jsontext.Value
-	if err := json.Unmarshal(data, &responses); err != nil || responses == nil {
-		panic("specout: Raw.responses must be an object")
-	}
 	var entries []respEntry
-	for _, key := range sortedKeys(responses) {
-		if strings.HasPrefix(key, "x-") {
-			continue
+	for _, key := range sortedKeys(rawResponses(raw)) {
+		if !strings.HasPrefix(key, "x-") {
+			entries = append(entries, rawEntry(key))
 		}
-		if _, _, isRange := rangeOf(key); key == defaultResponseKey || isRange {
-			entries = append(entries, respEntry{key: key})
-			continue
-		}
-		code, err := strconv.Atoi(key)
-		if err != nil || code < 100 || code > 599 || strconv.Itoa(code) != key {
-			panic("specout: invalid Raw.responses status " + key)
-		}
-		entries = append(entries, respEntry{key: key, code: code})
 	}
 	if len(entries) == 0 {
 		panic("specout: Raw.responses must declare a response")
 	}
 	return entries
+}
+
+// rawResponses reads Raw.responses as one JSON object.
+func rawResponses(raw any) map[string]jsontext.Value {
+	data, err := json.Marshal(raw)
+	if err != nil {
+		panic("specout: invalid Raw.responses: " + err.Error())
+	}
+	var responses map[string]jsontext.Value
+	if err = json.Unmarshal(data, &responses); err != nil || responses == nil {
+		panic("specout: Raw.responses must be an object")
+	}
+	return responses
+}
+
+// rawEntry checks one Raw.responses key: default, a range, or a status code.
+func rawEntry(key string) respEntry {
+	if _, _, isRange := rangeOf(key); key == defaultResponseKey || isRange {
+		return respEntry{key: key}
+	}
+	code, err := strconv.Atoi(key)
+	if err != nil || !isStatus(code) || strconv.Itoa(code) != key {
+		panic("specout: invalid Raw.responses status " + key)
+	}
+	return respEntry{key: key, code: code}
+}
+
+// isStatus reports whether code is an HTTP status code, 100-599.
+func isStatus(code int) bool {
+	return code >= 100 && code <= 599
 }
 
 // newRespEntry builds a response the route derived rather than declared.
@@ -131,18 +164,18 @@ func bodyless(code int) bool {
 
 // putDefaultErrors adds the configured error responses for every code the route
 // neither declared nor omitted.
-func (d *Generator) putDefaultErrors(put func(respEntry), byKey map[string]respEntry, omitted map[string]bool) {
+func (d *Generator) putDefaultErrors(p *plannedResponses) {
 	et := reflect.TypeOf(d.cfg.ErrorType)
 	if et == nil {
 		return
 	}
 	for _, code := range d.cfg.DefaultErrors {
 		key := responseKey(code, "")
-		_, declared := byKey[key]
-		if omitted[key] || declared {
+		_, declared := p.byKey[key]
+		if p.omitted[key] || declared {
 			continue
 		}
-		put(respEntry{key: key, code: code, typ: et})
+		p.put(respEntry{key: key, code: code, typ: et})
 	}
 }
 
@@ -175,34 +208,47 @@ func responseBody(e respEntry, sr *schemaRegistry) *obj {
 		body.set("description", resp.Key+" response")
 	}
 	if resp.ContentType != "" {
-		ct := resp.ContentType
-		if ct == "binary" {
-			ct = "application/octet-stream"
-		}
-		body.set("content", newObj().set(ct,
-			newObj().set("schema", binarySchema())))
+		body.set("content", binaryContent(resp.ContentType))
 	}
 	if len(resp.ContentTypes) > 0 {
-		// one body under several media types: published documents write the
-		// same shape as JSON and XML. The schema is the same one
-		// contentResponse would use.
-		if e.typ == nil || isEmptyStruct(e.typ) {
-			panic("specout: Response.ContentTypes needs a response type (the Res parameter or Response.Type)")
-		}
-		content := newObj()
-		for _, ct := range resp.ContentTypes {
-			content.set(ct, newObj().set("schema", schemaFor(e.typ, sr)))
-		}
-		body.set("content", content)
+		body.set("content", sharedContent(e.typ, resp.ContentTypes, sr))
 	}
 	if len(resp.Headers) > 0 {
-		hdrs := newObj()
-		for _, hd := range resp.Headers {
-			hdrs.set(hd.Name, headerObj(hd, sr))
-		}
-		body.set("headers", hdrs)
+		body.set("headers", responseHeaders(resp.Headers, sr))
 	}
 	return mergeRaw(body, resp.Raw)
+}
+
+// binaryContent is the content object for Response.ContentType: one media type
+// with a binary schema. "binary" is short for application/octet-stream.
+func binaryContent(ct string) *obj {
+	if ct == "binary" {
+		ct = "application/octet-stream"
+	}
+	return newObj().set(ct, newObj().set("schema", binarySchema()))
+}
+
+// sharedContent is one body under several media types: published documents
+// write the same shape as JSON and XML. The schema is the same one
+// contentResponse would use.
+func sharedContent(t reflect.Type, types []string, sr *schemaRegistry) *obj {
+	if t == nil || isEmptyStruct(t) {
+		panic("specout: Response.ContentTypes needs a response type (the Res parameter or Response.Type)")
+	}
+	content := newObj()
+	for _, ct := range types {
+		content.set(ct, newObj().set("schema", schemaFor(t, sr)))
+	}
+	return content
+}
+
+// responseHeaders is the headers object of one response, in declared order.
+func responseHeaders(headers []Header, sr *schemaRegistry) *obj {
+	out := newObj()
+	for _, hd := range headers {
+		out.set(hd.Name, headerObj(hd, sr))
+	}
+	return out
 }
 
 // anyExplicit reports whether a route declares a response of its own. One
@@ -223,26 +269,32 @@ func isEmptyStruct(t reflect.Type) bool {
 // code or "default" — "0" is neither, so it validates against nothing. Any
 // other code outside 100-599 is a typo, not a status.
 func responseKey(code int, key string) string {
-	if code != 0 && (code < 100 || code > 599) {
+	if code != 0 && !isStatus(code) {
 		panic("specout: response status must be 0 (default) or 100-599, got " + strconv.Itoa(code))
 	}
 	if key != "" {
-		if key == defaultResponseKey {
-			return key
-		}
-		lo, hi, ok := rangeOf(key)
-		if !ok {
-			panic("specout: Response.Key must be default or a range like 4XX, got " + key)
-		}
-		if code != 0 && (code < lo || code > hi) {
-			panic("specout: response status " + strconv.Itoa(code) + " is outside range " + key)
-		}
-		return key
+		return checkedKey(code, key)
 	}
 	if code == 0 {
 		return defaultResponseKey
 	}
 	return strconv.Itoa(code)
+}
+
+// checkedKey checks a Response.Key: default, or a range like 4XX that holds
+// code when code is set.
+func checkedKey(code int, key string) string {
+	if key == defaultResponseKey {
+		return key
+	}
+	lo, hi, ok := rangeOf(key)
+	if !ok {
+		panic("specout: Response.Key must be default or a range like 4XX, got " + key)
+	}
+	if code != 0 && (code < lo || code > hi) {
+		panic("specout: response status " + strconv.Itoa(code) + " is outside range " + key)
+	}
+	return key
 }
 
 // mergeRaw splices arbitrary OpenAPI fragments into a response object.
