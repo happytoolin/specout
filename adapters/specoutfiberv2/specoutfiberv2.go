@@ -8,6 +8,7 @@ package specoutfiberv2
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -56,6 +57,10 @@ func New(d *specout.Generator, r fiber.Router) *Router {
 func (b *Router) Handle[Req, Res any](method, p string, h specout.Handler[Req, Res], m ...fiber.Handler) {
 	full := fiberpath.Join(b.prefix, p)
 	documented, _, err := fiberpath.OpenAPI(full)
+	if err == nil && fiberpath.RegexEscapeColon(full) {
+		err = errors.New(`a Fiber v2 bug reads the \: after a constraint with a backslash as a new parameter; ` +
+			`write the constraint without a backslash, such as [0-9] for \d, or use Fiber v3`)
+	}
 	if err != nil {
 		panic(fmt.Sprintf("specoutfiberv2: %s %s: %v", method, full, err))
 	}

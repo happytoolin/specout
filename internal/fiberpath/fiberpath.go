@@ -187,6 +187,28 @@ func checkFollower(name string, c byte, constrained bool) error {
 	return nil
 }
 
+// RegexEscapeColon reports whether p has a constraint that holds a backslash
+// and ends right before an escaped colon, as /:id<regex(\d+)>\:x. Fiber v2
+// reads that colon as the start of a parameter; Fiber v3 reads a literal.
+func RegexEscapeColon(p string) bool {
+	for i := 0; i < len(p); i++ {
+		switch p[i] {
+		case '\\':
+			i++
+		case '<':
+			end := constraintEnd(p, i+1)
+			if end < 0 {
+				return false
+			}
+			if strings.Contains(p[i:end], `\`) && strings.HasPrefix(p[end+1:], `\:`) {
+				return true
+			}
+			i = end
+		}
+	}
+	return false
+}
+
 // constraintEnd returns the index of the > that closes a constraint opened
 // before start, skipping escaped characters, or -1.
 func constraintEnd(p string, start int) int {

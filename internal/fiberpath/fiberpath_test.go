@@ -98,3 +98,18 @@ func TestShadowedByFold(t *testing.T) {
 			"pkg: GET "+tc.second+" never runs: Fiber sends its requests to GET "+tc.first+", an earlier route")
 	}
 }
+
+func TestRegexEscapeColon(t *testing.T) {
+	for p, want := range map[string]bool{
+		`/:id<regex(\d{4})>\:x`:     true,
+		`/:a<int>-:b<regex(\d)>\:x`: true,
+		`/:id<regex([0-9])>\:x`:     false,
+		`/:id<regex(\d)>\-x`:        false,
+		`/:id<regex(\d)>/\:x`:       false,
+		`/:id<regex(a\:b)>`:         false,
+		`/x\:y/:id<int>`:            false,
+		`/:id<regex(\d)`:            false,
+	} {
+		assert.Equal(t, want, fiberpath.RegexEscapeColon(p), p)
+	}
+}

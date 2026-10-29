@@ -175,6 +175,8 @@ func TestRegistrationPanicLeavesNoRecord(t *testing.T) {
 		{"/users/:id?", "specoutfiberv2: GET /users/:id?: optional parameter :id?"},
 		{"/plus/:name+", "specoutfiberv2: GET /plus/:name+: parameter :name is followed by '+'"},
 		{"/:param*", "specoutfiberv2: GET /:param*: parameter :param is followed by '*'"},
+		{`/:id<regex(\d{4})>\:x`, "a Fiber v2 bug reads the \\: after a constraint with a backslash"},
+		{`/v1/:id<regex(\d)>\:x`, "a Fiber v2 bug reads the \\: after a constraint with a backslash"},
 	} {
 		t.Run(tc.route, func(t *testing.T) {
 			d, app := adaptertest.Generator(), fiber.New()
@@ -440,4 +442,16 @@ func TestAdoptAcceptsRoutesThatRun(t *testing.T) {
 		r.Get(tc.second, okRoute)
 		require.NoError(t, specoutfiberv2.Adopt(d, app), "%s then %s", tc.first, tc.second)
 	}
+}
+
+// Fiber v2 reads an escaped colon right after a constraint without a
+// backslash as a literal, so the route serves /1001:x.
+func TestRegexConstraintBeforeEscapedColon(t *testing.T) {
+	d, app := adaptertest.Generator(), fiber.New()
+	specoutfiberv2.New(d, app).Get(`/:id<regex([0-9]{4})>\:x`, pathValueRoute("id"))
+	status, header := do(t, app, http.MethodGet, "/1001:x")
+	require.Equal(t, http.StatusNoContent, status)
+	assert.Equal(t, "1001", header.Get("X-Value"))
+	assert.Contains(t, adaptertest.Paths(t, d), "/{id}:x")
+	require.NoError(t, specoutfiberv2.Adopt(d, app))
 }
