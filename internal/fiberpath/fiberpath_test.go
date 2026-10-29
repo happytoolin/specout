@@ -69,6 +69,9 @@ func TestJoin(t *testing.T) {
 	}
 }
 
+// guardHint ends each "never runs" error.
+const guardHint = "; if that route is a guard that calls c.Next(), skip it with specout.Skip"
+
 // Two routes that Fiber reads the same way are one route, and only the first
 // runs. A constraint keeps its case, so \d and \D stay two routes.
 func TestShadowedByFold(t *testing.T) {
@@ -95,7 +98,7 @@ func TestShadowedByFold(t *testing.T) {
 			continue
 		}
 		require.EqualError(t, err,
-			"pkg: GET "+tc.second+" never runs: Fiber sends its requests to GET "+tc.first+", an earlier route")
+			"pkg: GET "+tc.second+" never runs: Fiber sends its requests to GET "+tc.first+", an earlier route"+guardHint)
 	}
 }
 

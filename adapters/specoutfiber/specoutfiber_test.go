@@ -36,6 +36,9 @@ func noContent(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.Stat
 
 var okRoute = specout.Handler[struct{}, specout.NoContent]{HandlerFunc: noContent}
 
+// guardHint ends each "never runs" error.
+const guardHint = "; if that route is a guard that calls c.Next(), skip it with specout.Skip"
+
 func nativeRoute(c fiber.Ctx) error {
 	c.Status(http.StatusNoContent)
 	return nil
@@ -351,7 +354,7 @@ func TestAdoptReportsRoutesThatNeverRun(t *testing.T) {
 		status, _ := do(t, app, http.MethodGet, tc.target)
 		assert.Equal(t, http.StatusNoContent, status, "%s runs the first route", tc.target)
 		require.EqualError(t, specoutfiber.Adopt(d, app), "specoutfiber: GET "+tc.second+
-			" never runs: Fiber sends its requests to GET "+tc.first+", an earlier route")
+			" never runs: Fiber sends its requests to GET "+tc.first+", an earlier route"+guardHint)
 	}
 }
 

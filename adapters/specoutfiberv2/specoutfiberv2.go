@@ -213,7 +213,9 @@ func serve(next http.Handler, route observed) fiber.Handler {
 // /users takes /Users and /users/. The HEAD route that Fiber's Get adds takes
 // requests too, so HEAD /users/me after GET /users/:id never runs. Register
 // the specific route first, or set Config.CaseSensitive or
-// Config.StrictRouting. Skipped routes take no part in this check.
+// Config.StrictRouting. Skipped routes take no part in this check, so skip a
+// guard route that calls c.Next(): it sends its requests on to the later
+// routes.
 //
 // The routes of a mounted app join app's table, at the mount path, when app
 // starts; a Router on the mounted app documents them without that path.

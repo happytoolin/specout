@@ -197,7 +197,8 @@ func serve(next http.Handler, route observed) fiber.Handler {
 // of a later one: /users/:id takes /users/me, and with the default Config,
 // /users takes /Users and /users/. Register the specific route first, or set
 // Config.CaseSensitive or Config.StrictRouting. Skipped routes take no part
-// in this check.
+// in this check, so skip a guard route that calls c.Next(): it sends its
+// requests on to the later routes.
 func Adopt(d *specout.Generator, app *fiber.App, skips ...specout.SkipRule) error {
 	table := endpoints(app)
 	if err := shadowed(app, table, skips); err != nil {

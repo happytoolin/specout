@@ -47,7 +47,8 @@ func Shadowed(pkg string, table []Route, rd Reading) error {
 	var errs []error
 	for i, r := range table {
 		if j, ok := rd.shadow(table[:i], folds, r); ok && !r.Added {
-			errs = append(errs, fmt.Errorf("%s: %s %s never runs: Fiber sends its requests to %s %s, %s",
+			errs = append(errs, fmt.Errorf("%s: %s %s never runs: Fiber sends its requests to %s %s, %s; "+
+				"if that route is a guard that calls c.Next(), skip it with specout.Skip",
 				pkg, r.Method, r.Path, table[j].Method, table[j].Path, table[j].earlier()))
 		}
 	}

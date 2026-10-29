@@ -270,6 +270,11 @@ ignores middleware routes and the `HEAD` routes that Fiber adds for `GET`
 routes. It reports a `HEAD` route that is registered on its own. It also compares each translated path with the parameters that Fiber
 parsed, so a path that specout reads differently fails `Adopt`.
 
+`Adopt` also reports a route that never runs, because an earlier route of its
+method takes all of its requests, as `/users/:id` before `/users/me` or
+`/files/*` before `/files/:name`. A guard route that calls `c.Next()` sends its
+requests on to the later routes, so skip the guard with `specout.Skip`.
+
 Register routes on the app that serves them. A sub-app mounted with `app.Use`
 changes the path after registration. Use a group instead.
 
@@ -293,7 +298,9 @@ Fiber v2 reads paths as Fiber v3 does, so the path table above applies. These
 differences remain:
 
 - `Get` registers the `GET` route with Fiber's own `Get`, which adds the `HEAD`
-  route at registration. `Adopt` ignores that `HEAD` route.
+  route at registration. `Adopt` does not report that `HEAD` route. It takes
+  requests, so `Adopt` reports a later `HEAD /users/me` after
+  `GET /users/:id`, which never runs.
 - Fiber v2 appends a later route on the same path to the earlier one and runs
   the earlier one first. So a `Head` after a `Get` on the same path panics.
   Register `Head` first.

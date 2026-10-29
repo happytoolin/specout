@@ -416,8 +416,15 @@ if err := specoutgin.Adopt(doc, engine, specout.Skip("/openapi.json")); err != n
 
 Fiber runs the first route that matches a request. So with Fiber, `Adopt`
 also reports a route that never runs. For example, `/users/:id` takes the
-requests of a later `/users/me`. With the default Fiber configuration,
-`/users` also takes the requests of a later `/Users` and `/users/`.
+requests of a later `/users/me`, and `/files/*` takes the requests of a later
+`/files/:name`. With the default Fiber configuration, `/users` also takes the
+requests of a later `/Users` and `/users/`. With Fiber v2, `Get` also adds a
+HEAD route, so `GET /users/:id` takes the requests of a later
+`HEAD /users/me`.
+
+A guard route that calls `c.Next()` sends its requests on to the later routes.
+`Adopt` cannot see that call, so skip the guard with `specout.Skip`, as in
+`specout.Skip("/api/*")`. A skipped route takes no part in this check.
 
 With other routers, use `specout.Bind` to register and record each route. Use
 `specout.Document` when the router registers the handler and you only record
