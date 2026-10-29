@@ -7,6 +7,9 @@ import "strings"
 // be registered with the real router; specout only records the metadata.
 // The pattern uses OpenAPI syntax: /items/{id}, not /items/:id.
 func Document[Req, Res any](d *Generator, method, pattern string, h Handler[Req, Res]) {
+	if d == nil {
+		panic("specout: Document needs a generator")
+	}
 	if err := checkOpenAPIPath(pattern); err != "" {
 		panic("specout: Document pattern " + pattern + ": " + err)
 	}

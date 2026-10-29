@@ -466,6 +466,15 @@ func TestBindersRejectNilArguments(t *testing.T) {
 	}
 }
 
+func TestBindAndDocumentRejectANilGenerator(t *testing.T) {
+	assert.PanicsWithValue(t, "specout: Bind needs a generator", func() {
+		specout.Bind(nil, http.MethodGet, "/x", okGet, func(http.Handler) string { return "/x" })
+	})
+	assert.PanicsWithValue(t, "specout: Document needs a generator", func() {
+		specout.Document(nil, http.MethodGet, "/x", okGet)
+	})
+}
+
 // An Adopt on a mounted chi router documents /x where clients call /api/x. A
 // spec request through the outer router shows the mount and fails the build,
 // unless a server URL declares the prefix.

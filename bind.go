@@ -21,6 +21,9 @@ import (
 // while d is locked, so it must not call d. The route's identity is its method
 // and returned path; CheckRoutes compares a live route table against it.
 func Bind[Req, Res any](d *Generator, method, pattern string, h Handler[Req, Res], mount func(http.Handler) string) {
+	if d == nil {
+		panic("specout: Bind needs a generator")
+	}
 	checkMethod(method)
 	if mount == nil {
 		panic("specout: Bind needs a mount func for " + method + " " + pattern)
