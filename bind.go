@@ -6,9 +6,9 @@ import (
 	"strings"
 )
 
-// Bind registers h on a router that has no binder in this package. The
-// specoutecho, specoutgin and specoutfiber packages build on it, and so can a
-// binder for any other router. mount adds the live route: it receives the
+// Bind registers h on a router that has no binder in this package. The Echo,
+// Gin and Fiber adapter packages build on it, and so can a binder for any
+// other router. mount adds the live route: it receives the
 // handler the router must run and returns the full path the router serves,
 // in OpenAPI syntax: {name} for a parameter, {name...} for a catch-all.
 //
