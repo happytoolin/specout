@@ -19,6 +19,9 @@ func TestOpenAPI(t *testing.T) {
 		{"/a/+/b/+", "/a/{+1...}/b/{+2...}", []string{"+1", "+2"}},
 		{"/color::color", "/color:{color}", []string{"color"}},
 		{`/a\:b`, "/a:b", nil},
+		{"/:id<int>-:to", "/{id}-{to}", []string{"id", "to"}},
+		{"/:id<int>/x", "/{id}/x", []string{"id"}},
+		{`/:id<int>\:x`, "/{id}:x", []string{"id"}},
 	} {
 		got, names, err := fiberpath.OpenAPI(tc.in)
 		require.NoError(t, err, tc.in)
@@ -37,6 +40,12 @@ func TestOpenAPIRejects(t *testing.T) {
 		"/:id<int":  "unclosed constraint",
 		"/:id*":     "which specout cannot read",
 		"/:id<a>?x": "optional parameter",
+		// Fiber matches /5 for these, and gives :a one character of /12.
+		"/:id<int>x":   "ignores the text after the constraint",
+		"/:id<int>x/y": "ignores the text after the constraint",
+		"/:a:b":        "touches the next parameter",
+		"/:a<int>:b":   "touches the next parameter",
+		"/:a::b":       "touches the next parameter",
 	} {
 		_, _, err := fiberpath.OpenAPI(in)
 		require.ErrorContains(t, err, want, in)

@@ -151,7 +151,8 @@ func param(p string, start int) (string, int, error) {
 	if name == "" {
 		return "", 0, fmt.Errorf("empty parameter name in %q", p)
 	}
-	if i < len(p) && p[i] == '<' {
+	constrained := i < len(p) && p[i] == '<'
+	if constrained {
 		end := constraintEnd(p, i+1)
 		if end < 0 {
 			return "", 0, fmt.Errorf("unclosed constraint on :%s in %q", name, p)
@@ -159,14 +160,31 @@ func param(p string, start int) (string, int, error) {
 		i = end + 1
 	}
 	if i < len(p) {
-		switch p[i] {
-		case '?':
-			return "", 0, fmt.Errorf("optional parameter :%s? matches two paths; register each path", name)
-		case '*', '+', '{', '}':
-			return "", 0, fmt.Errorf("parameter :%s is followed by %q, which specout cannot read", name, p[i])
+		if err := checkFollower(name, p[i], constrained); err != nil {
+			return "", 0, err
 		}
 	}
 	return name, i, nil
+}
+
+// checkFollower rejects a character c after the parameter :name that Fiber
+// reads differently from OpenAPI. Fiber gives a parameter that touches the
+// next one a single character, and drops the text between a constraint and
+// the next /, - or ., so /:id<int>x matches /5.
+func checkFollower(name string, c byte, constrained bool) error {
+	switch {
+	case c == '?':
+		return fmt.Errorf("optional parameter :%s? matches two paths; register each path", name)
+	case c == ':':
+		return fmt.Errorf("parameter :%s touches the next parameter, and Fiber gives it one character; "+
+			"put a /, - or . between them", name)
+	case strings.IndexByte("*+{}", c) >= 0:
+		return fmt.Errorf("parameter :%s is followed by %q, which specout cannot read", name, c)
+	case constrained && strings.IndexByte(`/-.\`, c) < 0:
+		return fmt.Errorf("fiber ignores the text after the constraint on :%s; "+
+			"put a /, - or . right after it", name)
+	}
+	return nil
 }
 
 // constraintEnd returns the index of the > that closes a constraint opened
