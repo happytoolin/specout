@@ -1,8 +1,9 @@
 // Package specoutechov4 binds specout handlers to Echo v4. Handlers stay plain
 // net/http handlers: each route copies Echo's path parameters into
 // r.PathValue before the handler runs, which echo.WrapHandler does not do in
-// v4. The values are decoded, as on http.ServeMux. Adopt checks Echo's route table for routes that carry no specout
-// metadata, and Record feeds the recorder status check.
+// v4. The values are decoded, as on http.ServeMux. Adopt checks Echo's route
+// table for routes that carry no specout metadata, and Record feeds the
+// recorder status check.
 package specoutechov4
 
 import (

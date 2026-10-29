@@ -455,3 +455,14 @@ func TestRegexConstraintBeforeEscapedColon(t *testing.T) {
 	assert.Contains(t, adaptertest.Paths(t, d), "/{id}:x")
 	require.NoError(t, specoutfiberv2.Adopt(d, app))
 }
+
+// A skipped guard route that calls c.Next lets the later routes run, so it
+// shadows nothing.
+func TestAdoptSkippedGuardShadowsNothing(t *testing.T) {
+	d, app := adaptertest.Generator(), fiber.New()
+	app.All("/api/*", func(c *fiber.Ctx) error { return c.Next() })
+	specoutfiberv2.New(d, app).Get("/api/users", okRoute)
+	status, _ := do(t, app, http.MethodGet, "/api/users")
+	require.Equal(t, http.StatusNoContent, status, "the guard lets the route run")
+	require.NoError(t, specoutfiberv2.Adopt(d, app, specout.Skip("/api/*")))
+}

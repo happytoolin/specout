@@ -192,12 +192,14 @@ func serve(next http.Handler, route observed) fiber.Handler {
 // method in registration order, and an earlier route can take every request
 // of a later one: /users/:id takes /users/me, and with the default Config,
 // /users takes /Users and /users/. Register the specific route first, or set
-// Config.CaseSensitive or Config.StrictRouting. The
-// routes of a mounted app join app's table, at the mount path, when app
+// Config.CaseSensitive or Config.StrictRouting. Skipped routes take no part
+// in this check.
+//
+// The routes of a mounted app join app's table, at the mount path, when app
 // starts; a Router on the mounted app documents them without that path.
 func Adopt(d *specout.Generator, app *fiber.App, skips ...specout.SkipRule) error {
 	table := endpoints(app)
-	if err := shadowed(app, table); err != nil {
+	if err := shadowed(app, table, skips); err != nil {
 		return err
 	}
 	routes := make([]specout.RouteKey, 0, len(table))
@@ -217,12 +219,16 @@ func Adopt(d *specout.Generator, app *fiber.App, skips ...specout.SkipRule) erro
 }
 
 // shadowed reports the routes of table that never run on app, because an
-// earlier route takes their requests.
-func shadowed(app *fiber.App, table []fiber.Route) error {
+// earlier route takes their requests. A skipped route takes no part: it can
+// be a guard that calls c.Next, which lets the later routes run.
+func shadowed(app *fiber.App, table []fiber.Route, skips []specout.SkipRule) error {
 	cfg := app.Config()
 	routes := make([]fiberpath.Route, 0, len(table))
 	for i := range table {
-		routes = append(routes, fiberpath.Route{Method: table[i].Method, Path: table[i].Path})
+		r := fiberpath.Route{Method: table[i].Method, Path: table[i].Path}
+		if !slices.ContainsFunc(skips, func(s specout.SkipRule) bool { return s.Matches(fiberpath.Table(r.Path)) }) {
+			routes = append(routes, r)
+		}
 	}
 	return fiberpath.Shadowed("specoutfiberv2", routes, fiberpath.Reading{
 		CaseSensitive: cfg.CaseSensitive,
