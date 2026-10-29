@@ -335,16 +335,6 @@ func TestNonOpenAPIMethodPanics(t *testing.T) {
 	require.Panics(t, func() { specout.Std(newGen(), http.NewServeMux()).Handle("CONNECT /x", okGet) })
 }
 
-// A repeated path param name (/x/{id}/y/{id}) is one OpenAPI parameter:
-// OpenAPI forbids two entry names in one operation.
-func TestDuplicatePathParamEmittedOnce(t *testing.T) {
-	d := newGen()
-	specout.Document(d, http.MethodGet, "/x/{id}/y/{id}", okGet)
-	params, _ := opOf(t, buildDoc(t, d), "/x/{id}/y/{id}", "get")["parameters"].([]any)
-	require.Len(t, params, 1, "want 1 path param")
-	assert.Equal(t, "id", params[0].(map[string]any)["name"])
-}
-
 // A path:"name" tag with no {name} in the pattern is a typo: the field leaves
 // the body and the placeholder stays a plain string, so the document would be
 // quietly wrong. The mismatched name is the case a build must reject.
@@ -374,6 +364,30 @@ func TestBraceInParameterNameFails(t *testing.T) {
 			d := newGen()
 			register(d)
 			wantBuildErr(t, d, "has a brace inside a path parameter name")
+		})
+	}
+}
+
+// One name for two path segments (/x/{id}/y/{id}) gives the handler one
+// value, so the build fails. chi rejects it inside one pattern, but not
+// across a Mount, and a group prefix can repeat a route's name.
+func TestRepeatedPathParameterFails(t *testing.T) {
+	for name, register := range map[string]func(d *specout.Generator){
+		"document": func(d *specout.Generator) { specout.Document(d, http.MethodGet, "/a/{id}/b/{id}", okGet) },
+		"bind": func(d *specout.Generator) {
+			specout.Bind(d, http.MethodGet, "/a/:id/b/:id", okGet, func(http.Handler) string { return "/a/{id}/b/{id}" })
+		},
+		"chi mount": func(d *specout.Generator) {
+			r, sub := chi.NewRouter(), chi.NewRouter()
+			specout.Chi(d, sub).Get("/b/{id}", okGet)
+			r.Mount("/a/{id}", sub)
+			require.NoError(t, specout.Chi(d, r).Adopt())
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := newGen()
+			register(d)
+			wantBuildErr(t, d, `names the path parameter "id" twice`)
 		})
 	}
 }

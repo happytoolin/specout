@@ -224,6 +224,11 @@ func checkPathParams(rec *routeRecord) error {
 	if strings.ContainsAny(templateParamRe.ReplaceAllString(docPath(rec.full), ""), "{}") {
 		return fmt.Errorf("specout: %s %q has a brace inside a path parameter name", rec.method, rec.pattern)
 	}
+	// one name for two segments gives the handler one value: chi returns the
+	// last, Fiber the first. chi rejects it in one pattern, not across Mount.
+	if name, ok := repeatedParam(docPath(rec.full)); ok {
+		return fmt.Errorf("specout: %s %q names the path parameter %q twice", rec.method, rec.pattern, name)
+	}
 	// a Req field tagged path:"name" with no {name} in the pattern is a
 	// typo: the field leaves the body and the placeholder stays a plain
 	// string.
@@ -235,6 +240,17 @@ func checkPathParams(rec *routeRecord) error {
 		)
 	}
 	return nil
+}
+
+// repeatedParam returns a path parameter name that p uses twice.
+func repeatedParam(p string) (string, bool) {
+	names := pathParams(p)
+	for i, name := range names {
+		if slices.Contains(names[:i], name) {
+			return name, true
+		}
+	}
+	return "", false
 }
 
 // pathClaims holds the documented paths that earlier records claimed.
