@@ -21,7 +21,11 @@ type StdRouter struct {
 	mux *http.ServeMux
 }
 
-// Handle registers h for "METHOD /path" and records its metadata.
+// Handle registers h for "METHOD /path" and records its metadata. net/http
+// serves /a/{$} for /a/ only and /a/ for the paths below it, but both are the
+// OpenAPI path /a/, so the build fails when both are registered here. Register
+// the other one on the mux itself, and give the recorder a specout.Skip for
+// its pattern.
 func (s *StdRouter) Handle[Req, Res any](pattern string, h Handler[Req, Res]) {
 	method, path, ok := strings.Cut(pattern, " ")
 	// one space, absolute path: "GET  /x" would document a path with a

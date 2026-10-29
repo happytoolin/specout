@@ -1,8 +1,10 @@
 package recorder_test
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -23,6 +25,32 @@ func TestStdExactPatternsAreRecorded(t *testing.T) {
 			serve(rec, http.MethodGet, path)
 			assert.Empty(t, verify(d, rec))
 		})
+	}
+}
+
+// net/http serves GET /a/{$} for /a/ only and GET /a/ for the paths below it,
+// but both are the OpenAPI path /a/. The duplicate error says how to keep both
+// routes, and that way works: document one, and serve and skip the other.
+func TestStdExactAndSubtreeShareOnePath(t *testing.T) {
+	for _, order := range [][2]string{{"/a/{$}", "/a/"}, {"/a/", "/a/{$}"}} {
+		d := gen()
+		std := specout.Std(d, http.NewServeMux())
+		std.Get(order[0], nc(hit204))
+		std.Get(order[1], nc(hit204))
+		require.EqualError(t, d.WriteJSON(io.Discard), "specout: duplicate route GET /a/ (registered as "+
+			strconv.Quote(order[0])+" and "+strconv.Quote(order[1])+"): net/http serves both, but OpenAPI "+
+			"has one path for them; document one, register the other on the mux itself, and pass "+
+			"specout.Skip with its pattern to the recorder")
+	}
+
+	for _, skips := range [][]specout.SkipRule{nil, {specout.Skip("/a/")}} {
+		d, r := gen(), http.NewServeMux()
+		specout.Std(d, r).Get("/a/{$}", nc(hit204))
+		r.HandleFunc("GET /a/", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) })
+		rec := recorder.New(r, skips...)
+		serve(rec, http.MethodGet, "/a/")
+		serve(rec, http.MethodGet, "/a/b")
+		assert.Equal(t, skips == nil, findErr(verify(d, rec), "418") != "", "skips %v", skips)
 	}
 }
 

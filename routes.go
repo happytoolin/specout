@@ -309,12 +309,23 @@ func (c *pathClaims) claim(rec *routeRecord) error {
 	key := documented + "|" + rec.method
 	if first, dup := c.operations[key]; dup {
 		return fmt.Errorf(
-			"specout: duplicate route %s %s (registered as %q and %q)",
-			rec.method, documented, first, rec.pattern,
+			"specout: duplicate route %s %s (registered as %q and %q)%s",
+			rec.method, documented, first, rec.pattern, endAnchorHint(first, rec.pattern),
 		)
 	}
 	c.operations[key] = rec.pattern
 	return nil
+}
+
+// endAnchorHint explains a duplicate of std's /a/{$} and /a/: net/http serves
+// the exact path and the paths below it apart, but both are the OpenAPI path
+// /a/, with one drift entry. It says how to keep both routes.
+func endAnchorHint(first, second string) string {
+	if first+"{$}" != second && second+"{$}" != first {
+		return ""
+	}
+	return ": net/http serves both, but OpenAPI has one path for them; document one, " +
+		"register the other on the mux itself, and pass specout.Skip with its pattern to the recorder"
 }
 
 // Routes implements chi.Routes. The generator has no subroutes, so chi.Walk

@@ -443,6 +443,12 @@ documentation.
 `http.ServeMux` cannot list its routes. Use `specout.Std` to register each route
 that needs documentation.
 
+`http.ServeMux` serves `/a/{$}` for `/a/` only, and `/a/` for the paths below
+it. OpenAPI has one path, `/a/`, for both, so the build fails when `specout.Std`
+registers both. Register one with `specout.Std`. Register the other on the mux
+itself, and give the recorder a `specout.Skip` for its pattern, as in
+`recorder.New(mux, specout.Skip("/a/"))`.
+
 The optional `recorder` package can compare response statuses from HTTP tests
 with the declared statuses. It does not check response bodies. With Echo, Gin,
 and Fiber, install the adapter's `Record` middleware.
