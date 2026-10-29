@@ -70,6 +70,18 @@ that contract.
 | Response status checks | The optional `recorder` package checks statuses from HTTP tests with supported routers. It does not check response bodies. |
 | Automatic parsing and validation | Not provided. Your handlers or middleware do this. |
 
+### Types with their own JSON encoding
+
+specout reads the Go fields of a type to make its schema. A type with its own
+`MarshalJSON` method can write a different shape, so specout cannot know that
+shape. Give the type a `JSONSchema()` method, which is the hook of
+[invopop/jsonschema](https://github.com/invopop/jsonschema):
+
+```go
+// Money.MarshalJSON writes a string such as "12.50".
+func (Money) JSONSchema() *jsonschema.Schema { return &jsonschema.Schema{Type: "string"} }
+```
+
 ## Install
 
 Use **Go 1.27 or later**.
