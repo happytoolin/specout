@@ -204,9 +204,47 @@ func Record(rec *recorder.Recorder) gin.HandlerFunc {
 			return
 		}
 		if full := c.FullPath(); full != "" {
-			rec.Observe(c.Request.Method, tablePath(full), c.Writer.Status())
+			rec.Observe(c.Request.Method, tablePath(escapeLiteralColons(full, c.Params)), c.Writer.Status())
 		}
 	}
+}
+
+// escapeLiteralColons puts back the \: escapes that Gin drops from a matched
+// route's full path after the first request. A colon starts a parameter only
+// when the request has that parameter next in order, so any other colon is
+// a literal. A literal colon followed by the name of the next parameter reads
+// as that parameter.
+func escapeLiteralColons(full string, params gin.Params) string {
+	var b strings.Builder
+	next := 0
+	for i := 0; i < len(full); i++ {
+		switch full[i] {
+		case '\\':
+			// an escape Gin kept, for a route added after the first request
+			b.WriteByte(full[i])
+			i++
+		case '*':
+			next++
+		case ':':
+			if next < len(params) && params[next].Key == full[i+1:segmentEnd(full, i+1)] {
+				next++
+			} else {
+				b.WriteByte('\\')
+			}
+		}
+		if i < len(full) {
+			b.WriteByte(full[i])
+		}
+	}
+	return b.String()
+}
+
+// segmentEnd returns the index of the first slash at or after i, or len(p).
+func segmentEnd(p string, i int) int {
+	if n := strings.IndexByte(p[i:], '/'); n >= 0 {
+		return i + n
+	}
+	return len(p)
 }
 
 // joinPaths is Gin's own join of a group base path and a route path: clean
@@ -266,10 +304,7 @@ func openAPIPath(p string) (string, error) {
 // OpenAPI name and the index after it. The name runs to the next slash, and a
 // catch-all must end the path.
 func param(p string, i int) (string, int, error) {
-	end := len(p)
-	if n := strings.IndexByte(p[i:], '/'); n >= 0 {
-		end = i + n
-	}
+	end := segmentEnd(p, i)
 	name := p[i+1 : end]
 	if name == "" || strings.ContainsAny(name, `{}:*\`) {
 		return "", 0, fmt.Errorf("parameter name %q cannot be an OpenAPI parameter", name)

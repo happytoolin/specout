@@ -145,6 +145,30 @@ func TestEscapedColonRecordAfterFirstRequest(t *testing.T) {
 	assert.Empty(t, ft.Errs)
 }
 
+// Middleware that answers before the handler leaves Record only Gin's full
+// path, which spells a literal colon like a parameter after the first request.
+func TestEscapedColonRecordWhenMiddlewareAnswers(t *testing.T) {
+	for _, tc := range []struct{ route, target string }{
+		{`/v1\:batch`, "/v1:batch"},
+		{`/v1\:batch/:id`, "/v1:batch/7"},
+		{`/items/:id/x\:y`, "/items/7/x:y"},
+	} {
+		t.Run(tc.route, func(t *testing.T) {
+			d, e := adaptertest.Generator(), gin.New()
+			rec := recorder.New(nil)
+			e.Use(specoutgin.Record(rec), func(c *gin.Context) { c.AbortWithStatus(http.StatusUnauthorized) })
+			specoutgin.New(d, e).Get(tc.route, specout.Handler[struct{}, specout.NoContent]{
+				HandlerFunc: noContent,
+				Responses:   []specout.Response{{Status: http.StatusUnauthorized}},
+			})
+			require.Equal(t, http.StatusUnauthorized, get(t, e, tc.target).Code)
+			var ft adaptertest.FakeT
+			recorder.Verify(&ft, d, rec)
+			assert.Empty(t, ft.Errs, "the 401 counts for the documented route")
+		})
+	}
+}
+
 // After the first request, Gin's table spells a literal colon and a parameter
 // the same way, so Adopt must find the reading that is documented.
 func TestEscapedColonBesideParameterAfterFirstRequest(t *testing.T) {
