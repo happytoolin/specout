@@ -231,6 +231,12 @@ func checkPathParams(rec *routeRecord) error {
 	if name, ok := repeatedParam(docPath(rec.full)); ok {
 		return fmt.Errorf("specout: %s %q names the path parameter %q twice", rec.method, rec.pattern, name)
 	}
+	// chi reads {x*} as one segment named x*, not as a wildcard, but a * in
+	// the path would drop the route as a catch-all.
+	if name, ok := starredParam(docPath(rec.full)); ok {
+		return fmt.Errorf("specout: %s %q has a * in the path parameter name %q; "+
+			"it is not a wildcard there, so remove it", rec.method, rec.pattern, name)
+	}
 	// a Req field tagged path:"name" with no {name} in the pattern is a
 	// typo: the field leaves the body and the placeholder stays a plain
 	// string.
@@ -242,6 +248,18 @@ func checkPathParams(rec *routeRecord) error {
 		)
 	}
 	return nil
+}
+
+// starredParam returns a path parameter name of p that holds a *. A
+// catch-all such as {*...}, which the adapters write for a wildcard, is no
+// parameter name.
+func starredParam(p string) (string, bool) {
+	for _, name := range pathParams(p) {
+		if strings.Contains(name, "*") && !strings.HasSuffix(name, "...") {
+			return name, true
+		}
+	}
+	return "", false
 }
 
 // repeatedParam returns a path parameter name that p uses twice.

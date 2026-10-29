@@ -264,8 +264,9 @@ func TestDocumentRejectsNonOpenAPIPaths(t *testing.T) {
 		"/items/:id": "uses router syntax :id; write the parameter as {id}",
 		"/items/{id": "{ without a matching }",
 		"/items/id}": "} without a matching {",
-		"/a//b":      "drop {$} and empty segments",
-		"/c/{$}":     "drop {$} and empty segments",
+		"/a//b":      "drop {$}, empty segments and dot segments",
+		"/c/{$}":     "drop {$}, empty segments and dot segments",
+		"/d/./e":     "drop {$}, empty segments and dot segments",
 		"items/{id}": "must start with /",
 	} {
 		t.Run(pattern, func(t *testing.T) {
@@ -275,6 +276,56 @@ func TestDocumentRejectsNonOpenAPIPaths(t *testing.T) {
 	}
 	// a colon inside a segment is a literal, as in AIP custom methods
 	assert.Contains(t, docOf(t, http.MethodPost, "/items/{id}:cancel", okGet)["paths"], "/items/{id}:cancel")
+}
+
+// chi matches /a//b and /a/./b only as written, and Fiber never matches
+// them, but clients clean them, so the document would name another path. The
+// chi binder rejects them before chi changes, and Bind before it records.
+func TestEmptyAndDotSegmentsPanic(t *testing.T) {
+	for _, p := range []string{"/a//b", "/a/./b", "/a/../b", "/a/..", "//a"} {
+		t.Run(p, func(t *testing.T) {
+			r, d := chi.NewRouter(), newGen()
+			msg := fmt.Sprint(panicValue(func() { specout.Chi(d, r).Get(p, okGet) }))
+			assert.Contains(t, msg, "specout: chi route GET "+p+": the path has")
+			assert.Empty(t, r.Routes(), "the rejected route reached chi")
+			msg = fmt.Sprint(panicValue(func() {
+				specout.Bind(d, http.MethodGet, p, okGet, func(http.Handler) string { return p })
+			}))
+			assert.Contains(t, msg, "mounted at "+p+": the path has")
+			assert.Empty(t, docPaths(t, d))
+		})
+	}
+	// a parameter regex may hold slashes and dots
+	d, r := newGen(), chi.NewRouter()
+	specout.Chi(d, r).Get("/", okGet)
+	specout.Chi(d, r).Get("/v/{n:[0-9]+\\.[0-9]+}", okGet)
+	specout.Bind(d, http.MethodGet, "/files/", okGet, func(http.Handler) string { return "/files/" })
+	require.NoError(t, specout.Chi(d, r).Adopt())
+	assert.Equal(t, []string{"/", "/files/", "/v/{n}"}, keys(docPaths(t, d)))
+}
+
+// chi reads {x*} as one segment named x*, but specout read the * as a
+// wildcard and left the route out of the document.
+func TestStarInParameterNameFails(t *testing.T) {
+	d, r := newGen(), chi.NewRouter()
+	specout.Chi(d, r).Get("/a/{x*}", okGet)
+	require.NoError(t, specout.Chi(d, r).Adopt())
+	wantBuildErr(t, d, `has a * in the path parameter name "x*"`)
+}
+
+// chi ends a parameter at the next pattern character and lets the regex
+// decide what comes before it, so /a/{x:.+}.json serves /a/b/c.json: a
+// catch-all. Before a slash or at the end, the parameter stays one segment.
+func TestChiRegexAcrossSegmentsIsACatchAll(t *testing.T) {
+	d, r := newGen(), chi.NewRouter()
+	b := specout.Chi(d, r)
+	b.Get("/a/{x:.+}.json", okGet)
+	b.Get("/b/{x:[a-z/]+}-v", okGet)
+	b.Get("/c/{x:.+}", okGet)
+	b.Get("/d/{x:.+}/e", okGet)
+	b.Get("/f/{x:[^/]+}.json", okGet)
+	require.NoError(t, b.Adopt())
+	assert.Equal(t, []string{"/c/{x}", "/d/{x}/e", "/f/{x}.json"}, keys(docPaths(t, d)))
 }
 
 func TestBindRecordsOnlyAfterTheRouterAccepts(t *testing.T) {

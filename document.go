@@ -16,10 +16,11 @@ func Document[Req, Res any](d *Generator, method, pattern string, h Handler[Req,
 		panic("specout: Document pattern " + pattern + " uses router syntax " + seg +
 			"; write the parameter as {" + seg[1:] + "}")
 	}
-	// {$} is the std mux end anchor, and // an empty segment: either would
-	// reach the document as written, unlike the path the router matches.
-	if strings.Contains(pattern, "{$}") || strings.Contains(pattern, "//") {
-		panic("specout: Document pattern " + pattern + " is not an OpenAPI path; drop {$} and empty segments")
+	// {$} is the std mux end anchor, and // and /. are segments a request
+	// cannot carry as written: each would reach the document as written,
+	// unlike the path the router matches.
+	if strings.Contains(pattern, "{$}") || checkSegments(pattern) != "" {
+		panic("specout: Document pattern " + pattern + " is not an OpenAPI path; drop {$}, empty segments and dot segments")
 	}
 	checkMethod(method)
 	rec := recOf(h)

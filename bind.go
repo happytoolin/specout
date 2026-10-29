@@ -1,6 +1,7 @@
 package specout
 
 import (
+	"cmp"
 	"net/http"
 	"strconv"
 	"strings"
@@ -27,7 +28,7 @@ func Bind[Req, Res any](d *Generator, method, pattern string, h Handler[Req, Res
 	rec.absolute, rec.literalStars, rec.byPath = true, true, true
 	d.addRoute(rec, func(rec *routeRecord) {
 		rec.full = mount(rec)
-		if err := checkOpenAPIPath(rec.full); err != "" {
+		if err := cmp.Or(checkOpenAPIPath(rec.full), checkSegments(rec.full)); err != "" {
 			panic("specout: " + method + " " + pattern + " mounted at " + rec.full + ": " + err)
 		}
 		// Some routers let a later route replace an earlier one (Echo's
@@ -78,6 +79,27 @@ func checkOpenAPIPath(p string) string {
 	}
 	if depth != 0 {
 		return "the path has a { without a matching }"
+	}
+	return ""
+}
+
+// checkSegments returns why p has a segment that a request cannot carry as
+// written, or "" when it has none: an empty segment (//), or a dot segment
+// (/. or /..). Clients and most routers clean those from the request path,
+// and chi matches them only as written, so the document would name a path
+// that differs from the one served. Parameter regexes may hold any of them.
+func checkSegments(p string) string {
+	p = strings.TrimSuffix(strings.TrimPrefix(docPath(p), "/"), "/")
+	if p == "" {
+		return ""
+	}
+	for seg := range strings.SplitSeq(p, "/") {
+		switch seg {
+		case "":
+			return "the path has an empty segment (//)"
+		case ".", "..":
+			return "the path has a dot segment (/" + seg + ")"
+		}
 	}
 	return ""
 }

@@ -25,11 +25,30 @@ func docPath(p string) string {
 }
 
 // isCatchAll reports patterns OpenAPI cannot express: trailing wildcards,
-// the chi form (/files/*), the std multi-segment form (/files/{path...}) and
-// a gorilla parameter whose regex matches a slash (/files/{path:.*}).
+// the chi form (/files/*), the std multi-segment form (/files/{path...}), a
+// gorilla parameter whose regex matches a slash (/files/{path:.*}) and a
+// chi one that can match a slash before more text in its segment.
 func (rec *routeRecord) isCatchAll() bool {
 	p := docPath(rec.full)
-	return rec.catchAll || (!rec.literalStars && strings.Contains(p, "*")) || strings.Contains(p, "...}")
+	return rec.catchAll || (!rec.literalStars && strings.Contains(p, "*")) || strings.Contains(p, "...}") ||
+		(!rec.absolute && chiSpansSegments(rec.full))
+}
+
+// chiSpansSegments reports a chi parameter that can match across segments.
+// chi ends a parameter at the next character of the pattern, a slash when
+// none follows, and lets the regex decide what comes before it. So
+// /a/{x:.+}.json matches /a/b/c.json, but /a/{x:.+} matches one segment.
+func chiSpansSegments(p string) bool {
+	for _, m := range pathParamRe.FindAllStringSubmatchIndex(p, -1) {
+		end := m[1]
+		if m[4] < 0 || end == len(p) || p[end] == '/' {
+			continue
+		}
+		if matchesSlash(p[m[4]+1 : m[5]]) {
+			return true
+		}
+	}
+	return false
 }
 
 // openAPIMethods is the path-item key set (finding 17): a token like CONNECT

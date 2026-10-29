@@ -41,6 +41,11 @@ type ChiRouter struct {
 func (c *ChiRouter) source() { c.d.addSource(chiWalkSource{c.r}) }
 
 func (c *ChiRouter) register(method, pattern string, rec routeRecord) {
+	// chi matches /a//b and /a/./b only as written, but clients clean them
+	// and the document would show /a/b.
+	if msg := checkSegments(pattern); msg != "" {
+		panic("specout: chi route " + method + " " + pattern + ": " + msg)
+	}
 	rec.method, rec.pattern = method, pattern
 	c.d.addRoute(rec, func(rec *routeRecord) {
 		c.r.Method(method, pattern, rec)

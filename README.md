@@ -373,6 +373,13 @@ This resolves paths from route groups and mounted routers. When the document is
 served through chi, the build fails if an adopted router is mounted under a
 prefix that no server URL declares.
 
+A path that a request cannot carry as written, with an empty segment (`//`) or
+a dot segment (`/.`, `/..`), panics at registration. Clients remove those
+segments, and the document would name a different path. A chi parameter whose
+regex can match a `/` before more text in its segment, such as
+`/files/{name:.+}.json`, spans segments. The document leaves it out, as it does
+every catch-all route.
+
 Each adapter writes the router's path syntax in OpenAPI form. For example,
 `/items/:id` becomes `/items/{id}`. Your handler reads the parameter with
 `r.PathValue("id")` on every router.
