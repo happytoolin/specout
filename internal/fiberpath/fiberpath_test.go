@@ -101,25 +101,3 @@ func TestShadowedByFold(t *testing.T) {
 			"pkg: GET "+tc.second+" never runs: Fiber sends its requests to GET "+tc.first+", an earlier route"+guardHint)
 	}
 }
-
-func TestV2Misread(t *testing.T) {
-	for p, want := range map[string]byte{
-		`/:id<regex(\d{4})>\:x`:     '\\',
-		`/:a<int>-:b<regex(\d)>\:x`: '\\',
-		`/:id<regex(\d)>\ax`:        '\\',
-		`/:id<regex(a.b)>.x`:        '.',
-		`/:id<regex(a-b)>-x`:        '-',
-		`/:id<regex(\d-)>\-x`:       '-',
-		`/:id<regex(a\.b)>.x`:       '.',
-		`/:id<regex([0-9])>\:x`:     0,
-		`/:id<regex(\d)>\-x`:        0,
-		`/:id<regex(\d)>/\:x`:       0,
-		`/:id<regex(a.b)>-x`:        0,
-		`/:id<regex(a\x2eb)>.x`:     0,
-		`/:id<regex(a\:b)>`:         0,
-		`/x\:y/:id<int>`:            0,
-		`/:id<regex(\d)`:            0,
-	} {
-		assert.Equal(t, want, fiberpath.V2Misread(p), p)
-	}
-}

@@ -14,7 +14,6 @@ route or status verification.
 | `github.com/labstack/echo/v4` | `specoutechov4.New` | `specoutechov4.Adopt` reads the Echo route tables. |
 | `github.com/gin-gonic/gin` | `specoutgin.New` | `specoutgin.Adopt` reads the Gin route table. |
 | `github.com/gofiber/fiber/v3` | `specoutfiber.New` | `specoutfiber.Adopt` reads the Fiber route table. |
-| `github.com/gofiber/fiber/v2` | `specoutfiberv2.New` | `specoutfiberv2.Adopt` reads the Fiber route table. |
 | Other routers | `specout.Bind` or `specout.Document` | `Bind` registers and records. `Document` records metadata only. |
 
 The Echo, Gin, and Fiber adapters are in separate packages, so the root package
@@ -25,7 +24,6 @@ import (
 	"github.com/happytoolin/specout/adapters/specoutecho"    // Echo v5
 	"github.com/happytoolin/specout/adapters/specoutechov4"  // Echo v4
 	"github.com/happytoolin/specout/adapters/specoutfiber"   // Fiber v3
-	"github.com/happytoolin/specout/adapters/specoutfiberv2" // Fiber v2
 	"github.com/happytoolin/specout/adapters/specoutgin"
 )
 ```
@@ -278,40 +276,6 @@ requests on to the later routes, so skip the guard with `specout.Skip`.
 Register routes on the app that serves them. A sub-app mounted with `app.Use`
 changes the path after registration. Use a group instead.
 
-## Fiber v2
-
-The `specoutfiberv2` package has the same API as `specoutfiber`, with
-`*fiber.Ctx` handlers:
-
-```go
-app := fiber.New()
-routes := specoutfiberv2.New(doc, app.Group("/v1"))
-routes.Get("/items/:id<int>", getItem)
-app.Get("/openapi.json", adaptor.HTTPHandler(doc))
-
-if err := specoutfiberv2.Adopt(doc, app, specout.Skip("/openapi.json")); err != nil {
-	return err
-}
-```
-
-Fiber v2 reads paths as Fiber v3 does, so the path table above applies. These
-differences remain:
-
-- `Get` registers the `GET` route with Fiber's own `Get`, which adds the `HEAD`
-  route at registration. `Adopt` does not report that `HEAD` route. It takes
-  requests, so `Adopt` reports a later `HEAD /users/me` after
-  `GET /users/:id`, which never runs.
-- Fiber v2 appends a later route on the same path to the earlier one and runs
-  the earlier one first. So a `Head` after a `Get` on the same path panics.
-  Register `Head` first.
-- A Fiber v2 bug ends a parameter at the wrong place when its constraint
-  holds the delimiter that follows it
-  ([gofiber/fiber#4817](https://github.com/gofiber/fiber/issues/4817)). For
-  example, `/:id<regex(a.b)>.x` takes `.x` into `id`, and
-  `/:id<regex(\d)>\:x` reads `:x` as a parameter. Such a route panics at
-  registration. Remove the delimiter from the constraint, as `[0-9]` for `\d`
-  or `\x2e` for a dot.
-- Fiber v2 has no domain router.
 ## Path rules for Echo, Gin, and Fiber
 
 Literal `{` and `}` in a route path panic at registration, because OpenAPI

@@ -56,7 +56,7 @@ that contract.
 | Feature | Support |
 |---|---|
 | Document format | OpenAPI 3.1 and JSON Schema 2020-12. |
-| Router adapters | `http.ServeMux`, chi, gorilla/mux, Echo v4 and v5, Gin, and Fiber v2 and v3. |
+| Router adapters | `http.ServeMux`, chi, gorilla/mux, Echo v4 and v5, Gin, and Fiber v3. |
 | Other routers | Use `specout.Bind` to write a small adapter, or `specout.Document` for metadata only. |
 | Request parameters | Path, query, header, and cookie parameters. |
 | Request bodies | JSON, binary files, multipart uploads, and custom media types. |
@@ -363,7 +363,6 @@ for code examples.
 | Echo v4 | `specoutechov4.New` | `github.com/happytoolin/specout/adapters/specoutechov4` |
 | Gin | `specoutgin.New` | `github.com/happytoolin/specout/adapters/specoutgin` |
 | Fiber v3 | `specoutfiber.New` | `github.com/happytoolin/specout/adapters/specoutfiber` |
-| Fiber v2 | `specoutfiberv2.New` | `github.com/happytoolin/specout/adapters/specoutfiberv2` |
 
 The Echo, Gin, and Fiber adapters are separate packages. The root package does
 not import those frameworks.
@@ -417,9 +416,7 @@ Fiber runs the first route that matches a request. So with Fiber, `Adopt`
 also reports a route that never runs. For example, `/users/:id` takes the
 requests of a later `/users/me`, and `/files/*` takes the requests of a later
 `/files/:name`. With the default Fiber configuration, `/users` also takes the
-requests of a later `/Users` and `/users/`. With Fiber v2, `Get` also adds a
-HEAD route, so `GET /users/:id` takes the requests of a later
-`HEAD /users/me`.
+requests of a later `/Users` and `/users/`.
 
 A guard route that calls `c.Next()` sends its requests on to the later routes.
 `Adopt` cannot see that call, so skip the guard with `specout.Skip`, as in

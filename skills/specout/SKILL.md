@@ -62,9 +62,8 @@ Register every route, union variant, and schema name before the first
 For chi and gorilla/mux, call `Adopt` on the outermost router after route setup.
 For Echo, Gin, and Fiber, use the adapter packages under `adapters/` and call
 their package-level `Adopt` on the engine or app: `specoutecho` (Echo v5),
-`specoutechov4` (Echo v4), `specoutgin`, `specoutfiber` (Fiber v3), and
-`specoutfiberv2` (Fiber v2). Use `RequireDocumented` in
-tests when route coverage matters. http.ServeMux cannot enumerate routes, so
+`specoutechov4` (Echo v4), `specoutgin`, and `specoutfiber` (Fiber v3). Use
+`RequireDocumented` in tests when route coverage matters. http.ServeMux cannot enumerate routes, so
 register documented endpoints through `specout.Std`. Use `specout.Bind` or
 `specout.Document` for other routers.
 
