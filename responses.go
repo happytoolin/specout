@@ -95,13 +95,13 @@ func resDefault(rec *routeRecord) (respEntry, bool) {
 }
 
 // declaredType is the body type of an explicit Response: its Type, else Res.
-// 204 and 304 carry no body: inheriting Res would emit content the HTTP spec
-// forbids. An explicit Type still wins.
+// 1xx, 204, 205 and 304 carry no body: inheriting Res would emit content the
+// HTTP spec forbids. An explicit Type still wins.
 func declaredType(res reflect.Type, resp *Response) reflect.Type {
 	if resp.Type != nil {
 		return reflect.TypeOf(resp.Type)
 	}
-	if bodyless(resp.Status) {
+	if bodyless(resp.Status) || resp.Key == "1XX" {
 		return nil
 	}
 	return res
@@ -163,9 +163,11 @@ func newRespEntry(code int, t reflect.Type) respEntry {
 	return respEntry{key: responseKey(code, ""), code: code, typ: t}
 }
 
-// bodyless reports whether a status carries no body.
+// bodyless reports whether a status carries no body: RFC 9110 forbids content
+// in a 1xx, 204, 205 or 304 response.
 func bodyless(code int) bool {
-	return code == http.StatusNoContent || code == http.StatusNotModified
+	return (code >= http.StatusContinue && code < http.StatusOK) || code == http.StatusNoContent ||
+		code == http.StatusResetContent || code == http.StatusNotModified
 }
 
 // putDefaultErrors adds the configured error responses for every code the route

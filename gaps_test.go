@@ -41,17 +41,18 @@ func TestGapRangeCode(t *testing.T) {
 	assert.False(t, declared[key][200], "Omit must drop the Res default from coverage")
 }
 
-// TestGapNoBodyStatuses: a bare 204 or 304 carries no body. HTTP forbids
-// content there, and inheriting Res would leak the handler's schema into it.
+// TestGapNoBodyStatuses: a bare 1xx, 204, 205 or 304 carries no body. HTTP
+// forbids content there, and inheriting Res would leak the handler's schema
+// into it.
 func TestGapNoBodyStatuses(t *testing.T) {
 	d := newGen()
 	r := chi.NewRouter()
 	specout.Chi(d, r).Get("/gone", specout.Handler[struct{}, gapRes]{
 		HandlerFunc: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) },
-		Responses:   []specout.Response{{Status: 204}, {Status: 304}},
+		Responses:   []specout.Response{{Status: 101}, {Status: 204}, {Status: 205}, {Status: 304}, {Key: "1XX"}},
 	})
 	responses := opOf(t, serveDoc(t, d, r), "/gone", "get")["responses"].(map[string]any)
-	for _, code := range []string{"204", "304"} {
+	for _, code := range []string{"101", "204", "205", "304", "1XX"} {
 		resp, ok := responses[code].(map[string]any)
 		require.True(t, ok, "missing %s", code)
 		assert.NotContains(t, resp, "content", "%s must carry no content", code)
