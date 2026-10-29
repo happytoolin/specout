@@ -1,6 +1,7 @@
 package specout
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"strings"
@@ -46,7 +47,7 @@ func (d *Generator) operationFor(rec *routeRecord, sr *schemaRegistry) *obj {
 		op.set("requestBody", requestBodyObj(rec, bt, sr))
 	}
 	op.set("responses", d.responsesFor(rec, sr))
-	return mergeRaw(op, rec.raw)
+	return mergeRaw(op, rec.raw, operationFields)
 }
 
 // operationID derives a deterministic id from method+path:
@@ -70,6 +71,15 @@ func operationID(method, path string) string {
 	return b.String()
 }
 
+// emittedOperationID is the operationId the document carries for rec. A Raw
+// operationId wins, because mergeRaw applies Raw last.
+func emittedOperationID(rec *routeRecord) string {
+	if id, ok := rec.raw["operationId"].(string); ok {
+		return id
+	}
+	return cmp.Or(rec.operationID, operationID(rec.method, docPath(rec.full)))
+}
+
 // checkOperationIDs fails loud when two operations would share an id:
 // client codegen assumes uniqueness.
 func checkOperationIDs(records []*routeRecord) error {
@@ -78,10 +88,7 @@ func checkOperationIDs(records []*routeRecord) error {
 		if rec.isCatchAll() {
 			continue
 		}
-		id := rec.operationID
-		if id == "" {
-			id = operationID(rec.method, docPath(rec.full))
-		}
+		id := emittedOperationID(rec)
 		if id == "" {
 			continue
 		}

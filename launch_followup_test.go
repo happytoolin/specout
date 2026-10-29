@@ -137,6 +137,40 @@ func TestLaunchRawResponseMustBeAnObject(t *testing.T) {
 	})
 }
 
+func TestLaunchOperationsThatBreakTheDocument(t *testing.T) {
+	get := specout.Get[string]{HandlerFunc: noop}
+	for _, tc := range []struct {
+		name, want string
+		h          specout.Get[string]
+	}{
+		{
+			"every response omitted", "specout: GET /x omits every response; declare at least one",
+			get.WithResponse(specout.Response{Status: http.StatusOK, Omit: true}),
+		},
+		{
+			"unknown operation Raw key", `specout: Raw key "securitySchemes" is not an OpenAPI field or an x- extension`,
+			get.WithRaw(map[string]any{"securitySchemes": []any{}}),
+		},
+		{
+			"unknown response Raw key", `specout: Raw key "foo" is not an OpenAPI field or an x- extension`,
+			get.WithResponse(specout.Response{Status: http.StatusOK, Raw: map[string]any{"foo": 1}}),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := newGen()
+			specout.Document(d, http.MethodGet, "/x", tc.h)
+			assert.PanicsWithValue(t, tc.want, func() { _ = d.WriteJSON(io.Discard) })
+		})
+	}
+}
+
+func TestLaunchRawOperationIDMustBeUnique(t *testing.T) {
+	d := newGen()
+	specout.Document(d, http.MethodGet, "/a", specout.Get[string]{HandlerFunc: noop, Raw: map[string]any{"operationId": "getB"}})
+	specout.Document(d, http.MethodGet, "/b", specout.Get[string]{HandlerFunc: noop})
+	wantBuildErr(t, d, "specout: duplicate operationId getB (GET /a and GET /b)")
+}
+
 func TestLaunchUnionNameCollisionWithNestedComponent(t *testing.T) {
 	type response struct {
 		Value launchEnvelopeVariant1 `json:"value"`

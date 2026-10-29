@@ -192,6 +192,10 @@ func (d *Generator) responsesFor(rec *routeRecord, sr *schemaRegistry) *obj {
 	for _, e := range d.responsePlan(rec, true) {
 		out.set(e.key, responseBody(e, sr))
 	}
+	// OpenAPI requires at least one response
+	if len(out.keys) == 0 {
+		panic("specout: " + rec.method + " " + docPath(rec.full) + " omits every response; declare at least one")
+	}
 	return out
 }
 
@@ -222,7 +226,7 @@ func responseBody(e respEntry, sr *schemaRegistry) *obj {
 	if len(resp.Headers) > 0 {
 		body.set("headers", responseHeaders(resp.Headers, sr))
 	}
-	return mergeRaw(body, resp.Raw)
+	return mergeRaw(body, resp.Raw, responseFields)
 }
 
 // binaryContent is the content object for Response.ContentType: one media type
@@ -303,9 +307,23 @@ func checkedKey(code int, key string) string {
 	return key
 }
 
-// mergeRaw splices arbitrary OpenAPI fragments into a response object.
-func mergeRaw(base *obj, raw map[string]any) *obj {
+// The fields an OpenAPI 3.1 Operation and Response object may carry. Any other
+// key, except an x- extension, makes the document invalid.
+var (
+	operationFields = []string{
+		"tags", "summary", "description", "externalDocs", "operationId", "parameters",
+		"requestBody", "responses", "callbacks", "deprecated", "security", "servers",
+	}
+	responseFields = []string{"description", "headers", "content", "links"}
+)
+
+// mergeRaw splices arbitrary OpenAPI fragments into an operation or response
+// object. fields lists the keys that object may carry.
+func mergeRaw(base *obj, raw map[string]any, fields []string) *obj {
 	for _, k := range sortedKeys(raw) {
+		if !strings.HasPrefix(k, "x-") && !slices.Contains(fields, k) {
+			panic("specout: Raw key " + strconv.Quote(k) + " is not an OpenAPI field or an x- extension")
+		}
 		base.set(k, raw[k])
 	}
 	return base
