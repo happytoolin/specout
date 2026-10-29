@@ -190,6 +190,9 @@ differences remain:
   panics on the second registration, and the path then answers `404`.
 - `Any` adds one route for each of 11 methods. `Adopt` reports them as one
   `(no method constraint)` route. `Adopt` also reads the routers of `e.Host`.
+  A documented route documents its own router only. A host route that you
+  register on Echo itself, on the method and path of a documented route of
+  another router, is reported with its host, as `GET api.example.com/items`.
 - `Record` records a request only when the route table has a route for its
   method. Echo v4 keeps the route path in the context for a `405` and for its
   automatic `OPTIONS` answer.

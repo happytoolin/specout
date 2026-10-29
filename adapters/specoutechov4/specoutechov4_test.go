@@ -240,6 +240,21 @@ func TestAdoptCoversHostRouters(t *testing.T) {
 	assert.Equal(t, []string{"GET /plain"}, adaptertest.Strays(t, specoutechov4.Adopt(d, e)))
 }
 
+// A documented route documents its own router. A host route on its method and
+// path that no Router registered serves other requests, and Adopt reports it
+// with its host.
+func TestAdoptReportsHostRouteBesideDocumentedRoute(t *testing.T) {
+	d, e := adaptertest.Generator(), echo.New()
+	specoutechov4.New(d, e).Get("/items", okRoute)
+	e.Host("api.example.com").GET("/items", func(c echo.Context) error {
+		return c.NoContent(http.StatusAccepted)
+	})
+	assert.Equal(t, http.StatusAccepted, get(t, e, "http://api.example.com/items").Code)
+	assert.Equal(t, http.StatusNoContent, get(t, e, "/items").Code)
+	assert.Equal(t, []string{"GET api.example.com/items"}, adaptertest.Strays(t, specoutechov4.Adopt(d, e)))
+	require.NoError(t, specoutechov4.Adopt(d, e, specout.Skip("/items")))
+}
+
 func TestRequireDocumented(t *testing.T) {
 	d, e := adaptertest.Generator(), echo.New()
 	specoutechov4.New(d, e).Get("/documented", okRoute)

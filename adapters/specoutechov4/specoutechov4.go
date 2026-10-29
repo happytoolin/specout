@@ -9,9 +9,11 @@ package specoutechov4
 import (
 	"cmp"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"slices"
+	"sync"
 	"sync/atomic"
 
 	"github.com/happytoolin/specout"
@@ -52,9 +54,12 @@ func (b *Router) Handle[Req, Res any](method, path string, h specout.Handler[Req
 	// replaces an earlier one on its path. So the route answers 404 until Bind
 	// returns: a registration that panics serves nothing, even when the caller
 	// recovers.
-	var bound atomic.Bool
+	var (
+		bound atomic.Bool
+		route *echo.Route
+	)
 	specout.Bind(b.d, method, path, h, func(next http.Handler) string {
-		route := b.r.Add(method, path, func(c echo.Context) error {
+		route = b.r.Add(method, path, func(c echo.Context) error {
 			if !bound.Load() {
 				return echo.ErrNotFound
 			}
@@ -69,8 +74,14 @@ func (b *Router) Handle[Req, Res any](method, path string, h specout.Handler[Req
 		}
 		return full
 	})
+	registered.Store(route, struct{}{})
 	bound.Store(true)
 }
+
+// registered holds each Echo route that a Router registered, for Adopt. Echo
+// lists the same *echo.Route in its route table until a later route on the
+// path replaces it.
+var registered sync.Map
 
 // serve runs next for one request. Echo v4 keeps path parameters on its own
 // context, so they are copied onto the request first, as Echo v5's
@@ -154,10 +165,20 @@ var anyMethods = []string{
 // method. Echo v4 lists an Any route once per method; Adopt reports it once.
 // The 404 routes that Echo adds for group middleware are not endpoints and are
 // skipped. Skip the spec endpoint itself, as in specout.Skip("/openapi.json").
+//
+// A route documents its own router only. A host route that no Router
+// registered, on the method and path of a route that a Router registered on
+// another router, is reported with its host, as GET api.example.com/items.
 func Adopt(d *specout.Generator, e *echo.Echo, skips ...specout.SkipRule) error {
+	hosts := e.Routers()
+	own := ownKeys(e.Router().Routes())
+	for _, host := range hosts {
+		maps.Copy(own, ownKeys(host.Routes()))
+	}
 	routes := routeKeys(e.Router().Routes())
-	for _, host := range e.Routers() {
+	for name, host := range hosts {
 		routes = append(routes, routeKeys(host.Routes())...)
+		routes = append(routes, twins(name, host.Routes(), own, skips)...)
 	}
 	// Echo keeps its route tables in maps, so sort for a stable report.
 	slices.SortFunc(routes, func(a, b specout.RouteKey) int {
@@ -188,6 +209,38 @@ func routeKeys(table []*echo.Route) []specout.RouteKey {
 		}
 		for method := range methods {
 			keys = append(keys, specout.RouteKey{Method: method, Path: echopath.Table(p)})
+		}
+	}
+	return keys
+}
+
+// ownKeys returns the key of each route of table that a Router registered.
+func ownKeys(table []*echo.Route) map[specout.RouteKey]bool {
+	own := make(map[specout.RouteKey]bool)
+	for _, ri := range table {
+		if _, ok := registered.Load(ri); ok {
+			own[specout.RouteKey{Method: ri.Method, Path: echopath.Table(ri.Path)}] = true
+		}
+	}
+	return own
+}
+
+// twins returns a key, with host before the path, for each route of host's
+// table that no Router registered and that has the key of a route in own. A
+// route on host cannot share its key with another route of host, so that
+// route is on another router. No document path starts with a host, so
+// CheckRoutes reports the key. A route that skips cover stays out.
+func twins(
+	host string, table []*echo.Route, own map[specout.RouteKey]bool, skips []specout.SkipRule,
+) []specout.RouteKey {
+	var keys []specout.RouteKey
+	for _, ri := range table {
+		key := specout.RouteKey{Method: ri.Method, Path: echopath.Table(ri.Path)}
+		if _, ok := registered.Load(ri); ok || !own[key] {
+			continue
+		}
+		if !slices.ContainsFunc(skips, func(s specout.SkipRule) bool { return s.Matches(key.Path) }) {
+			keys = append(keys, specout.RouteKey{Method: key.Method, Path: host + key.Path})
 		}
 	}
 	return keys
