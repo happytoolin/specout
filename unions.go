@@ -260,7 +260,11 @@ func (sr *schemaRegistry) payloadSchema(payload *jsonschema.Schema, ref string) 
 }
 
 // variantShape is the schema of t with the variant ref in place of its any.
+// A payload that holds no any, such as json.RawMessage, is the variant.
 func variantShape(t reflect.Type, ref string) *jsonschema.Schema {
+	if !holdsVariants(t) {
+		return &jsonschema.Schema{Ref: ref}
+	}
 	switch t.Kind() {
 	case reflect.Slice, reflect.Array:
 		return &jsonschema.Schema{Type: typeArray, Items: variantElem(t.Elem(), ref)}
@@ -268,6 +272,18 @@ func variantShape(t reflect.Type, ref string) *jsonschema.Schema {
 		return &jsonschema.Schema{Type: typeObject, AdditionalProperties: variantElem(t.Elem(), ref)}
 	default:
 		return &jsonschema.Schema{Ref: ref}
+	}
+}
+
+// holdsVariants reports whether t is a list or map whose elements are an
+// interface, directly or in nested lists and maps.
+func holdsVariants(t reflect.Type) bool {
+	switch t.Kind() {
+	case reflect.Slice, reflect.Array, reflect.Map:
+		elem := deref(t.Elem())
+		return elem.Kind() == reflect.Interface || holdsVariants(elem)
+	default:
+		return false
 	}
 }
 

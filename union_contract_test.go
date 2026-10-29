@@ -1,6 +1,7 @@
 package specout_test
 
 import (
+	jsonv1 "encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -289,4 +290,34 @@ func TestLaunchUnionPayloadInContainers(t *testing.T) {
 	}}, data("pointersVariant1"))
 	assert.Equal(t, map[string]any{"type": "array", "items": emailRef, "minItems": float64(2), "maxItems": float64(2)},
 		data("fixedVariant1"))
+}
+
+func TestLaunchRawUnionPayloadIsTheVariant(t *testing.T) {
+	type raw struct {
+		Kind string            `json:"kind" jsonschema:"enum=email|slack,description=Discriminator"`
+		Data jsonv1.RawMessage `json:"data" jsonschema:"oneof_type=email|slack"`
+	}
+	type nested struct {
+		Kind string  `json:"kind" jsonschema:"enum=email|slack,description=Discriminator"`
+		Data [][]any `json:"data" jsonschema:"oneof_type=email|slack"`
+	}
+	d := newGen()
+	d.Register[unionEmail]("email")
+	d.Register[unionSlack]("slack")
+	specout.Document(d, http.MethodGet, "/raw", specout.Get[raw]{HandlerFunc: noop})
+	specout.Document(d, http.MethodGet, "/nested", specout.Get[nested]{HandlerFunc: noop})
+	doc := buildDoc(t, d)
+	schema := launchResponseSchema(t, doc, "/raw", "get")
+	exportLaunchSamples(t, doc,
+		launchSample{"raw payload", schema, raw{Kind: "email", Data: jsonv1.RawMessage(`{"address":"ops@example.com"}`)}, true},
+		launchSample{"listed raw payload", schema, raw{Kind: "email", Data: jsonv1.RawMessage(`[{"address":"ops@example.com"}]`)}, false},
+	)
+	components := schemas(t, doc)
+	data := func(branch string) any {
+		return components[branch].(map[string]any)["properties"].(map[string]any)["data"]
+	}
+	emailRef := map[string]any{"$ref": "#/components/schemas/unionEmail"}
+	assert.Equal(t, emailRef, data("rawVariant1"))
+	assert.Equal(t, map[string]any{"type": "array", "items": map[string]any{"type": "array", "items": emailRef}},
+		data("nestedVariant1"))
 }
