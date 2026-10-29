@@ -459,17 +459,43 @@ type uncomparableRoutes struct {
 	_ []int
 }
 
+// wrappedRouter has a type that Go can compare, but == panics when its field
+// holds a value that Go cannot compare.
+type wrappedRouter struct{ chi.Router }
+
 func TestServeIgnoresUncomparableChiRoutes(t *testing.T) {
-	captureLog(t)
-	d := newGen()
-	specout.Chi(d, chi.NewRouter()).Get("/never", okGet)
-	rctx := chi.NewRouteContext()
-	rctx.Routes = uncomparableRoutes{Mux: chi.NewRouter()}
-	for range 2 {
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/openapi.json", http.NoBody)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-		w := httptest.NewRecorder()
-		require.NotPanics(t, func() { d.ServeHTTP(w, req) })
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	for name, routes := range map[string]chi.Routes{
+		"uncomparable type":  uncomparableRoutes{Mux: chi.NewRouter()},
+		"uncomparable field": wrappedRouter{Router: uncomparableRoutes{Mux: chi.NewRouter()}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			captureLog(t)
+			d := newGen()
+			specout.Chi(d, chi.NewRouter()).Get("/never", okGet)
+			rctx := chi.NewRouteContext()
+			rctx.Routes = routes
+			for range 2 {
+				req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/openapi.json", http.NoBody)
+				req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+				w := httptest.NewRecorder()
+				require.NotPanics(t, func() { d.ServeHTTP(w, req) })
+				assert.Equal(t, http.StatusInternalServerError, w.Code)
+			}
+		})
 	}
+}
+
+// Adopt remembers the router it walks. A router value that Go cannot compare
+// must not make a second Adopt panic.
+func TestAdoptAcceptsUncomparableChiRouter(t *testing.T) {
+	d, r := newGen(), uncomparableRoutes{Mux: chi.NewRouter()}
+	specout.Chi(d, r).Get("/x", okGet)
+	other := uncomparableRoutes{Mux: chi.NewRouter()}
+	specout.Chi(d, other).Post("/y", okGet)
+	require.NotPanics(t, func() {
+		require.NoError(t, specout.Chi(d, r).Adopt())
+		require.NoError(t, specout.Chi(d, r).Adopt())
+		require.NoError(t, specout.Chi(d, other).Adopt())
+	})
+	assert.ElementsMatch(t, []string{"/x", "/y"}, keys(docPaths(t, d)))
 }

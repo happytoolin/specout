@@ -90,16 +90,22 @@ func (d *Generator) ownRecord(method string, h http.Handler) *routeRecord {
 	return rec
 }
 
-// addSource remembers a router to walk at build time. Idempotent per router.
+// addSource remembers a router to walk at build time. Idempotent per router
+// that Go can compare. Another router value is kept each time: == on it would
+// panic, and a second walk of one router finds the same paths.
 func (d *Generator) addSource(s routeSource) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if slices.Contains(d.sources, s) {
+	if canCompare(s) && slices.Contains(d.sources, s) {
 		return
 	}
 	d.sources = append(d.sources, s)
 	d.inputs++
 }
+
+// canCompare reports whether == on v cannot panic. The type alone does not
+// tell: an interface field can hold a struct with a slice, map or func.
+func canCompare(v any) bool { return reflect.ValueOf(v).Comparable() }
 
 // recOf pulls the metadata fields off a Handler into a routeRecord. Every
 // binder (std, gorilla, Document) starts here.

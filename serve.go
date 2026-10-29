@@ -6,7 +6,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"reflect"
 	"strconv"
 
 	json "encoding/json/v2"
@@ -39,10 +38,10 @@ func (d *Generator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // chiOuter returns the chi router that served r, or nil. bytes compares it with
-// ==, so a chi.Routes of a type that Go cannot compare is not used.
+// ==, so a chi.Routes value that Go cannot compare is not used.
 func chiOuter(r *http.Request) routeSource {
 	rctx := chi.RouteContext(r.Context())
-	if rctx == nil || rctx.Routes == nil || !reflect.TypeOf(rctx.Routes).Comparable() {
+	if rctx == nil || rctx.Routes == nil || !canCompare(rctx.Routes) {
 		return nil
 	}
 	return chiWalkSource{rctx.Routes}
