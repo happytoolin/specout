@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"sync/atomic"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/adaptor"
@@ -58,15 +59,32 @@ func (b *Router) Handle[Req, Res any](method, p string, h specout.Handler[Req, R
 	if err != nil {
 		panic(fmt.Sprintf("specoutfiber: %s %s: %v", method, full, err))
 	}
+	// Bind checks the route after Fiber adds it, and Fiber cannot remove one
+	// route of a path. So the route passes its requests on to the next route
+	// until Bind returns: a registration that panics serves nothing, even
+	// when the caller recovers.
+	var bound atomic.Bool
 	specout.Bind(b.d, method, p, h, func(next http.Handler) string {
 		chain := make([]any, 0, len(m)+1)
 		for _, mw := range m {
 			chain = append(chain, mw)
 		}
-		chain = append(chain, serve(next, observed{method: method, path: documented, pattern: full}))
+		chain = append(chain, gate(&bound, serve(next, observed{method: method, path: documented, pattern: full})))
 		b.r.Add([]string{method}, p, chain[0], chain[1:]...)
 		return documented
 	})
+	bound.Store(true)
+}
+
+// gate returns h, which passes each request on to the next route until bound
+// is set.
+func gate(bound *atomic.Bool, h fiber.Handler) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		if !bound.Load() {
+			return c.Next()
+		}
+		return h(c)
+	}
 }
 
 // Get registers a GET route on p. Fiber also answers HEAD on it unless

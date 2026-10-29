@@ -390,6 +390,26 @@ func TestAdoptSkippedGuardShadowsNothing(t *testing.T) {
 	require.NoError(t, specoutfiber.Adopt(d, app, specout.Skip("/api/*")))
 }
 
+// Bind checks a route after Fiber adds it. A registration that panics there
+// serves nothing, even when the caller recovers: the route passes its
+// requests on to the next route.
+func TestPanickedRegistrationServesNothing(t *testing.T) {
+	d, app := adaptertest.Generator(), fiber.New()
+	r := specoutfiber.New(d, app)
+	r.Get("/users/:id<int>", okRoute)
+	teapot := specout.Handler[struct{}, specout.NoContent]{
+		HandlerFunc: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) },
+	}
+	assert.Contains(t, adaptertest.PanicMessage(t, func() { r.Get("/users/:id", teapot) }), "duplicate route")
+	assert.Contains(t, adaptertest.PanicMessage(t, func() { r.Get("/a//b", teapot) }), "empty segment")
+	for _, target := range []string{"/users/abc", "/a//b"} {
+		status, _ := do(t, app, http.MethodGet, target)
+		assert.Equal(t, http.StatusNotFound, status, target)
+	}
+	status, _ := do(t, app, http.MethodGet, "/users/1")
+	assert.Equal(t, http.StatusNoContent, status, "the first route still runs")
+}
+
 // A net/http handler that hijacks the connection writes the response itself,
 // and Fiber keeps its default 200. Record used to report that 200 for each
 // case of adaptertest.HijackCases. fasthttp's adaptor cannot hijack a

@@ -13,6 +13,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"sync/atomic"
 
 	"github.com/gin-gonic/gin"
 	"github.com/happytoolin/specout"
@@ -48,10 +49,27 @@ func (b *Router) Handle[Req, Res any](method, p string, h specout.Handler[Req, R
 	if err != nil {
 		panic(fmt.Sprintf("specoutgin: %s %s: %v", method, full, err))
 	}
+	// Bind checks the route after Gin adds it, and Gin cannot remove a route.
+	// So the route answers 404 until Bind returns: a registration that panics
+	// serves nothing, even when the caller recovers.
+	var bound atomic.Bool
 	specout.Bind(b.d, method, p, h, func(next http.Handler) string {
-		b.r.Handle(method, p, append(slices.Clip(m), serve(next, observed{method: method, path: documented}))...)
+		run := gate(&bound, serve(next, observed{method: method, path: documented}))
+		b.r.Handle(method, p, append(slices.Clip(m), run)...)
 		return documented
 	})
+	bound.Store(true)
+}
+
+// gate returns h, which answers 404 until bound is set.
+func gate(bound *atomic.Bool, h gin.HandlerFunc) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !bound.Load() {
+			http.NotFound(c.Writer, c.Request)
+			return
+		}
+		h(c)
+	}
 }
 
 // Get registers a GET route on p.

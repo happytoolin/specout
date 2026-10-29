@@ -206,6 +206,21 @@ func TestRegistrationPanicLeavesNoRecord(t *testing.T) {
 	}
 }
 
+// Bind checks a route after Gin adds it, as when two engines share one
+// generator. A registration that panics there serves nothing, even when the
+// caller recovers.
+func TestPanickedRegistrationServesNothing(t *testing.T) {
+	d, first, second := adaptertest.Generator(), gin.New(), gin.New()
+	specoutgin.New(d, first).Get("/dup", okRoute)
+	teapot := specout.Handler[struct{}, specout.NoContent]{
+		HandlerFunc: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) },
+	}
+	assert.Contains(t, adaptertest.PanicMessage(t, func() { specoutgin.New(d, second).Get("/dup", teapot) }),
+		"duplicate route")
+	assert.Equal(t, http.StatusNotFound, get(t, second, "/dup").Code)
+	assert.Equal(t, http.StatusNoContent, get(t, first, "/dup").Code, "the first route still runs")
+}
+
 func TestAdoptReportsStrays(t *testing.T) {
 	d, e := adaptertest.Generator(), gin.New()
 	specoutgin.New(d, e).Get("/documented", okRoute)
