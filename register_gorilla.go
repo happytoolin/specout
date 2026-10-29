@@ -73,7 +73,7 @@ func gorillaPatternErr(pattern string) string {
 
 // withVars copies gorilla's route variables into r.PathValue before fn runs,
 // so a handler reads its path parameters as on every other router. gorilla
-// keeps them in mux.Vars only.
+// keeps them in mux.Vars only. With UseEncodedPath, they stay encoded.
 func withVars(fn http.HandlerFunc) http.HandlerFunc {
 	if fn == nil {
 		return nil

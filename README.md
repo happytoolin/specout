@@ -391,6 +391,10 @@ The gorilla, Echo v4, Gin, and Fiber binders decode the values, as
 `UnescapePathParamValues` in `echo.RouterConfig` to get `a@b`. With chi,
 decode the value with `url.PathUnescape`.
 
+A gorilla router with `UseEncodedPath` keeps the values encoded:
+`/users/a%40b` gives `a%40b`, as `mux.Vars` does. gorilla does not report this
+setting, so the binder cannot decode the values.
+
 This Gin example registers a route on a group and checks the route table:
 
 ```go

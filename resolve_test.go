@@ -148,6 +148,22 @@ func TestGorillaHandlerSeesPathValues(t *testing.T) {
 	assert.Equal(t, "a@b", name)
 }
 
+// With UseEncodedPath, gorilla matches the encoded path and keeps the encoded
+// values in mux.Vars. gorilla does not report the setting, so r.PathValue
+// gets the same encoded value.
+func TestGorillaEncodedPathKeepsValuesEncoded(t *testing.T) {
+	r := gmux.NewRouter().UseEncodedPath()
+	var name string
+	specout.Gorilla(newGen(), r).Get("/items/{name}", noBody{
+		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
+			name = r.PathValue("name")
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/items/a%40b", nil))
+	assert.Equal(t, "a%40b", name)
+}
+
 func TestGorillaAdoptStrayAndSkip(t *testing.T) {
 	d, g := newGen(), gmux.NewRouter()
 	specout.Gorilla(d, g).Get("/ok", okGet)
