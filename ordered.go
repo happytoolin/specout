@@ -39,7 +39,7 @@ func (o *obj) setIf(k, v string) *obj {
 func (o *obj) get(k string) any { return o.vals[k] }
 
 // MarshalJSON writes the object with keys in insertion order.
-func (o *obj) MarshalJSON() ([]byte, error) {
+func (o obj) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	enc := jsontext.NewEncoder(&buf)
 	if err := o.write(enc); err != nil {

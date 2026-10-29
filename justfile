@@ -2,7 +2,7 @@
 
 # golangci-lint v2 bundles gofumpt (as a formatter) and go
 # vet, so lint and format cannot drift apart. `go run` needs no install step.
-lintbin := "go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2"
+lintbin := "go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0"
 
 # default: quick local checks; CI and releases run check
 default: lint test

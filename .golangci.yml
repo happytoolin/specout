@@ -145,7 +145,12 @@ linters:
       # a reflect.Kind switch is not an enum, so a default is the signifier for
       # the "every other kind" case
       default-signifies-exhaustive: true
-      check: [switch, map]
+      check: [switch, mapliteral]
+    recvcheck:
+      # MarshalJSON takes a value receiver, so a value and a pointer marshal
+      # the same way. The type's other methods build it in place.
+      exclusions:
+        - "*.MarshalJSON"
     wrapcheck:
       # specout errors already say "specout:", and the adapter packages pass
       # them on so callers can match *specout.StrayError
