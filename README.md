@@ -401,6 +401,10 @@ order.
 Register all routes before you call `ServeHTTP` or `WriteJSON`. After a successful
 document build, you cannot add routes.
 
+Each registration checks the route's responses, `Raw` keys, and media types. A
+value that would make the document invalid panics at that registration, and the
+router does not get the route.
+
 If the build fails, `WriteJSON` returns the error. `ServeHTTP` returns `500`
 without the error text, and it writes the error to the standard `log` package
 once.

@@ -189,17 +189,63 @@ func (d *Generator) putDefaultErrors(p *plannedResponses) {
 }
 
 // responsesFor renders a route's derived responses as the operation's
-// responses object, in plan order.
+// responses object, in plan order. checkResponses checked them when the route
+// was registered.
 func (d *Generator) responsesFor(rec *routeRecord, sr *schemaRegistry) *obj {
 	out := newObj()
 	for _, e := range d.responsePlan(rec, true) {
 		out.set(e.key, responseBody(e, sr))
 	}
-	// OpenAPI requires at least one response
-	if len(out.keys) == 0 {
-		panic("specout: " + rec.method + " " + docPath(rec.full) + " omits every response; declare at least one")
-	}
 	return out
+}
+
+// checkResponses panics on a route's responses when they would break the
+// document. The plan itself checks the status codes, keys, Type values and
+// Raw.responses.
+func (d *Generator) checkResponses(rec *routeRecord) {
+	plan := d.responsePlan(rec, true)
+	// OpenAPI requires at least one response
+	if len(plan) == 0 {
+		panic("specout: " + rec.method + " " + rec.pattern + " omits every response; declare at least one")
+	}
+	for _, e := range plan {
+		if e.resp != nil {
+			checkResponse(e)
+		}
+	}
+}
+
+// checkResponse checks the media types, headers and Raw keys of one declared
+// Response.
+func checkResponse(e respEntry) {
+	resp := e.resp
+	switch {
+	case resp.ContentType != "" && len(resp.ContentTypes) > 0:
+		panic("specout: Response sets both ContentType and ContentTypes; set one")
+	case len(resp.ContentTypes) > 0 && (e.typ == nil || isEmptyStruct(e.typ)):
+		panic("specout: Response.ContentTypes needs a response type (the Res parameter or Response.Type)")
+	}
+	for _, ct := range resp.ContentTypes {
+		mediaType(ct, "Response.ContentTypes")
+	}
+	checkHeaders(resp.Headers)
+	checkRawKeys(resp.Raw, responseFields)
+}
+
+// checkHeaders checks the headers of one Response. HTTP header names ignore
+// case, so X-Id and x-id are one header.
+func checkHeaders(headers []Header) {
+	seen := make(map[string]bool, len(headers))
+	for _, hd := range headers {
+		key := strings.ToLower(hd.Name)
+		if hd.Name == "" || seen[key] {
+			panic("specout: empty or duplicate response header " + strconv.Quote(hd.Name))
+		}
+		seen[key] = true
+		if hd.Type != nil {
+			valueType(hd.Type)
+		}
+	}
 }
 
 // responseBody builds one emitted response object.
@@ -224,15 +270,13 @@ func responseBody(e respEntry, sr *schemaRegistry) *obj {
 	if len(resp.Headers) > 0 {
 		body.set("headers", responseHeaders(resp.Headers, sr))
 	}
-	return mergeRaw(body, resp.Raw, responseFields)
+	return mergeRaw(body, resp.Raw)
 }
 
 // setDeclaredContent replaces the inherited content of body with the media
 // types that e's Response declares, if it declares any.
 func setDeclaredContent(body *obj, e respEntry, sr *schemaRegistry) {
 	switch resp := e.resp; {
-	case resp.ContentType != "" && len(resp.ContentTypes) > 0:
-		panic("specout: Response sets both ContentType and ContentTypes; set one")
 	case resp.ContentType != "":
 		body.set("content", binaryContent(resp.ContentType))
 	case len(resp.ContentTypes) > 0:
@@ -253,35 +297,24 @@ func binaryContent(ct string) *obj {
 // write the same shape as JSON and XML. The schema is the same one
 // contentResponse would use.
 func sharedContent(t reflect.Type, types []string, sr *schemaRegistry) *obj {
-	if t == nil || isEmptyStruct(t) {
-		panic("specout: Response.ContentTypes needs a response type (the Res parameter or Response.Type)")
-	}
 	content := newObj()
 	for _, ct := range types {
-		content.set(mediaType(ct, "Response.ContentTypes"), newObj().set("schema", schemaFor(t, sr)))
+		content.set(ct, newObj().set("schema", schemaFor(t, sr)))
 	}
 	return content
 }
 
-// mediaType returns ct, a content map key, and panics when it is empty.
-func mediaType(ct, field string) string {
+// mediaType panics when ct, a content map key, is empty.
+func mediaType(ct, field string) {
 	if ct == "" {
 		panic("specout: " + field + " has an empty media type")
 	}
-	return ct
 }
 
 // responseHeaders is the headers object of one response, in declared order.
-// HTTP header names ignore case, so X-Id and x-id are one header.
 func responseHeaders(headers []Header, sr *schemaRegistry) *obj {
 	out := newObj()
-	seen := make(map[string]bool, len(headers))
 	for _, hd := range headers {
-		key := strings.ToLower(hd.Name)
-		if hd.Name == "" || seen[key] {
-			panic("specout: empty or duplicate response header " + strconv.Quote(hd.Name))
-		}
-		seen[key] = true
 		out.set(hd.Name, headerObj(hd, sr))
 	}
 	return out
@@ -344,15 +377,22 @@ var (
 )
 
 // mergeRaw splices arbitrary OpenAPI fragments into an operation or response
-// object. fields lists the keys that object may carry.
-func mergeRaw(base *obj, raw map[string]any, fields []string) *obj {
+// object.
+func mergeRaw(base *obj, raw map[string]any) *obj {
 	for _, k := range sortedKeys(raw) {
-		if !strings.HasPrefix(k, "x-") && !slices.Contains(fields, k) {
-			panic("specout: Raw key " + strconv.Quote(k) + " is not an OpenAPI field or an x- extension")
-		}
 		base.set(k, raw[k])
 	}
 	return base
+}
+
+// checkRawKeys panics on a Raw key that the object cannot carry. fields lists
+// the keys that object may carry.
+func checkRawKeys(raw map[string]any, fields []string) {
+	for k := range raw {
+		if !strings.HasPrefix(k, "x-") && !slices.Contains(fields, k) {
+			panic("specout: Raw key " + strconv.Quote(k) + " is not an OpenAPI field or an x- extension")
+		}
+	}
 }
 
 func contentResponse(code int, t reflect.Type, sr *schemaRegistry) *obj {

@@ -9,7 +9,9 @@ coverage.
 1. `Handler[Req, Res]` holds the types and operation metadata.
 2. A router adapter creates a `routeRecord`. The Echo, Gin, and Fiber adapters
    in `adapters/` use the exported `Bind`. `Document` records routes that use
-   other routers.
+   other routers. `addRoute` checks the responses, `Raw` keys, and media types
+   before the route reaches the router, so a bad route panics at its
+   registration and leaves no record.
 3. `Adopt` checks a live router for undocumented routes. Chi also uses the router
    walk to resolve group and mount prefixes. The adapters in `adapters/` pass
    their route tables to `CheckRoutes`.

@@ -19,7 +19,6 @@ func requestBodyObj(rec *routeRecord, body reflect.Type, sr *schemaRegistry) *ob
 		types = []string{ct}
 	}
 	for _, c := range types {
-		c = mediaType(c, "RequestContentTypes")
 		schema := *base
 		if c == "multipart/form-data" || c == "application/x-www-form-urlencoded" {
 			schema = sr.formSchema(body, base)
@@ -31,6 +30,14 @@ func requestBodyObj(rec *routeRecord, body reflect.Type, sr *schemaRegistry) *ob
 		content.set(c, newObj().set("schema", &schema))
 	}
 	return newObj().set("required", true).set("content", content)
+}
+
+// checkRequestContentTypes checks that each RequestContentTypes entry names a
+// media type.
+func checkRequestContentTypes(rec *routeRecord) {
+	for _, c := range rec.reqContentTypes {
+		mediaType(c, "RequestContentTypes")
+	}
 }
 
 // formSchema copies the JSON component only when form tags change its names.

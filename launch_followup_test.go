@@ -1,8 +1,8 @@
 package specout_test
 
 import (
-	"io"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/happytoolin/specout"
@@ -131,9 +131,8 @@ func TestLaunchRawStatusRangesAndDefaults(t *testing.T) {
 func TestLaunchRawResponseMustBeAnObject(t *testing.T) {
 	d := newGen()
 	raw := map[string]any{"200": "ok"}
-	specout.Document(d, http.MethodGet, "/x", specout.Get[string]{HandlerFunc: noop, Raw: map[string]any{"responses": raw}})
 	assert.PanicsWithValue(t, "specout: Raw.responses 200 must be a Response object", func() {
-		_ = d.WriteJSON(io.Discard)
+		specout.Document(d, http.MethodGet, "/x", specout.Get[string]{HandlerFunc: noop, Raw: map[string]any{"responses": raw}})
 	})
 }
 
@@ -157,11 +156,27 @@ func TestLaunchOperationsThatBreakTheDocument(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			d := newGen()
-			specout.Document(d, http.MethodGet, "/x", tc.h)
-			assert.PanicsWithValue(t, tc.want, func() { _ = d.WriteJSON(io.Discard) })
+			assert.PanicsWithValue(t, tc.want, func() { specout.Document(newGen(), http.MethodGet, "/x", tc.h) })
 		})
 	}
+}
+
+// Route data that would break the document fails at registration, before the
+// route reaches the router: the stack names the route, and neither the router
+// nor the document holds it.
+func TestBadRouteDataFailsAtRegistration(t *testing.T) {
+	d, mux := newGen(), http.NewServeMux()
+	bad := specout.Get[string]{HandlerFunc: noop}.WithResponse(specout.Response{
+		Status: http.StatusOK, Headers: []specout.Header{{Name: "X-Id"}, {Name: "x-id"}},
+	})
+	assert.PanicsWithValue(t, `specout: empty or duplicate response header "x-id"`, func() {
+		specout.Std(d, mux).Get("/x", bad)
+	})
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/x", nil))
+	assert.Equal(t, http.StatusNotFound, rr.Code)
+	paths, _ := buildDoc(t, d)["paths"].(map[string]any)
+	assert.NotContains(t, paths, "/x")
 }
 
 func TestLaunchRawOperationIDMustBeUnique(t *testing.T) {

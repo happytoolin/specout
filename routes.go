@@ -55,6 +55,8 @@ func (d *Generator) addRoute(rec routeRecord, bind func(*routeRecord)) {
 	if rec.fn == nil {
 		panic("specout: nil HandlerFunc registered for " + rec.method + " " + rec.pattern)
 	}
+	// Config cannot change after New, so the check needs no lock.
+	d.checkRoute(&rec)
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.mustBeOpen()

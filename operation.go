@@ -47,7 +47,18 @@ func (d *Generator) operationFor(rec *routeRecord, sr *schemaRegistry) *obj {
 		op.set("requestBody", requestBodyObj(rec, bt, sr))
 	}
 	op.set("responses", d.responsesFor(rec, sr))
-	return mergeRaw(op, rec.raw, operationFields)
+	return mergeRaw(op, rec.raw)
+}
+
+// checkRoute panics on route data that would break the document: Raw keys,
+// request media types and responses. Every binder calls it through addRoute
+// before the route reaches the router, so the stack names the route and a bad
+// route leaves no record. Checks that need the resolved path or the other
+// routes run at build.
+func (d *Generator) checkRoute(rec *routeRecord) {
+	checkRawKeys(rec.raw, operationFields)
+	checkRequestContentTypes(rec)
+	d.checkResponses(rec)
 }
 
 // braces removes the parameter braces from a path segment.
