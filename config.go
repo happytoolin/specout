@@ -2,6 +2,8 @@ package specout
 
 // Config is the API-level configuration for a Generator. The zero value is a
 // valid, empty spec; Title and Version are required for a usable document.
+// New panics on a Config that would make the document invalid, such as a
+// status with no body (1xx, 204, 205, 304) in DefaultErrors.
 type Config struct {
 	Title          string
 	Version        string

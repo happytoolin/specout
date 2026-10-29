@@ -97,12 +97,12 @@ func resDefault(rec *routeRecord) (respEntry, bool) {
 
 // declaredType is the body type of an explicit Response: its Type, else Res.
 // 1xx, 204, 205 and 304 carry no body: inheriting Res would emit content the
-// HTTP spec forbids. An explicit Type still wins.
+// HTTP spec forbids, and checkResponse rejects a Type with a body there.
 func declaredType(res reflect.Type, resp *Response) reflect.Type {
 	if resp.Type != nil {
 		return valueType(resp.Type)
 	}
-	if bodyless(resp.Status) || resp.Key == "1XX" {
+	if bodylessResponse(resp) {
 		return nil
 	}
 	return res
@@ -171,6 +171,16 @@ func bodyless(code int) bool {
 		code == http.StatusResetContent || code == http.StatusNotModified
 }
 
+// bodylessResponse reports whether resp describes responses that carry no
+// body. A Key describes a whole range or the default response, so only 1XX
+// is bodyless; Status then names one code of it for coverage.
+func bodylessResponse(resp *Response) bool {
+	if resp.Key != "" {
+		return resp.Key == "1XX"
+	}
+	return bodyless(resp.Status)
+}
+
 // putDefaultErrors adds the configured error responses for every code the route
 // neither declared nor omitted.
 func (d *Generator) putDefaultErrors(p *plannedResponses) {
@@ -189,7 +199,8 @@ func (d *Generator) putDefaultErrors(p *plannedResponses) {
 }
 
 // checkDefaultErrors checks the error responses that Config adds to every
-// route: ErrorType is a value, and each DefaultErrors entry is a status code.
+// route: ErrorType is a value, and each DefaultErrors entry is a status code
+// that can carry it.
 func (d *Generator) checkDefaultErrors() {
 	if d.cfg.ErrorType == nil {
 		return
@@ -197,6 +208,9 @@ func (d *Generator) checkDefaultErrors() {
 	valueType(d.cfg.ErrorType)
 	for _, code := range d.cfg.DefaultErrors {
 		responseKey(code, "")
+		if bodyless(code) {
+			panic("specout: DefaultErrors holds " + strconv.Itoa(code) + ", which carries no body for ErrorType")
+		}
 	}
 }
 
@@ -206,9 +220,24 @@ func (d *Generator) checkDefaultErrors() {
 func (d *Generator) responsesFor(rec *routeRecord, sr *schemaRegistry) *obj {
 	out := newObj()
 	for _, e := range d.responsePlan(rec, true) {
+		if rec.method == http.MethodHead {
+			e = withoutBody(e)
+		}
 		out.set(e.key, responseBody(e, sr))
 	}
 	return out
+}
+
+// withoutBody returns e for a HEAD operation: the same status, description
+// and headers, with no content. RFC 9110 gives a HEAD response no body.
+func withoutBody(e respEntry) respEntry {
+	e.typ = nil
+	if e.resp != nil {
+		resp := *e.resp
+		resp.ContentType, resp.ContentTypes = "", nil
+		e.resp = &resp
+	}
+	return e
 }
 
 // checkResponses panics on a route's responses when they would break the
@@ -227,14 +256,16 @@ func (d *Generator) checkResponses(rec *routeRecord) {
 	}
 }
 
-// checkResponse checks the media types, headers and Raw keys of one declared
+// checkResponse checks the content, headers and Raw keys of one declared
 // Response.
 func checkResponse(e respEntry) {
 	resp := e.resp
 	switch {
+	case bodylessResponse(resp) && (resp.ContentType != "" || len(resp.ContentTypes) > 0 || hasBody(e.typ)):
+		panic("specout: response " + e.key + " carries no body; remove its Type, ContentType or ContentTypes")
 	case resp.ContentType != "" && len(resp.ContentTypes) > 0:
 		panic("specout: Response sets both ContentType and ContentTypes; set one")
-	case len(resp.ContentTypes) > 0 && (e.typ == nil || isEmptyStruct(e.typ)):
+	case len(resp.ContentTypes) > 0 && !hasBody(e.typ):
 		panic("specout: Response.ContentTypes needs a response type (the Res parameter or Response.Type)")
 	}
 	for _, ct := range resp.ContentTypes {
@@ -264,9 +295,10 @@ func checkHeaders(headers []Header) {
 func responseBody(e respEntry, sr *schemaRegistry) *obj {
 	resp := e.resp
 	if resp == nil {
-		// the Res default, or an envelope entry: a nil type is NoContent's
-		// "No content", anything else carries its schema.
-		if e.typ == nil {
+		// the Res default, or an envelope entry: a nil type on 204 is
+		// NoContent's "No content", anything else describes its status and
+		// carries its schema. A HEAD operation has nil types on every code.
+		if e.typ == nil && e.code == http.StatusNoContent {
 			return newObj().set("description", "No content")
 		}
 		return contentResponse(e.code, e.typ, sr)
@@ -341,6 +373,11 @@ func anyExplicit(responses []Response) bool {
 
 func isEmptyStruct(t reflect.Type) bool {
 	return t != nil && t.Kind() == reflect.Struct && t.NumField() == 0
+}
+
+// hasBody reports whether a response type puts content in the document.
+func hasBody(t reflect.Type) bool {
+	return t != nil && !isEmptyStruct(t)
 }
 
 // responseKey names a response object key: Key when the caller set one

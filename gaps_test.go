@@ -62,6 +62,77 @@ func TestGapNoBodyStatuses(t *testing.T) {
 	assert.Contains(t, responses, "200", "the Res default 200 stays")
 }
 
+// TestGapHeadCarriesNoContent: RFC 9110 gives a HEAD response no body, so a
+// HEAD operation keeps each status, description and header, and no content.
+func TestGapHeadCarriesNoContent(t *testing.T) {
+	d := specout.New(specout.Config{
+		Title: "t", Version: "1", ErrorType: gapRes{}, DefaultErrors: []int{http.StatusInternalServerError},
+	})
+	specout.Document(d, http.MethodHead, "/x", specout.Handler[struct{}, gapRes]{
+		HandlerFunc: noop,
+		Responses: []specout.Response{
+			{Status: http.StatusNotFound, Headers: []specout.Header{{Name: "X-Reason"}}},
+			{Status: http.StatusPartialContent, ContentType: "application/pdf"},
+		},
+	})
+	doc := buildDoc(t, d)
+	responses, _ := opOf(t, doc, "/x", "head")["responses"].(map[string]any)
+	require.Len(t, responses, 4)
+	for code, want := range map[string]string{"200": "OK", "404": "Not Found", "206": "Partial Content", "500": "Internal Server Error"} {
+		resp, _ := responses[code].(map[string]any)
+		assert.NotContains(t, resp, "content", code)
+		assert.Equal(t, want, resp["description"], code)
+	}
+	assert.Contains(t, responses["404"], "headers")
+	assert.NotContains(t, doc, "components", "a HEAD operation reflects no body type")
+}
+
+// TestGapBodylessContentPanics: 1xx, 204, 205 and 304 carry no body, so a
+// Response there with a Type that has fields or a media type panics at
+// registration. An empty Type and a range key that names 204 stay legal.
+func TestGapBodylessContentPanics(t *testing.T) {
+	for key, resp := range map[string]specout.Response{
+		"204": {Status: http.StatusNoContent, Type: gapRes{}},
+		"205": {Status: http.StatusResetContent, Type: gapRes{}},
+		"304": {Status: http.StatusNotModified, ContentType: "text/plain"},
+		"1XX": {Key: "1XX", ContentTypes: []string{"application/json"}},
+	} {
+		h := specout.Handler[struct{}, gapRes]{HandlerFunc: noop, Responses: []specout.Response{resp}}
+		assert.PanicsWithValue(t,
+			"specout: response "+key+" carries no body; remove its Type, ContentType or ContentTypes",
+			func() { specout.Document(newGen(), http.MethodGet, "/x", h) }, key)
+	}
+	d := newGen()
+	specout.Document(d, http.MethodGet, "/x", specout.Handler[struct{}, gapRes]{
+		HandlerFunc: noop,
+		Responses: []specout.Response{
+			{Status: http.StatusNoContent, Type: struct{}{}},
+			{Key: "2XX", Status: http.StatusNoContent},
+		},
+	})
+	responses, _ := opOf(t, buildDoc(t, d), "/x", "get")["responses"].(map[string]any)
+	assert.NotContains(t, responses["204"], "content")
+	assert.Contains(t, responses["2XX"], "content", "a 2XX response describes bodies too")
+}
+
+// TestGapRequestContentTypesNeedABody: media types for a request that has no
+// body describe nothing, so the registration panics.
+func TestGapRequestContentTypesNeedABody(t *testing.T) {
+	type onlyParams struct {
+		ID string `path:"id"`
+	}
+	assert.PanicsWithValue(t, "specout: POST /x sets RequestContentTypes, but Req has no request body", func() {
+		specout.Document(newGen(), http.MethodPost, "/x", specout.Handler[struct{}, gapRes]{
+			HandlerFunc: noop, RequestContentTypes: []string{"application/json"},
+		})
+	})
+	assert.PanicsWithValue(t, "specout: POST /x/{id} sets RequestContentTypes, but Req has no request body", func() {
+		specout.Document(newGen(), http.MethodPost, "/x/{id}", specout.Handler[onlyParams, gapRes]{
+			HandlerFunc: noop, RequestContentTypes: []string{"application/json"},
+		})
+	})
+}
+
 // TestGapOAuth2: an oauth2 flow with no URL is a spec the validator rejects,
 // so New panics.
 func TestGapOAuth2(t *testing.T) {
@@ -101,6 +172,10 @@ func TestGapConfigThatBreaksTheDocument(t *testing.T) {
 		{
 			"error status out of range", "specout: response status must be 0 (default) or 100-599, got 600",
 			specout.Config{ErrorType: gapRes{}, DefaultErrors: []int{600}},
+		},
+		{
+			"error status with no body", "specout: DefaultErrors holds 204, which carries no body for ErrorType",
+			specout.Config{ErrorType: gapRes{}, DefaultErrors: []int{http.StatusNoContent}},
 		},
 		{"tag without name", `specout: empty or duplicate tag name ""`, specout.Config{Tags: []specout.Tag{{Description: "d"}}}},
 		{"duplicate tag", `specout: empty or duplicate tag name "a"`, specout.Config{Tags: []specout.Tag{{Name: "a"}, {Name: "a"}}}},

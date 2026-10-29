@@ -33,8 +33,14 @@ func requestBodyObj(rec *routeRecord, body reflect.Type, sr *schemaRegistry) *ob
 }
 
 // checkRequestContentTypes checks that each RequestContentTypes entry names a
-// media type.
+// media type, and that Req carries a body for them to describe.
 func checkRequestContentTypes(rec *routeRecord) {
+	if len(rec.reqContentTypes) == 0 {
+		return
+	}
+	if body, _ := requestBody(rec.req); body == nil {
+		panic("specout: " + rec.method + " " + rec.pattern + " sets RequestContentTypes, but Req has no request body")
+	}
 	for _, c := range rec.reqContentTypes {
 		mediaType(c, "RequestContentTypes")
 	}

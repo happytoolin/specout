@@ -23,7 +23,7 @@ type Handler[Req, Res any] struct {
 	// RequestContentTypes overrides the request body media types
 	// (application/x-www-form-urlencoded, application/xml, ...). The schema
 	// comes from Req; form media types use its form field names, while other
-	// media types use its JSON field names.
+	// media types use its JSON field names. A Req with no body panics.
 	RequestContentTypes []string
 	// Raw splices arbitrary keys into this operation object: x- extensions,
 	// or any other OpenAPI operation field specout does not model.

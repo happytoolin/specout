@@ -16,30 +16,40 @@ import (
 //
 // StructOf reuses identical types, so repeated requests share one component.
 func (sr *schemaRegistry) bodyType(req reflect.Type) (reflect.Type, string) {
+	body, split := requestBody(req)
+	if !split {
+		return body, ""
+	}
+	return body, sr.nameFor(deref(req)) + "Body"
+}
+
+// requestBody returns the type of Req's request body, or nil when Req carries
+// no body. split reports a body that is Req without its parameter fields.
+func requestBody(req reflect.Type) (reflect.Type, bool) {
 	if req == nil {
-		return nil, ""
+		return nil, false
 	}
 	req = deref(req)
 	// an empty struct carries no body, but a bare File is an octet-stream
 	// payload: it is a marker type, not a body schema.
 	if req == reflect.TypeFor[File]() {
-		return req, ""
+		return req, false
 	}
 	if req.Kind() != reflect.Struct {
-		return req, ""
+		return req, false
 	}
 	if req.NumField() == 0 {
-		return nil, ""
+		return nil, false
 	}
 	if !hasParamField(req) {
-		return req, ""
+		return req, false
 	}
 	fields := bodyFields(req)
 	if len(fields) == 0 {
 		// every field is a parameter: the operation has no body at all
-		return nil, ""
+		return nil, false
 	}
-	return reflect.StructOf(fields), sr.nameFor(req) + "Body"
+	return reflect.StructOf(fields), true
 }
 
 type bodyFieldCandidate struct {
