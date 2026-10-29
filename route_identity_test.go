@@ -325,8 +325,25 @@ func TestCheckRoutesMatchesBindByMethodAndPath(t *testing.T) {
 	}, specout.Skip("/openapi.json"))
 	var stray *specout.StrayError
 	require.ErrorAs(t, err, &stray)
-	assert.Equal(t, []string{"DELETE /items/{id}", "? /any (no method constraint)"}, stray.Routes)
+	assert.Equal(t, []string{"? /any (no method constraint)", "DELETE /items/{id}"}, stray.Routes)
 	require.NoError(t, d.CheckRoutes(nil))
+}
+
+// chi.Walk reports the methods of one path in map order, so the stray list is
+// sorted: one router gives one error text.
+func TestStrayRoutesAreSorted(t *testing.T) {
+	for range 20 {
+		d, r := newGen(), chi.NewRouter()
+		for _, method := range []string{http.MethodPut, http.MethodGet, http.MethodPost, http.MethodDelete} {
+			r.Method(method, "/x", okGet)
+			r.Method(method, "/a", okGet)
+		}
+		var stray *specout.StrayError
+		require.ErrorAs(t, specout.Chi(d, r).Adopt(), &stray)
+		require.Equal(t, []string{
+			"DELETE /a", "DELETE /x", "GET /a", "GET /x", "POST /a", "POST /x", "PUT /a", "PUT /x",
+		}, stray.Routes)
+	}
 }
 
 func TestBindersRejectNilArguments(t *testing.T) {

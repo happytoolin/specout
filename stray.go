@@ -2,6 +2,7 @@ package specout
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 )
 
@@ -53,14 +54,18 @@ func (s *strayScan) report(route string) {
 	s.unknown = append(s.unknown, route)
 }
 
+// err sorts the strays: chi.Walk and some router tables list the methods of
+// one path in map order, and one router must give one error text.
 func (s *strayScan) err() error {
 	if len(s.unknown) == 0 {
 		return nil
 	}
+	slices.Sort(s.unknown)
 	return &StrayError{Routes: s.unknown}
 }
 
-// StrayError names routes registered without specout metadata.
+// StrayError names routes registered without specout metadata, in sorted
+// order.
 type StrayError struct{ Routes []string }
 
 func (e *StrayError) Error() string {
