@@ -2,6 +2,7 @@ package specout
 
 import (
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -98,11 +99,17 @@ func jsonFields(req reflect.Type, splitParameters bool) []reflect.StructField {
 	return out
 }
 
+// jsonTagEntry matches the json key of a struct tag, with its quoted value.
+var jsonTagEntry = regexp.MustCompile(`(^|\s)json:"(?:[^"\\]|\\.)*"`)
+
+// bodyJSONTag gives a body field its wire name as the json key and keeps the
+// other keys of tag. The old json key goes, so a type name shows one.
 func bodyJSONTag(tag reflect.StructTag, name string) reflect.StructTag {
 	if _, options, ok := strings.Cut(tag.Get("json"), ","); ok && options != "" {
 		name += "," + options
 	}
-	return reflect.StructTag("json:" + strconv.Quote(name) + " " + string(tag))
+	rest := strings.TrimSpace(jsonTagEntry.ReplaceAllString(string(tag), ""))
+	return reflect.StructTag(strings.TrimSpace("json:" + strconv.Quote(name) + " " + rest))
 }
 
 // collectBodyFields lists the JSON field candidates of t and of the structs it

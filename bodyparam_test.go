@@ -2,6 +2,8 @@ package specout_test
 
 import (
 	"encoding/json"
+	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -114,4 +116,24 @@ func TestBodySchemaJSONShape(t *testing.T) {
 	assert.Contains(t, got, `"name"`)
 	assert.NotContains(t, got, "petId")
 	assert.NotContains(t, got, "PetID")
+}
+
+type bodyClash struct {
+	ID   string `path:"id"`
+	Name string `json:"name"`
+}
+
+// bodyClashBody takes the name of bodyClash's generated body component.
+type bodyClashBody struct {
+	X int `json:"x"`
+}
+
+// A name clash message shows the generated body type with each JSON tag once.
+func TestBodyNameClashShowsEachTagOnce(t *testing.T) {
+	msg, _ := panicValue(func() {
+		docOf(t, http.MethodPost, "/x/{id}", specout.Handler[bodyClash, bodyClashBody]{HandlerFunc: noop})
+	}).(string)
+	assert.Contains(t, msg, "duplicate component name bodyClashBody")
+	// reflect quotes the struct tag, so its own quotes carry backslashes
+	assert.Equal(t, 1, strings.Count(msg, `json:\"name\"`), msg)
 }
