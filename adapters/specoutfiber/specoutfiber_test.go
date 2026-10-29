@@ -295,3 +295,22 @@ func TestRecordSeesMiddlewareResponses(t *testing.T) {
 	recorder.Verify(&ft, d, rec)
 	assert.Empty(t, ft.Errs)
 }
+
+// Fiber adds the mount prefix of a sub-app to its routes only when the app
+// starts, so a Router on the sub-app documents the path without it. Record
+// reports the path that ran, and Verify names the gap.
+func TestRecordReportsMountedSubAppPath(t *testing.T) {
+	d, app, sub := adaptertest.Generator(), fiber.New(), fiber.New()
+	rec := recorder.New(nil)
+	app.Use(specoutfiber.Record(rec))
+	specoutfiber.New(d, sub).Get("/items/:id", specout.Handler[idReq, specout.NoContent]{HandlerFunc: noContent})
+	app.Use("/sub", sub)
+	status, _ := do(t, app, http.MethodGet, "/sub/items/1")
+	require.Equal(t, http.StatusNoContent, status)
+	var ft adaptertest.FakeT
+	recorder.Verify(&ft, d, rec)
+	assert.Equal(t, []string{
+		"declared GET /items/{id} 204 never produced by any test",
+		"handler wrote GET /sub/items/{id} 204 but spec does not declare it",
+	}, ft.Errs)
+}

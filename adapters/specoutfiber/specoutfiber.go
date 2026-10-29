@@ -28,6 +28,11 @@ type Router struct {
 
 // New returns the Fiber binder for d on r, a *fiber.App or *fiber.Group. A
 // domain router hides its host from the path, so New rejects it.
+//
+// Use the app that serves requests, or a group of it. Fiber adds the mount
+// prefix of a sub-app to its routes only when the app starts, so a Router on
+// a sub-app documents its paths without that prefix. Record then reports the
+// paths that ran, and recorder.Verify fails.
 func New(d *specout.Generator, r fiber.Router) *Router {
 	if d == nil {
 		panic("specoutfiber: New needs a generator")
@@ -57,7 +62,7 @@ func (b *Router) Handle[Req, Res any](method, p string, h specout.Handler[Req, R
 		for _, mw := range m {
 			chain = append(chain, mw)
 		}
-		chain = append(chain, serve(next, observed{method: method, path: documented}))
+		chain = append(chain, serve(next, observed{method: method, path: documented, pattern: full}))
 		b.r.Add([]string{method}, p, chain[0], chain[1:]...)
 		return documented
 	})
@@ -106,8 +111,20 @@ func (b *Router) Trace[Req, Res any](p string, h specout.Handler[Req, Res], m ..
 }
 
 // observed is the route a request ran, as the document spells it. serve
-// stores it in the request locals for Record.
-type observed struct{ method, path string }
+// stores it in the request locals for Record. pattern is the Fiber pattern
+// the route was registered with.
+type observed struct{ method, path, pattern string }
+
+// ran returns the route that ran on the Fiber pattern p. Fiber adds the mount
+// prefix of a sub-app to its routes only when the app starts, after the
+// Router documented them. Record then reports the path that really ran, so
+// Verify names the gap.
+func (o observed) ran(p string) observed {
+	if p != o.pattern {
+		o.path = fiberpath.Table(p)
+	}
+	return o
+}
 
 // pathValue is one path parameter on its way to r.SetPathValue.
 type pathValue struct{ name, value string }
@@ -142,7 +159,7 @@ func serve(next http.Handler, route observed) fiber.Handler {
 			values = append(values, pathValue{name: name, value: fiberpath.Value(c.Params(name), decode)})
 		}
 		c.Locals(pathValuesKey, values)
-		c.Locals(observedKey, route)
+		c.Locals(observedKey, route.ran(c.Route().Path))
 		return h(c)
 	}
 }
