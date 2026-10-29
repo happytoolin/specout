@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	utilsstrings "github.com/gofiber/utils/v2/strings"
 )
 
 // Route is one endpoint route of a Fiber route table.
@@ -25,6 +27,8 @@ type Reading struct {
 //   - a route without parameters, after a route that matches its path, as
 //     /users/me after /users/:id, or /Users after /users with the default
 //     Config, which is not case-sensitive;
+//   - a route with parameters, after a route that matches its text, as
+//     /files/:name after /files/*, or /users/:id after /:a/:b;
 //   - any route, after a route that Fiber reads the same way, as /users/:id/
 //     after /users/:id with the default Config, which does not use strict
 //     routing.
@@ -48,18 +52,28 @@ func Shadowed(pkg string, table []Route, rd Reading) error {
 // shadow returns the index of the first route of earlier that takes every
 // request of r. folds holds the fold of each route.
 func (rd Reading) shadow(earlier []Route, folds []string, r Route) (int, bool) {
-	fold := rd.fold(r.Path)
-	// A route without parameters or wildcards matches one path: the route
-	// read as a request. A route with them matches more paths than any one
-	// request shows, so only a route that Fiber reads the same way takes all.
-	_, names, err := OpenAPI(r.Path)
-	static, path := err == nil && len(names) == 0, strings.ReplaceAll(r.Path, `\`, "")
+	fold, path := rd.fold(r.Path), strings.ReplaceAll(r.Path, `\`, "")
 	for j, e := range earlier {
-		if e.Method == r.Method && (folds[j] == fold || static && rd.Match(path, e.Path)) {
+		if e.Method == r.Method && (folds[j] == fold || covers(e.Path, r.Path) && rd.Match(path, e.Path)) {
 			return j, true
 		}
 	}
 	return 0, false
+}
+
+// covers reports whether route earlier takes every request of route later
+// when it matches the text of later. A route without parameters matches one
+// path: its text. A parameter of later is text that a parameter or wildcard
+// of earlier matches, and so is each value of it, unless earlier has a
+// constraint, an optional parameter or a literal colon, or later has a
+// constraint, a wildcard or an optional parameter. Those match some values and
+// not others, more than one segment, or no segment.
+func covers(earlier, later string) bool {
+	if _, names, err := OpenAPI(later); err == nil && len(names) == 0 {
+		return true
+	}
+	return !strings.ContainsAny(earlier, `<?\`) && !strings.Contains(earlier, "::") &&
+		!strings.ContainsAny(later, "<*+?")
 }
 
 // fold returns route path p as rd reads it: in lowercase unless the app is
@@ -73,31 +87,19 @@ func (rd Reading) fold(p string) string {
 	if rd.CaseSensitive {
 		return p
 	}
-	b := []byte(p)
-	for i := 0; i < len(b); i++ {
-		switch b[i] {
+	// Fiber's ASCII lowercase keeps each byte at its offset, so a constraint
+	// takes its own case back from p.
+	b := []byte(utilsstrings.ToLower(p))
+	for i := 0; i < len(p); i++ {
+		switch p[i] {
 		case '\\':
-			// the escaped character is still lowercase to Fiber
-			if i+1 < len(b) {
-				i++
-				b[i] = lower(b[i])
-			}
+			i++
 		case '<':
 			if end := constraintEnd(p, i+1); end >= 0 {
+				copy(b[i:end], p[i:end])
 				i = end
 			}
-		default:
-			b[i] = lower(b[i])
 		}
 	}
 	return string(b)
-}
-
-// lower returns the lowercase form of an ASCII letter c, and any other byte
-// unchanged, as Fiber lowercases route paths.
-func lower(c byte) byte {
-	if 'A' <= c && c <= 'Z' {
-		return c + 'a' - 'A'
-	}
-	return c
 }

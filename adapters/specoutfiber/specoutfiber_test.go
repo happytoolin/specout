@@ -327,6 +327,8 @@ func TestAdoptReportsRoutesThatNeverRun(t *testing.T) {
 		{"/users", "/Users", "/Users"},
 		{"/users", "/users/", "/users/"},
 		{"/users/:id", "/Users/:id/", "/Users/1/"},
+		{"/files/*", "/files/:name", "/files/a"},
+		{"/:a/:b", "/users/:id", "/users/1"},
 	} {
 		d, app := adaptertest.Generator(), fiber.New()
 		r := specoutfiber.New(d, app)
@@ -349,6 +351,9 @@ func TestAdoptAcceptsRoutesThatRun(t *testing.T) {
 		{fiber.Config{}, "/users/me", "/users/:id"},
 		{fiber.Config{}, "/users/:id<int>", "/users/me"},
 		{fiber.Config{}, "/files/:name", "/files/*"},
+		{fiber.Config{}, "/users/:id<int>", "/users/:name"},
+		{fiber.Config{}, "/:a/:b", "/users/:id/edit"},
+		{fiber.Config{}, `/a/\:id`, "/a/:id"},
 		{fiber.Config{CaseSensitive: true}, "/users", "/Users"},
 		{fiber.Config{StrictRouting: true}, "/users", "/users/"},
 	} {
