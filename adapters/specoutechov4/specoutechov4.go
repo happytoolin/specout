@@ -10,10 +10,10 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
-	"strings"
 	"sync/atomic"
 
 	"github.com/happytoolin/specout"
+	"github.com/happytoolin/specout/internal/echopath"
 	"github.com/happytoolin/specout/recorder"
 	"github.com/labstack/echo/v4"
 )
@@ -42,7 +42,7 @@ func New(d *specout.Generator, r Routes) *Router {
 func (b *Router) Handle[Req, Res any](method, path string, h specout.Handler[Req, Res], m ...echo.MiddlewareFunc) {
 	// Reject the route's own syntax before Echo serves it. The full-path check
 	// below can only panic after the route is live.
-	if _, err := openAPIPath(path); err != nil {
+	if _, _, err := echopath.OpenAPI(path); err != nil {
 		panic(fmt.Sprintf("specoutechov4: %s %s: %v", method, path, err))
 	}
 	// Echo shows the group prefix only in the Route it returns, and a route
@@ -58,9 +58,9 @@ func (b *Router) Handle[Req, Res any](method, path string, h specout.Handler[Req
 			return serve(c, next)
 		}, m...)
 		// Echo v4 lists no parameters in its route table, so the translation
-		// has no router-side check here. Its scanner is the one openAPIPath
+		// has no router-side check here. Its scanner is the one echopath
 		// follows.
-		full, err := openAPIPath(route.Path)
+		full, _, err := echopath.OpenAPI(route.Path)
 		if err != nil {
 			panic(fmt.Sprintf("specoutechov4: %s %s: %v", method, route.Path, err))
 		}
@@ -165,11 +165,11 @@ func routeKeys(table []*echo.Route) []specout.RouteKey {
 	for p, methods := range byPath {
 		name := methods[http.MethodGet]
 		if name != "" && !slices.ContainsFunc(anyMethods, func(m string) bool { return methods[m] != name }) {
-			keys = append(keys, specout.RouteKey{Path: tablePath(p)})
+			keys = append(keys, specout.RouteKey{Path: echopath.Table(p)})
 			continue
 		}
 		for method := range methods {
-			keys = append(keys, specout.RouteKey{Method: method, Path: tablePath(p)})
+			keys = append(keys, specout.RouteKey{Method: method, Path: echopath.Table(p)})
 		}
 	}
 	return keys
@@ -196,7 +196,7 @@ func Record(rec *recorder.Recorder) echo.MiddlewareFunc {
 				c.Error(err)
 			}
 			if routed(c) {
-				rec.Observe(c.Request().Method, tablePath(c.Path()), c.Response().Status)
+				rec.Observe(c.Request().Method, echopath.Table(c.Path()), c.Response().Status)
 			}
 			return nil
 		}
@@ -215,99 +215,4 @@ func routed(c echo.Context) bool {
 	return slices.ContainsFunc(router.Routes(), func(ri *echo.Route) bool {
 		return ri.Method == r.Method && ri.Path == c.Path()
 	})
-}
-
-// tablePath translates a path from Echo's route table. A path Handle could
-// not have registered stays as Echo spells it, so a report still names it.
-func tablePath(p string) string {
-	full, err := openAPIPath(p)
-	if err != nil {
-		return p
-	}
-	return full
-}
-
-// openAPIPath translates an Echo route path into OpenAPI syntax: /users/:id
-// becomes /users/{id}, and an escaped \: is a literal colon, so /:id\:cancel
-// becomes /{id}:cancel. A * matches the rest of the path, so it becomes the
-// catch-all {*...} and Echo ignores anything after it. The scan follows Echo's
-// walkRoutePath, which also names the parameters Echo sets.
-func openAPIPath(p string) (string, error) {
-	if !strings.HasPrefix(p, "/") {
-		p = "/" + p // Echo's router adds the leading slash the same way
-	}
-	var b strings.Builder
-	for i := 0; i < len(p); {
-		switch {
-		case isEscapedColon(p, i):
-			b.WriteByte(':')
-			i += 2
-		case p[i] == ':':
-			start := i + 1
-			i = paramEnd(p, start)
-			name := p[start:i]
-			if name == "" || strings.ContainsAny(name, `{}:*\`) {
-				return "", fmt.Errorf("parameter name %q cannot be an OpenAPI parameter", name)
-			}
-			b.WriteString("{" + name + "}")
-		case p[i] == '*':
-			b.WriteString("{*...}")
-			return b.String(), nil
-		default:
-			start := i
-			for i < len(p) && p[i] != ':' && p[i] != '*' && !isEscapedColon(p, i) {
-				i++
-			}
-			static := p[start:i]
-			if strings.ContainsAny(static, "{}") {
-				return "", fmt.Errorf("literal braces in %q read as OpenAPI parameters", static)
-			}
-			b.WriteString(static)
-		}
-	}
-	return b.String(), nil
-}
-
-// paramEnd returns the end of the parameter name that starts at start. The
-// name runs to the next slash, unless an escaped colon starts an inline verb
-// such as \:cancel.
-func paramEnd(p string, start int) int {
-	plain := true
-	i := start
-	for i < len(p) && p[i] != '/' {
-		if isEscapedColon(p, i) {
-			if plain && isInlineVerb(p[i+2:]) {
-				return i
-			}
-			for i < len(p) && p[i] != '/' {
-				i++
-			}
-			return i
-		}
-		if p[i] == ':' || p[i] == '*' {
-			plain = false
-		}
-		i++
-	}
-	return i
-}
-
-func isEscapedColon(p string, i int) bool {
-	return p[i] == '\\' && i+1 < len(p) && p[i+1] == ':'
-}
-
-// isInlineVerb reports whether the text after an escaped colon stays static up
-// to the end of its segment.
-func isInlineVerb(rest string) bool {
-	for i := 0; i < len(rest) && rest[i] != '/'; i++ {
-		switch rest[i] {
-		case '*':
-			return false
-		case ':':
-			if i == 0 || rest[i-1] != '\\' {
-				return false
-			}
-		}
-	}
-	return true
 }

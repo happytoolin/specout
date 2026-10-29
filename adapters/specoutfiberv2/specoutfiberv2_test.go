@@ -1,9 +1,6 @@
 package specoutfiberv2_test
 
 import (
-	"bytes"
-	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,33 +8,11 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/happytoolin/specout"
 	"github.com/happytoolin/specout/adapters/specoutfiberv2"
+	"github.com/happytoolin/specout/internal/adaptertest"
 	"github.com/happytoolin/specout/recorder"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func newGen() *specout.Generator {
-	return specout.New(specout.Config{Title: "t", Version: "1"})
-}
-
-// docPaths builds d and returns its paths object.
-func docPaths(t *testing.T, d *specout.Generator) map[string]any {
-	t.Helper()
-	var buf bytes.Buffer
-	require.NoError(t, d.WriteJSON(&buf))
-	var doc map[string]any
-	require.NoError(t, json.Unmarshal(buf.Bytes(), &doc))
-	return doc["paths"].(map[string]any)
-}
-
-// fakeT collects the failures a verification helper reports.
-type fakeT struct{ errs []string }
-
-func (*fakeT) Helper() {}
-
-func (f *fakeT) Errorf(format string, args ...any) {
-	f.errs = append(f.errs, fmt.Sprintf(format, args...))
-}
 
 // do sends one request through app and returns the status and headers.
 func do(t *testing.T, app *fiber.App, method, target string) (int, http.Header) {
@@ -46,25 +21,6 @@ func do(t *testing.T, app *fiber.App, method, target string) (int, http.Header) 
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 	return resp.StatusCode, resp.Header
-}
-
-// panicMessage runs f and returns what it panicked with.
-func panicMessage(t *testing.T, f func()) string {
-	t.Helper()
-	var got any
-	func() {
-		defer func() { got = recover() }()
-		f()
-	}()
-	require.NotNil(t, got, "no panic")
-	return fmt.Sprint(got)
-}
-
-func strays(t *testing.T, err error) []string {
-	t.Helper()
-	var stray *specout.StrayError
-	require.ErrorAs(t, err, &stray)
-	return stray.Routes
 }
 
 type idReq struct {
@@ -85,10 +41,10 @@ func nativeRoute(c *fiber.Ctx) error {
 }
 
 func TestGroupRouteDocumentedAtFullPath(t *testing.T) {
-	d, app := newGen(), fiber.New()
+	d, app := adaptertest.Generator(), fiber.New()
 	g := app.Group("/api").Group("/v1")
 	specoutfiberv2.New(d, g).Get("/users/:id", specout.Handler[idReq, specout.NoContent]{HandlerFunc: noContent})
-	pathItem, ok := docPaths(t, d)["/api/v1/users/{id}"].(map[string]any)
+	pathItem, ok := adaptertest.Paths(t, d)["/api/v1/users/{id}"].(map[string]any)
 	require.True(t, ok, "no /api/v1/users/{id} in the document")
 	params := pathItem["get"].(map[string]any)["parameters"].([]any)
 	require.Len(t, params, 1)
@@ -106,7 +62,7 @@ func TestHandlerSeesPathValues(t *testing.T) {
 		{"/blobs/+", "/blobs/x/y", "+1", "x/y"},
 	} {
 		t.Run(tc.route, func(t *testing.T) {
-			d, app := newGen(), fiber.New()
+			d, app := adaptertest.Generator(), fiber.New()
 			specoutfiberv2.New(d, app).Get(tc.route, specout.Handler[struct{}, specout.NoContent]{
 				HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
 					w.Header().Set("X-Value", r.PathValue(tc.name))
@@ -121,7 +77,7 @@ func TestHandlerSeesPathValues(t *testing.T) {
 }
 
 func TestRouteMiddlewareRunsFirst(t *testing.T) {
-	d, app := newGen(), fiber.New()
+	d, app := adaptertest.Generator(), fiber.New()
 	var order []string
 	mw := func(c *fiber.Ctx) error {
 		order = append(order, "middleware")
@@ -141,7 +97,7 @@ func TestRouteMiddlewareRunsFirst(t *testing.T) {
 // Fiber v2 adds HEAD only through its own Get, at registration. A specout GET
 // route goes through Get, so it answers HEAD; a POST route does not.
 func TestGetRouteAnswersHead(t *testing.T) {
-	d, app := newGen(), fiber.New()
+	d, app := adaptertest.Generator(), fiber.New()
 	r := specoutfiberv2.New(d, app)
 	r.Get("/x", okRoute)
 	r.Post("/y", okRoute)
@@ -149,7 +105,7 @@ func TestGetRouteAnswersHead(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, status)
 	status, _ = do(t, app, http.MethodHead, "/y")
 	assert.Equal(t, http.StatusMethodNotAllowed, status)
-	assert.NotContains(t, docPaths(t, d)["/x"], "head", "the document lists the GET operation only")
+	assert.NotContains(t, adaptertest.Paths(t, d)["/x"], "head", "the document lists the GET operation only")
 }
 
 func TestPathTranslation(t *testing.T) {
@@ -176,9 +132,9 @@ func TestPathTranslation(t *testing.T) {
 		{"/api/:param/abc/*", ""},
 	} {
 		t.Run(tc.route, func(t *testing.T) {
-			d, app := newGen(), fiber.New()
+			d, app := adaptertest.Generator(), fiber.New()
 			specoutfiberv2.New(d, app).Get(tc.route, okRoute)
-			paths := docPaths(t, d)
+			paths := adaptertest.Paths(t, d)
 			if tc.want == "" {
 				assert.Empty(t, paths)
 			} else {
@@ -198,11 +154,11 @@ func TestRegistrationPanicLeavesNoRecord(t *testing.T) {
 		{"/:param*", "specoutfiberv2: GET /:param*: parameter :param is followed by '*'"},
 	} {
 		t.Run(tc.route, func(t *testing.T) {
-			d, app := newGen(), fiber.New()
+			d, app := adaptertest.Generator(), fiber.New()
 			r := specoutfiberv2.New(d, app)
 			r.Get("/ok", okRoute)
-			assert.Contains(t, panicMessage(t, func() { r.Get(tc.route, okRoute) }), tc.want)
-			assert.Len(t, docPaths(t, d), 1)
+			assert.Contains(t, adaptertest.PanicMessage(t, func() { r.Get(tc.route, okRoute) }), tc.want)
+			assert.Len(t, adaptertest.Paths(t, d), 1)
 			assert.NoError(t, specoutfiberv2.Adopt(d, app))
 		})
 	}
@@ -211,40 +167,40 @@ func TestRegistrationPanicLeavesNoRecord(t *testing.T) {
 // Fiber v2 appends a second route on the same path to the first, so the
 // second handler would never run. Bind fails on it instead.
 func TestDuplicateRoutePanics(t *testing.T) {
-	d, app := newGen(), fiber.New()
+	d, app := adaptertest.Generator(), fiber.New()
 	r := specoutfiberv2.New(d, app)
 	r.Get("/x", okRoute)
-	assert.Contains(t, panicMessage(t, func() { r.Get("/x", okRoute) }), "duplicate route GET /x")
+	assert.Contains(t, adaptertest.PanicMessage(t, func() { r.Get("/x", okRoute) }), "duplicate route GET /x")
 }
 
 func TestAdoptReportsStrays(t *testing.T) {
-	d, app := newGen(), fiber.New()
+	d, app := adaptertest.Generator(), fiber.New()
 	app.Use(func(c *fiber.Ctx) error { return c.Next() })
 	specoutfiberv2.New(d, app).Get("/documented", okRoute)
 	app.Get("/plain", nativeRoute)
 	app.Get("/openapi.json", nativeRoute)
-	got := strays(t, specoutfiberv2.Adopt(d, app, specout.Skip("/openapi.json")))
+	got := adaptertest.Strays(t, specoutfiberv2.Adopt(d, app, specout.Skip("/openapi.json")))
 	assert.Equal(t, []string{"GET /plain"}, got)
 }
 
 func TestRequireDocumented(t *testing.T) {
-	d, app := newGen(), fiber.New()
+	d, app := adaptertest.Generator(), fiber.New()
 	specoutfiberv2.New(d, app).Get("/documented", okRoute)
-	var pass fakeT
+	var pass adaptertest.FakeT
 	specoutfiberv2.RequireDocumented(&pass, d, app)
-	assert.Empty(t, pass.errs)
+	assert.Empty(t, pass.Errs)
 
 	app.Get("/plain", nativeRoute)
-	var fail fakeT
+	var fail adaptertest.FakeT
 	specoutfiberv2.RequireDocumented(&fail, d, app)
-	require.Len(t, fail.errs, 1)
-	assert.Contains(t, fail.errs[0], "GET /plain")
+	require.Len(t, fail.Errs, 1)
+	assert.Contains(t, fail.Errs[0], "GET /plain")
 }
 
 // recorded registers GET /items/:id, declaring 200 and 404, behind Record.
 func recorded(t *testing.T) (*specout.Generator, *fiber.App, *recorder.Recorder) {
 	t.Helper()
-	d, app := newGen(), fiber.New()
+	d, app := adaptertest.Generator(), fiber.New()
 	rec := recorder.New(nil, specout.Skip("/openapi.json"))
 	app.Use(specoutfiberv2.Record(rec))
 	specoutfiberv2.New(d, app).Get("/items/:id", specout.Handler[idReq, item]{
@@ -267,26 +223,26 @@ func TestRecordAllStatusesObserved(t *testing.T) {
 	do(t, app, http.MethodGet, "/items/missing")
 	do(t, app, http.MethodGet, "/openapi.json")
 	do(t, app, http.MethodGet, "/unknown")
-	var ft fakeT
+	var ft adaptertest.FakeT
 	recorder.Verify(&ft, d, rec)
-	assert.Empty(t, ft.errs)
+	assert.Empty(t, ft.Errs)
 }
 
 func TestRecordReportsMissingStatus(t *testing.T) {
 	d, app, rec := recorded(t)
 	do(t, app, http.MethodGet, "/items/1")
-	var ft fakeT
+	var ft adaptertest.FakeT
 	recorder.Verify(&ft, d, rec)
-	assert.Equal(t, []string{"declared GET /items/{id} 404 never produced by any test"}, ft.errs)
+	assert.Equal(t, []string{"declared GET /items/{id} 404 never produced by any test"}, ft.Errs)
 }
 
 func TestRecordHeadCountsForGet(t *testing.T) {
 	d, app, rec := recorded(t)
 	do(t, app, http.MethodHead, "/items/1")
 	do(t, app, http.MethodHead, "/items/missing")
-	var ft fakeT
+	var ft adaptertest.FakeT
 	recorder.Verify(&ft, d, rec)
-	assert.Empty(t, ft.errs)
+	assert.Empty(t, ft.Errs)
 }
 
 func TestRecorderWithoutRouterPanics(t *testing.T) {
@@ -302,15 +258,15 @@ type otherRouter struct{ fiber.Router }
 func TestNewPanics(t *testing.T) {
 	app := fiber.New()
 	assert.Panics(t, func() { specoutfiberv2.New(nil, app) })
-	assert.Panics(t, func() { specoutfiberv2.New(newGen(), nil) })
-	assert.Contains(t, panicMessage(t, func() { specoutfiberv2.New(newGen(), otherRouter{app}) }),
+	assert.Panics(t, func() { specoutfiberv2.New(adaptertest.Generator(), nil) })
+	assert.Contains(t, adaptertest.PanicMessage(t, func() { specoutfiberv2.New(adaptertest.Generator(), otherRouter{app}) }),
 		"specoutfiberv2: New needs a *fiber.App or *fiber.Group")
 }
 
 // Fiber keeps the group prefix as written when the route path is empty, so
 // group "/v1/" serves its route as "/v1/". The document must name that path.
 func TestGroupPrefixSlashWithEmptyPath(t *testing.T) {
-	d, app := newGen(), fiber.New()
+	d, app := adaptertest.Generator(), fiber.New()
 	specoutfiberv2.New(d, app.Group("/v1/")).Get("", okRoute)
 	assert.NoError(t, specoutfiberv2.Adopt(d, app), "a specout route is reported as a stray")
 }
@@ -319,23 +275,23 @@ func TestGroupPrefixSlashWithEmptyPath(t *testing.T) {
 // Adopt skips it. A HEAD route registered on its own is a stray like any
 // other, and one that specout registered is documented.
 func TestAdoptReportsExplicitHeadBesideGet(t *testing.T) {
-	d, app := newGen(), fiber.New()
+	d, app := adaptertest.Generator(), fiber.New()
 	specoutfiberv2.New(d, app).Get("/auto", okRoute)
 	specoutfiberv2.New(d, app).Get("/explicit", okRoute)
 	app.Head("/explicit", nativeRoute)
 	specoutfiberv2.New(d, app).Head("/both", okRoute)
 	specoutfiberv2.New(d, app).Get("/both", okRoute)
 	do(t, app, http.MethodGet, "/auto") // starting the app adds no HEAD routes in v2
-	assert.Equal(t, []string{"HEAD /explicit"}, strays(t, specoutfiberv2.Adopt(d, app)))
+	assert.Equal(t, []string{"HEAD /explicit"}, adaptertest.Strays(t, specoutfiberv2.Adopt(d, app)))
 }
 
 // A Head route registered before the Get route on its path runs for HEAD.
 func TestHeadBeforeGetRunsForHead(t *testing.T) {
-	late := specoutfiberv2.New(newGen(), fiber.New())
+	late := specoutfiberv2.New(adaptertest.Generator(), fiber.New())
 	late.Get("/x", okRoute)
-	assert.Contains(t, panicMessage(t, func() { late.Head("/x", okRoute) }), "register Head before Get")
+	assert.Contains(t, adaptertest.PanicMessage(t, func() { late.Head("/x", okRoute) }), "register Head before Get")
 
-	d, app := newGen(), fiber.New()
+	d, app := adaptertest.Generator(), fiber.New()
 	r := specoutfiberv2.New(d, app)
 	r.Head("/x", specout.Handler[struct{}, specout.NoContent]{HandlerFunc: func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("X-Route", "head")
@@ -350,7 +306,7 @@ func TestHeadBeforeGetRunsForHead(t *testing.T) {
 // deniedApp serves GET /items/:id, declaring 401, behind Record and middleware
 // that answers 401 for ?deny=1 before the endpoint runs.
 func deniedApp() (*specout.Generator, *fiber.App, *recorder.Recorder) {
-	d, app := newGen(), fiber.New()
+	d, app := adaptertest.Generator(), fiber.New()
 	rec := recorder.New(nil)
 	app.Use(specoutfiberv2.Record(rec))
 	app.Use(func(c *fiber.Ctx) error {
@@ -376,9 +332,9 @@ func TestRecordSeesMiddlewareResponses(t *testing.T) {
 			require.Equal(t, http.StatusUnauthorized, status)
 			do(t, app, http.MethodGet, "/items/1")
 			do(t, app, http.MethodGet, "/nowhere?deny=1")
-			var ft fakeT
+			var ft adaptertest.FakeT
 			recorder.Verify(&ft, d, rec)
-			assert.Empty(t, ft.errs)
+			assert.Empty(t, ft.Errs)
 		})
 	}
 }
@@ -391,7 +347,7 @@ func TestRecordMiddlewareResponseWithTrailingSlash(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, status)
 	status, _ = do(t, app, http.MethodGet, "/items/1/")
 	require.Equal(t, http.StatusOK, status)
-	var ft fakeT
+	var ft adaptertest.FakeT
 	recorder.Verify(&ft, d, rec)
-	assert.Empty(t, ft.errs)
+	assert.Empty(t, ft.Errs)
 }

@@ -10,12 +10,12 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/adaptor"
 	"github.com/happytoolin/specout"
+	"github.com/happytoolin/specout/internal/fiberpath"
 	"github.com/happytoolin/specout/recorder"
 )
 
@@ -45,8 +45,8 @@ func New(d *specout.Generator, r fiber.Router) *Router {
 
 // Handle registers h for method on p. Route middleware m runs before h.
 func (b *Router) Handle[Req, Res any](method, p string, h specout.Handler[Req, Res], m ...fiber.Handler) {
-	full := groupPath(b.prefix, p)
-	documented, err := openAPIPath(full)
+	full := fiberpath.Join(b.prefix, p)
+	documented, _, err := fiberpath.OpenAPI(full)
 	if err != nil {
 		panic(fmt.Sprintf("specoutfiber: %s %s: %v", method, full, err))
 	}
@@ -156,7 +156,7 @@ func Adopt(d *specout.Generator, app *fiber.App, skips ...specout.SkipRule) erro
 	routes := make([]specout.RouteKey, 0, len(table))
 	for i := range table {
 		r := &table[i]
-		documented, names, err := parsePath(r.Path)
+		documented, names, err := fiberpath.OpenAPI(r.Path)
 		switch {
 		case err != nil:
 			documented = r.Path
@@ -235,143 +235,9 @@ func endpointFor(c fiber.Ctx) (observed, bool) {
 		for i := range table {
 			r := &table[i]
 			if r.Method == method && fiber.RoutePatternMatch(c.Path(), r.Path, cfg) {
-				return observed{method: r.Method, path: tablePath(r.Path)}, true
+				return observed{method: r.Method, path: fiberpath.Table(r.Path)}, true
 			}
 		}
 	}
 	return observed{}, false
-}
-
-// tablePath translates a path from Fiber's route table. A path Handle could
-// not have registered stays as Fiber spells it, so a report still names it.
-func tablePath(p string) string {
-	full, _, err := parsePath(p)
-	if err != nil {
-		return p
-	}
-	return full
-}
-
-// groupPath is Fiber's own join of a group prefix and a route path, with the
-// leading slash Fiber adds to a bare path. An empty path keeps the prefix as
-// written, trailing slash included.
-func groupPath(prefix, p string) string {
-	full := prefix
-	if p != "" {
-		if p[0] != '/' {
-			p = "/" + p
-		}
-		full = strings.TrimRight(prefix, "/") + p
-	}
-	if full == "" || full[0] != '/' {
-		full = "/" + full
-	}
-	return full
-}
-
-// openAPIPath translates a Fiber route path into OpenAPI syntax.
-func openAPIPath(p string) (string, error) {
-	full, _, err := parsePath(p)
-	return full, err
-}
-
-// parsePath translates a Fiber route path into OpenAPI syntax and lists the
-// parameter names in Fiber's order: /users/:id becomes /users/{id}, and
-// /:id<int> drops its constraint, since the Req field types the parameter. A
-// wildcard * or + becomes a catch-all such as {*1...}; Fiber names them *1,
-// *2 and +1, +2 in order. A backslash makes the next character literal, and
-// so does a doubled colon.
-//
-// An optional parameter (:id?) matches two paths, and OpenAPI has no optional
-// path parameter, so it is an error: register both paths instead. Any other
-// syntax this scan does not know is an error too, rather than a guess.
-func parsePath(p string) (string, []string, error) {
-	var b strings.Builder
-	var names []string
-	wildcards, pluses := 0, 0
-	for i := 0; i < len(p); i++ {
-		switch c := p[i]; c {
-		case '\\':
-			if i+1 == len(p) {
-				return "", nil, fmt.Errorf("trailing backslash in %q", p)
-			}
-			i++
-			if p[i] == '{' || p[i] == '}' {
-				return "", nil, fmt.Errorf("literal braces in %q read as OpenAPI parameters", p)
-			}
-			b.WriteByte(p[i])
-		case ':':
-			// :: is a literal colon before a parameter: color::color
-			// matches color:blue.
-			if i+1 < len(p) && p[i+1] == ':' {
-				b.WriteByte(':')
-				continue
-			}
-			name, end, err := param(p, i+1)
-			if err != nil {
-				return "", nil, err
-			}
-			names = append(names, name)
-			b.WriteString("{" + name + "}")
-			i = end - 1
-		case '*', '+':
-			n := &wildcards
-			if c == '+' {
-				n = &pluses
-			}
-			*n++
-			name := string(c) + strconv.Itoa(*n)
-			names = append(names, name)
-			b.WriteString("{" + name + "...}")
-		case '{', '}':
-			return "", nil, fmt.Errorf("literal braces in %q read as OpenAPI parameters", p)
-		default:
-			b.WriteByte(c)
-		}
-	}
-	return b.String(), names, nil
-}
-
-// param reads the parameter name that starts at start, with its optional
-// <constraint>, and returns the index after it. A name ends at a slash, a
-// dash, a dot, another parameter or an escape, as in Fiber's parser.
-func param(p string, start int) (string, int, error) {
-	i := start
-	for i < len(p) && !strings.ContainsRune(`/-.:\?<*+{}`, rune(p[i])) {
-		i++
-	}
-	name := p[start:i]
-	if name == "" {
-		return "", 0, fmt.Errorf("empty parameter name in %q", p)
-	}
-	if i < len(p) && p[i] == '<' {
-		end := constraintEnd(p, i+1)
-		if end < 0 {
-			return "", 0, fmt.Errorf("unclosed constraint on :%s in %q", name, p)
-		}
-		i = end + 1
-	}
-	if i < len(p) {
-		switch p[i] {
-		case '?':
-			return "", 0, fmt.Errorf("optional parameter :%s? matches two paths; register each path", name)
-		case '*', '+', '{', '}':
-			return "", 0, fmt.Errorf("parameter :%s is followed by %q, which specout cannot read", name, p[i])
-		}
-	}
-	return name, i, nil
-}
-
-// constraintEnd returns the index of the > that closes a constraint opened
-// before start, skipping escaped characters, or -1.
-func constraintEnd(p string, start int) int {
-	for i := start; i < len(p); i++ {
-		switch p[i] {
-		case '\\':
-			i++
-		case '>':
-			return i
-		}
-	}
-	return -1
 }

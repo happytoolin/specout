@@ -1,9 +1,6 @@
 package specoutgin_test
 
 import (
-	"bytes"
-	"encoding/json"
-	"fmt"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/happytoolin/specout"
 	"github.com/happytoolin/specout/adapters/specoutgin"
+	"github.com/happytoolin/specout/internal/adaptertest"
 	"github.com/happytoolin/specout/recorder"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -23,54 +21,12 @@ func TestMain(m *testing.M) {
 	m.Run()
 }
 
-func newGen() *specout.Generator {
-	return specout.New(specout.Config{Title: "t", Version: "1"})
-}
-
-// docPaths builds d and returns its paths object.
-func docPaths(t *testing.T, d *specout.Generator) map[string]any {
-	t.Helper()
-	var buf bytes.Buffer
-	require.NoError(t, d.WriteJSON(&buf))
-	var doc map[string]any
-	require.NoError(t, json.Unmarshal(buf.Bytes(), &doc))
-	return doc["paths"].(map[string]any)
-}
-
-// fakeT collects the failures a verification helper reports.
-type fakeT struct{ errs []string }
-
-func (*fakeT) Helper() {}
-
-func (f *fakeT) Errorf(format string, args ...any) {
-	f.errs = append(f.errs, fmt.Sprintf(format, args...))
-}
-
 // get sends one GET request through h.
 func get(t *testing.T, h http.Handler, target string) *httptest.ResponseRecorder {
 	t.Helper()
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, target, nil))
 	return w
-}
-
-// panicMessage runs f and returns what it panicked with.
-func panicMessage(t *testing.T, f func()) string {
-	t.Helper()
-	var got any
-	func() {
-		defer func() { got = recover() }()
-		f()
-	}()
-	require.NotNil(t, got, "no panic")
-	return fmt.Sprint(got)
-}
-
-func strays(t *testing.T, err error) []string {
-	t.Helper()
-	var stray *specout.StrayError
-	require.ErrorAs(t, err, &stray)
-	return stray.Routes
 }
 
 type idReq struct {
@@ -88,10 +44,10 @@ var okRoute = specout.Handler[struct{}, specout.NoContent]{HandlerFunc: noConten
 func nativeRoute(c *gin.Context) { c.Status(http.StatusNoContent) }
 
 func TestGroupRouteDocumentedAtFullPath(t *testing.T) {
-	d, e := newGen(), gin.New()
+	d, e := adaptertest.Generator(), gin.New()
 	g := e.Group("/api").Group("/v1")
 	specoutgin.New(d, g).Get("/users/:id", specout.Handler[idReq, specout.NoContent]{HandlerFunc: noContent})
-	pathItem, ok := docPaths(t, d)["/api/v1/users/{id}"].(map[string]any)
+	pathItem, ok := adaptertest.Paths(t, d)["/api/v1/users/{id}"].(map[string]any)
 	require.True(t, ok, "no /api/v1/users/{id} in the document")
 	params := pathItem["get"].(map[string]any)["parameters"].([]any)
 	require.Len(t, params, 1)
@@ -106,7 +62,7 @@ func TestHandlerSeesPathValues(t *testing.T) {
 		{"/files/*filepath", "/files/a/b.txt", "filepath", "/a/b.txt"},
 	} {
 		t.Run(tc.route, func(t *testing.T) {
-			d, e := newGen(), gin.New()
+			d, e := adaptertest.Generator(), gin.New()
 			specoutgin.New(d, e).Get(tc.route, specout.Handler[struct{}, specout.NoContent]{
 				HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
 					w.Header().Set("X-Value", r.PathValue(tc.name))
@@ -121,7 +77,7 @@ func TestHandlerSeesPathValues(t *testing.T) {
 }
 
 func TestRouteMiddlewareRunsFirst(t *testing.T) {
-	d, e := newGen(), gin.New()
+	d, e := adaptertest.Generator(), gin.New()
 	var order []string
 	mw := func(c *gin.Context) {
 		order = append(order, "middleware")
@@ -148,13 +104,13 @@ func TestPathTranslation(t *testing.T) {
 		{"trailing slash kept", "/v1", "/items/", "/v1/items/"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			d, e := newGen(), gin.New()
+			d, e := adaptertest.Generator(), gin.New()
 			var routes specoutgin.Routes = e
 			if tc.group != "" {
 				routes = e.Group(tc.group)
 			}
 			specoutgin.New(d, routes).Get(tc.route, okRoute)
-			paths := docPaths(t, d)
+			paths := adaptertest.Paths(t, d)
 			if tc.want == "" {
 				assert.Empty(t, paths)
 			} else {
@@ -169,7 +125,7 @@ func TestPathTranslation(t *testing.T) {
 // table and c.FullPath() then spell the literal colon like a parameter.
 func escapedColonServed(t *testing.T) (*specout.Generator, *gin.Engine, *recorder.Recorder) {
 	t.Helper()
-	d, e := newGen(), gin.New()
+	d, e := adaptertest.Generator(), gin.New()
 	rec := recorder.New(nil)
 	e.Use(specoutgin.Record(rec))
 	specoutgin.New(d, e).Get(`/a\:b`, okRoute)
@@ -184,9 +140,9 @@ func TestEscapedColonAdoptAfterFirstRequest(t *testing.T) {
 
 func TestEscapedColonRecordAfterFirstRequest(t *testing.T) {
 	d, _, rec := escapedColonServed(t)
-	var ft fakeT
+	var ft adaptertest.FakeT
 	recorder.Verify(&ft, d, rec)
-	assert.Empty(t, ft.errs)
+	assert.Empty(t, ft.Errs)
 }
 
 func TestRegistrationPanicLeavesNoRecord(t *testing.T) {
@@ -199,23 +155,23 @@ func TestRegistrationPanicLeavesNoRecord(t *testing.T) {
 		{"duplicate", "handlers are already registered for path '/ok'", func(r *specoutgin.Router) { r.Get("/ok", okRoute) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			d, e := newGen(), gin.New()
+			d, e := adaptertest.Generator(), gin.New()
 			r := specoutgin.New(d, e)
 			r.Get("/ok", okRoute)
-			assert.Contains(t, panicMessage(t, func() { tc.register(r) }), tc.want)
-			assert.Equal(t, []string{"/ok"}, slices.Sorted(maps.Keys(docPaths(t, d))))
+			assert.Contains(t, adaptertest.PanicMessage(t, func() { tc.register(r) }), tc.want)
+			assert.Equal(t, []string{"/ok"}, slices.Sorted(maps.Keys(adaptertest.Paths(t, d))))
 			assert.NoError(t, specoutgin.Adopt(d, e))
 		})
 	}
 }
 
 func TestAdoptReportsStrays(t *testing.T) {
-	d, e := newGen(), gin.New()
+	d, e := adaptertest.Generator(), gin.New()
 	specoutgin.New(d, e).Get("/documented", okRoute)
 	e.GET("/plain", nativeRoute)
 	e.GET("/openapi.json", nativeRoute)
 	e.Any("/any", nativeRoute)
-	got := strays(t, specoutgin.Adopt(d, e, specout.Skip("/openapi.json")))
+	got := adaptertest.Strays(t, specoutgin.Adopt(d, e, specout.Skip("/openapi.json")))
 	assert.Contains(t, got, "GET /plain")
 	assert.Contains(t, got, "CONNECT /any")
 	assert.Contains(t, got, "GET /any")
@@ -224,23 +180,23 @@ func TestAdoptReportsStrays(t *testing.T) {
 }
 
 func TestRequireDocumented(t *testing.T) {
-	d, e := newGen(), gin.New()
+	d, e := adaptertest.Generator(), gin.New()
 	specoutgin.New(d, e).Get("/documented", okRoute)
-	var pass fakeT
+	var pass adaptertest.FakeT
 	specoutgin.RequireDocumented(&pass, d, e)
-	assert.Empty(t, pass.errs)
+	assert.Empty(t, pass.Errs)
 
 	e.GET("/plain", nativeRoute)
-	var fail fakeT
+	var fail adaptertest.FakeT
 	specoutgin.RequireDocumented(&fail, d, e)
-	require.Len(t, fail.errs, 1)
-	assert.Contains(t, fail.errs[0], "GET /plain")
+	require.Len(t, fail.Errs, 1)
+	assert.Contains(t, fail.Errs[0], "GET /plain")
 }
 
 // recorded registers GET /items/:id, declaring 200 and 404, behind Record.
 func recorded(t *testing.T) (*specout.Generator, *gin.Engine, *recorder.Recorder) {
 	t.Helper()
-	d, e := newGen(), gin.New()
+	d, e := adaptertest.Generator(), gin.New()
 	rec := recorder.New(nil, specout.Skip("/openapi.json"))
 	e.Use(specoutgin.Record(rec))
 	specoutgin.New(d, e).Get("/items/:id", specout.Handler[idReq, item]{
@@ -263,21 +219,21 @@ func TestRecordAllStatusesObserved(t *testing.T) {
 	get(t, e, "/items/missing")
 	get(t, e, "/openapi.json")
 	get(t, e, "/unknown")
-	var ft fakeT
+	var ft adaptertest.FakeT
 	recorder.Verify(&ft, d, rec)
-	assert.Empty(t, ft.errs)
+	assert.Empty(t, ft.Errs)
 }
 
 func TestRecordReportsMissingStatus(t *testing.T) {
 	d, e, rec := recorded(t)
 	get(t, e, "/items/1")
-	var ft fakeT
+	var ft adaptertest.FakeT
 	recorder.Verify(&ft, d, rec)
-	assert.Equal(t, []string{"declared GET /items/{id} 404 never produced by any test"}, ft.errs)
+	assert.Equal(t, []string{"declared GET /items/{id} 404 never produced by any test"}, ft.Errs)
 }
 
 func TestRecordCountsMiddlewareResponse(t *testing.T) {
-	d, e := newGen(), gin.New()
+	d, e := adaptertest.Generator(), gin.New()
 	rec := recorder.New(nil)
 	e.Use(specoutgin.Record(rec))
 	auth := func(c *gin.Context) {
@@ -295,12 +251,12 @@ func TestRecordCountsMiddlewareResponse(t *testing.T) {
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/me", nil)
 	req.Header.Set("Authorization", "yes")
 	e.ServeHTTP(httptest.NewRecorder(), req)
-	var ft fakeT
+	var ft adaptertest.FakeT
 	recorder.Verify(&ft, d, rec)
-	assert.Empty(t, ft.errs)
+	assert.Empty(t, ft.Errs)
 }
 
 func TestNewPanicsOnNil(t *testing.T) {
 	assert.Panics(t, func() { specoutgin.New(nil, gin.New()) })
-	assert.Panics(t, func() { specoutgin.New(newGen(), nil) })
+	assert.Panics(t, func() { specoutgin.New(adaptertest.Generator(), nil) })
 }

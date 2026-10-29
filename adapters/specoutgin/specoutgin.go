@@ -153,11 +153,10 @@ func Record(rec *recorder.Recorder) gin.HandlerFunc {
 		// A specout route names itself. FullPath loses Gin's \: escapes after
 		// the first request, so it is the fallback for other routes and for
 		// responses that middleware wrote before the handler.
-		if v, ok := c.Get(observedKey{}); ok {
-			if route, ok := v.(observed); ok {
-				rec.Observe(route.method, route.path, c.Writer.Status())
-				return
-			}
+		v, _ := c.Get(observedKey{})
+		if route, ok := v.(observed); ok {
+			rec.Observe(route.method, route.path, c.Writer.Status())
+			return
 		}
 		if full := c.FullPath(); full != "" {
 			rec.Observe(c.Request.Method, tablePath(full), c.Writer.Status())
@@ -203,22 +202,12 @@ func openAPIPath(p string) (string, error) {
 			b.WriteByte(':')
 			i++
 		case ':', '*':
-			end := strings.IndexByte(p[i:], '/')
-			if end < 0 {
-				end = len(p) - i
-			}
-			name := p[i+1 : i+end]
-			if name == "" || strings.ContainsAny(name, `{}:*\`) {
-				return "", fmt.Errorf("parameter name %q cannot be an OpenAPI parameter", name)
-			}
-			if c == '*' {
-				if i+end != len(p) {
-					return "", fmt.Errorf("catch-all *%s must end the path", name)
-				}
-				name += "..."
+			name, end, err := param(p, i)
+			if err != nil {
+				return "", err
 			}
 			b.WriteString("{" + name + "}")
-			i += end - 1
+			i = end - 1
 		case '{', '}':
 			return "", fmt.Errorf("literal braces in %q read as OpenAPI parameters", p)
 		default:
@@ -226,4 +215,25 @@ func openAPIPath(p string) (string, error) {
 		}
 	}
 	return b.String(), nil
+}
+
+// param reads the parameter or catch-all that starts at i and returns its
+// OpenAPI name and the index after it. The name runs to the next slash, and a
+// catch-all must end the path.
+func param(p string, i int) (string, int, error) {
+	end := len(p)
+	if n := strings.IndexByte(p[i:], '/'); n >= 0 {
+		end = i + n
+	}
+	name := p[i+1 : end]
+	if name == "" || strings.ContainsAny(name, `{}:*\`) {
+		return "", 0, fmt.Errorf("parameter name %q cannot be an OpenAPI parameter", name)
+	}
+	if p[i] != '*' {
+		return name, end, nil
+	}
+	if end != len(p) {
+		return "", 0, fmt.Errorf("catch-all *%s must end the path", name)
+	}
+	return name + "...", end, nil
 }

@@ -2,8 +2,6 @@ package specoutechov4_test
 
 import (
 	"bytes"
-	"encoding/json"
-	"fmt"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -12,34 +10,12 @@ import (
 
 	"github.com/happytoolin/specout"
 	"github.com/happytoolin/specout/adapters/specoutechov4"
+	"github.com/happytoolin/specout/internal/adaptertest"
 	"github.com/happytoolin/specout/recorder"
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func newGen() *specout.Generator {
-	return specout.New(specout.Config{Title: "t", Version: "1"})
-}
-
-// docPaths builds d and returns its paths object.
-func docPaths(t *testing.T, d *specout.Generator) map[string]any {
-	t.Helper()
-	var buf bytes.Buffer
-	require.NoError(t, d.WriteJSON(&buf))
-	var doc map[string]any
-	require.NoError(t, json.Unmarshal(buf.Bytes(), &doc))
-	return doc["paths"].(map[string]any)
-}
-
-// fakeT collects the failures a verification helper reports.
-type fakeT struct{ errs []string }
-
-func (*fakeT) Helper() {}
-
-func (f *fakeT) Errorf(format string, args ...any) {
-	f.errs = append(f.errs, fmt.Sprintf(format, args...))
-}
 
 // send sends one request through h.
 func send(t *testing.T, h http.Handler, method, target string) *httptest.ResponseRecorder {
@@ -53,25 +29,6 @@ func send(t *testing.T, h http.Handler, method, target string) *httptest.Respons
 func get(t *testing.T, h http.Handler, target string) *httptest.ResponseRecorder {
 	t.Helper()
 	return send(t, h, http.MethodGet, target)
-}
-
-// panicMessage runs f and returns what it panicked with.
-func panicMessage(t *testing.T, f func()) string {
-	t.Helper()
-	var got any
-	func() {
-		defer func() { got = recover() }()
-		f()
-	}()
-	require.NotNil(t, got, "no panic")
-	return fmt.Sprint(got)
-}
-
-func strays(t *testing.T, err error) []string {
-	t.Helper()
-	var stray *specout.StrayError
-	require.ErrorAs(t, err, &stray)
-	return stray.Routes
 }
 
 type idReq struct {
@@ -92,10 +49,10 @@ func nativeRoute(c echo.Context) error {
 }
 
 func TestGroupRouteDocumentedAtFullPath(t *testing.T) {
-	d, e := newGen(), echo.New()
+	d, e := adaptertest.Generator(), echo.New()
 	g := e.Group("/api").Group("/v1")
 	specoutechov4.New(d, g).Get("/users/:id", specout.Handler[idReq, specout.NoContent]{HandlerFunc: noContent})
-	pathItem, ok := docPaths(t, d)["/api/v1/users/{id}"].(map[string]any)
+	pathItem, ok := adaptertest.Paths(t, d)["/api/v1/users/{id}"].(map[string]any)
 	require.True(t, ok, "no /api/v1/users/{id} in the document")
 	params := pathItem["get"].(map[string]any)["parameters"].([]any)
 	require.Len(t, params, 1)
@@ -121,7 +78,7 @@ func TestHandlerSeesPathValues(t *testing.T) {
 		{"no-slash/:id", "/no-slash/5", "/no-slash/{id}", map[string]string{"id": "5"}},
 	} {
 		t.Run(tc.route, func(t *testing.T) {
-			d, e := newGen(), echo.New()
+			d, e := adaptertest.Generator(), echo.New()
 			specoutechov4.New(d, e).Get(tc.route, specout.Handler[struct{}, specout.NoContent]{
 				HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
 					for name := range tc.values {
@@ -130,7 +87,7 @@ func TestHandlerSeesPathValues(t *testing.T) {
 					w.WriteHeader(http.StatusNoContent)
 				},
 			})
-			assert.Contains(t, docPaths(t, d), tc.documented)
+			assert.Contains(t, adaptertest.Paths(t, d), tc.documented)
 			w := get(t, e, tc.target)
 			require.Equal(t, http.StatusNoContent, w.Code)
 			for name, want := range tc.values {
@@ -143,14 +100,14 @@ func TestHandlerSeesPathValues(t *testing.T) {
 func TestCatchAllSeesRest(t *testing.T) {
 	for _, route := range []string{"/files/*", "/files/*rest", "/files/*/ignored"} {
 		t.Run(route, func(t *testing.T) {
-			d, e := newGen(), echo.New()
+			d, e := adaptertest.Generator(), echo.New()
 			specoutechov4.New(d, e).Get(route, specout.Handler[struct{}, specout.NoContent]{
 				HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
 					w.Header().Set("X-Rest", r.PathValue("*"))
 					w.WriteHeader(http.StatusNoContent)
 				},
 			})
-			assert.Empty(t, docPaths(t, d), "a catch-all is not an OpenAPI path")
+			assert.Empty(t, adaptertest.Paths(t, d), "a catch-all is not an OpenAPI path")
 			w := get(t, e, "/files/a/b.txt")
 			require.Equal(t, http.StatusNoContent, w.Code)
 			assert.Equal(t, "a/b.txt", w.Header().Get("X-Rest"))
@@ -159,7 +116,7 @@ func TestCatchAllSeesRest(t *testing.T) {
 }
 
 func TestRouteMiddlewareRunsFirst(t *testing.T) {
-	d, e := newGen(), echo.New()
+	d, e := adaptertest.Generator(), echo.New()
 	var order []string
 	mw := func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
@@ -190,13 +147,13 @@ func TestPathTranslation(t *testing.T) {
 		{"empty group path", "/v1", "", "/v1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			d, e := newGen(), echo.New()
+			d, e := adaptertest.Generator(), echo.New()
 			var routes specoutechov4.Routes = e
 			if tc.group != "" {
 				routes = e.Group(tc.group)
 			}
 			specoutechov4.New(d, routes).Get(tc.route, okRoute)
-			paths := docPaths(t, d)
+			paths := adaptertest.Paths(t, d)
 			if tc.want == "" {
 				assert.Empty(t, paths)
 			} else {
@@ -217,13 +174,13 @@ func TestRegistrationPanicLeavesNoRecord(t *testing.T) {
 		{"duplicate", "duplicate route", func(r *specoutechov4.Router) { r.Get("/ok", okRoute) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			d, e := newGen(), echo.New()
+			d, e := adaptertest.Generator(), echo.New()
 			r := specoutechov4.New(d, e)
 			r.Get("/ok", okRoute)
-			msg := panicMessage(t, func() { tc.register(r) })
+			msg := adaptertest.PanicMessage(t, func() { tc.register(r) })
 			assert.Contains(t, msg, "GET")
 			assert.Contains(t, msg, tc.want)
-			assert.Equal(t, []string{"/ok"}, slices.Sorted(maps.Keys(docPaths(t, d))))
+			assert.Equal(t, []string{"/ok"}, slices.Sorted(maps.Keys(adaptertest.Paths(t, d))))
 			assert.NoError(t, specoutechov4.Adopt(d, e))
 		})
 	}
@@ -232,7 +189,7 @@ func TestRegistrationPanicLeavesNoRecord(t *testing.T) {
 // Echo v4 always lets a later route replace an earlier one on its path, so
 // the duplicate reaches the router. Registration should still fail loud.
 func TestDuplicateRegistrationPanics(t *testing.T) {
-	d, e := newGen(), echo.New()
+	d, e := adaptertest.Generator(), echo.New()
 	r := specoutechov4.New(d, e)
 	r.Get("/ok", okRoute)
 	assert.Panics(t, func() { r.Get("/ok", okRoute) }, "a duplicate GET /ok registers silently")
@@ -240,7 +197,7 @@ func TestDuplicateRegistrationPanics(t *testing.T) {
 }
 
 func TestAdoptReportsStrays(t *testing.T) {
-	d, e := newGen(), echo.New()
+	d, e := adaptertest.Generator(), echo.New()
 	specoutechov4.New(d, e).Get("/documented", okRoute)
 	specoutechov4.New(d, e.Group("/admin", func(next echo.HandlerFunc) echo.HandlerFunc {
 		return next
@@ -249,36 +206,36 @@ func TestAdoptReportsStrays(t *testing.T) {
 	e.POST("/plain", nativeRoute)
 	e.GET("/openapi.json", nativeRoute)
 	e.Any("/any", nativeRoute)
-	got := strays(t, specoutechov4.Adopt(d, e, specout.Skip("/openapi.json")))
+	got := adaptertest.Strays(t, specoutechov4.Adopt(d, e, specout.Skip("/openapi.json")))
 	assert.Equal(t, []string{"? /any (no method constraint)", "GET /plain", "POST /plain"}, got)
 }
 
 func TestAdoptCoversHostRouters(t *testing.T) {
-	d, e := newGen(), echo.New()
+	d, e := adaptertest.Generator(), echo.New()
 	api := e.Host("api.example.com")
 	specoutechov4.New(d, api).Get("/documented", okRoute)
 	api.GET("/plain", nativeRoute)
-	assert.Equal(t, []string{"GET /plain"}, strays(t, specoutechov4.Adopt(d, e)))
+	assert.Equal(t, []string{"GET /plain"}, adaptertest.Strays(t, specoutechov4.Adopt(d, e)))
 }
 
 func TestRequireDocumented(t *testing.T) {
-	d, e := newGen(), echo.New()
+	d, e := adaptertest.Generator(), echo.New()
 	specoutechov4.New(d, e).Get("/documented", okRoute)
-	var pass fakeT
+	var pass adaptertest.FakeT
 	specoutechov4.RequireDocumented(&pass, d, e)
-	assert.Empty(t, pass.errs)
+	assert.Empty(t, pass.Errs)
 
 	e.GET("/plain", nativeRoute)
-	var fail fakeT
+	var fail adaptertest.FakeT
 	specoutechov4.RequireDocumented(&fail, d, e)
-	require.Len(t, fail.errs, 1)
-	assert.Contains(t, fail.errs[0], "GET /plain")
+	require.Len(t, fail.Errs, 1)
+	assert.Contains(t, fail.Errs[0], "GET /plain")
 }
 
 // recorded registers GET /items/:id, declaring 200 and 404, behind Record.
 func recorded(t *testing.T) (*specout.Generator, *echo.Echo, *recorder.Recorder) {
 	t.Helper()
-	d, e := newGen(), echo.New()
+	d, e := adaptertest.Generator(), echo.New()
 	rec := recorder.New(nil, specout.Skip("/openapi.json"))
 	e.Use(specoutechov4.Record(rec))
 	specoutechov4.New(d, e).Get("/items/:id", specout.Handler[idReq, item]{
@@ -301,17 +258,17 @@ func TestRecordAllStatusesObserved(t *testing.T) {
 	get(t, e, "/items/missing")
 	get(t, e, "/openapi.json")
 	get(t, e, "/unknown")
-	var ft fakeT
+	var ft adaptertest.FakeT
 	recorder.Verify(&ft, d, rec)
-	assert.Empty(t, ft.errs)
+	assert.Empty(t, ft.Errs)
 }
 
 func TestRecordReportsMissingStatus(t *testing.T) {
 	d, e, rec := recorded(t)
 	get(t, e, "/items/1")
-	var ft fakeT
+	var ft adaptertest.FakeT
 	recorder.Verify(&ft, d, rec)
-	assert.Equal(t, []string{"declared GET /items/{id} 404 never produced by any test"}, ft.errs)
+	assert.Equal(t, []string{"declared GET /items/{id} 404 never produced by any test"}, ft.Errs)
 }
 
 // Echo v4 sets the context path of a GET route for a HEAD or POST request it
@@ -323,9 +280,9 @@ func TestRecordIgnoresOtherMethods(t *testing.T) {
 	for _, method := range []string{http.MethodHead, http.MethodPost, http.MethodOptions} {
 		send(t, e, method, "/items/1")
 	}
-	var ft fakeT
+	var ft adaptertest.FakeT
 	recorder.Verify(&ft, d, rec)
-	assert.Empty(t, ft.errs)
+	assert.Empty(t, ft.Errs)
 }
 
 func TestRecordCountsMiddlewareResponse(t *testing.T) {
@@ -334,7 +291,7 @@ func TestRecordCountsMiddlewareResponse(t *testing.T) {
 		"returned": func(echo.Context) error { return echo.ErrUnauthorized },
 	} {
 		t.Run(name, func(t *testing.T) {
-			d, e := newGen(), echo.New()
+			d, e := adaptertest.Generator(), echo.New()
 			rec := recorder.New(nil)
 			e.Use(specoutechov4.Record(rec))
 			auth := func(next echo.HandlerFunc) echo.HandlerFunc {
@@ -353,31 +310,31 @@ func TestRecordCountsMiddlewareResponse(t *testing.T) {
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/me", nil)
 			req.Header.Set("Authorization", "yes")
 			e.ServeHTTP(httptest.NewRecorder(), req)
-			var ft fakeT
+			var ft adaptertest.FakeT
 			recorder.Verify(&ft, d, rec)
-			assert.Empty(t, ft.errs)
+			assert.Empty(t, ft.Errs)
 		})
 	}
 }
 
 func TestNewPanicsOnNil(t *testing.T) {
 	assert.Panics(t, func() { specoutechov4.New(nil, echo.New()) })
-	assert.Panics(t, func() { specoutechov4.New(newGen(), nil) })
+	assert.Panics(t, func() { specoutechov4.New(adaptertest.Generator(), nil) })
 }
 
 // Echo shows the group prefix only after the route is added. A registration
 // that panics then, for braces in the prefix or for a duplicate that replaced
 // a route, must not leave a live handler behind when the caller recovers.
 func TestPanickedRegistrationServesNothing(t *testing.T) {
-	d, e := newGen(), echo.New()
+	d, e := adaptertest.Generator(), echo.New()
 	b := specoutechov4.New(d, e.Group("/{tenant}"))
-	assert.Contains(t, panicMessage(t, func() { b.Get("/items", okRoute) }), "braces")
+	assert.Contains(t, adaptertest.PanicMessage(t, func() { b.Get("/items", okRoute) }), "braces")
 
 	specoutechov4.New(d, e).Get("/dup", okRoute)
 	second := specout.Handler[struct{}, specout.NoContent]{HandlerFunc: func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusTeapot)
 	}}
-	assert.Contains(t, panicMessage(t, func() { specoutechov4.New(d, e).Get("/dup", second) }), "duplicate route")
+	assert.Contains(t, adaptertest.PanicMessage(t, func() { specoutechov4.New(d, e).Get("/dup", second) }), "duplicate route")
 
 	for _, target := range []string{"/{tenant}/items", "/dup"} {
 		assert.Equal(t, http.StatusNotFound, get(t, e, target).Code, target)
