@@ -1,6 +1,7 @@
 package specout
 
 import (
+	"cmp"
 	"fmt"
 	"net/http"
 	"regexp/syntax"
@@ -27,29 +28,47 @@ type GorillaRouter struct {
 }
 
 func (g *GorillaRouter) register(method, pattern string, rec routeRecord) {
-	if strings.Contains(pattern, endAnchor) {
-		panic("specout: gorilla route " + method + " " + pattern + ": " + endAnchorMsg("gorilla"))
+	if msg := gorillaPatternErr(pattern); msg != "" {
+		panic("specout: gorilla route " + method + " " + pattern + ": " + msg)
 	}
 	rec.method, rec.pattern = method, pattern
 	rec.absolute = true
 	rec.literalStars = true
 	rec.fn = withVars(rec.fn)
 	g.d.addRoute(rec, func(rec *routeRecord) {
-		// gorilla keeps a route with a bad template and never matches it, so
-		// fail with gorilla's reason rather than document a dead path.
+		// A variable of the subrouter's Host matcher can repeat one of the
+		// path, and gorilla then rejects the route.
 		tpl, err := g.r.Handle(pattern, rec).Methods(method).GetPathTemplate()
 		if err != nil {
 			panic(fmt.Sprintf("specout: gorilla route %s %s: %v", method, pattern, err))
 		}
-		// An empty pattern on a router without a path prefix gives an empty
-		// template, which matches no request path.
-		if msg := checkOpenAPIPath(tpl); msg != "" {
+		// gorilla folds the subrouter prefix, which only it knows, into the
+		// route template. An empty pattern on a router without a path prefix
+		// gives an empty template, which matches no request path.
+		if msg := cmp.Or(checkOpenAPIPath(tpl), checkSegments(tpl)); msg != "" {
 			panic(fmt.Sprintf("specout: gorilla route %s %s: %s", method, pattern, msg))
 		}
-		// gorilla folds subrouter prefixes into the route template.
 		rec.full = tpl
 		rec.catchAll = spansSegments(tpl)
 	})
+}
+
+// gorillaPatternErr returns why gorilla cannot serve pattern as the document
+// names it, or "" when it can. A scratch router parses the template, so the
+// router of the binder never gets a bad one.
+func gorillaPatternErr(pattern string) string {
+	if strings.Contains(pattern, endAnchor) {
+		return endAnchorMsg("gorilla")
+	}
+	// gorilla cleans the request path, so /a//b and /a/./b never match.
+	if msg := checkSegments(pattern); msg != "" {
+		return msg
+	}
+	// gorilla keeps a route with a bad template and never matches it.
+	if _, err := mux.NewRouter().Path(pattern).GetPathTemplate(); err != nil {
+		return err.Error()
+	}
+	return ""
 }
 
 // withVars copies gorilla's route variables into r.PathValue before fn runs,

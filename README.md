@@ -432,6 +432,12 @@ document build, you cannot add routes.
 responses, `Raw` keys, and media types. A value that would make the document
 invalid panics there, and the router does not get the route.
 
+A bad path panics at registration too. The router does not get the route,
+except when a check needs the full path. The router knows the full path only
+after it adds the route. This is true for the path that a `Bind` mount func
+returns. It is also true for a gorilla subrouter prefix or host, and for an
+empty gorilla path.
+
 If the build fails, `WriteJSON` returns the error. `ServeHTTP` returns `500`
 without the error text, and it writes the error to the standard `log` package
 once. A panic in the build is a failed build for `ServeHTTP`, and the log also

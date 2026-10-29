@@ -231,6 +231,30 @@ func TestGorillaBadTemplatePanicsWithGorillaReason(t *testing.T) {
 	}
 }
 
+// gorilla never matches a bad template, and it cleans the request path, so a
+// route with an empty or dot segment never runs. Both fail before gorilla
+// gets the route.
+func TestGorillaBadPathNeverReachesTheRouter(t *testing.T) {
+	for _, pattern := range []string{"/items/{id", "items", "/a//b", "/a/./b", "/a/../b"} {
+		t.Run(pattern, func(t *testing.T) {
+			r := mux.NewRouter()
+			msg := fmt.Sprint(panicValue(func() { specout.Gorilla(newGen(), r).Get(pattern, okGet) }))
+			assert.Contains(t, msg, "specout: gorilla route GET "+pattern)
+			routes := 0
+			require.NoError(t, r.Walk(func(*mux.Route, *mux.Router, []*mux.Route) error {
+				routes++
+				return nil
+			}))
+			assert.Zero(t, routes, "gorilla got the route")
+		})
+	}
+	// Only gorilla knows the subrouter prefix, so its segments fail after
+	// gorilla has the route.
+	sub := mux.NewRouter().PathPrefix("/a//b").Subrouter()
+	msg := fmt.Sprint(panicValue(func() { specout.Gorilla(newGen(), sub).Get("/c", okGet) }))
+	assert.Equal(t, "specout: gorilla route GET /c: the path has an empty segment (//)", msg)
+}
+
 func TestGorillaPathlessRouteIsSkippable(t *testing.T) {
 	d, r := newGen(), mux.NewRouter()
 	specout.Gorilla(d, r).Get("/x", okGet)
