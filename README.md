@@ -389,13 +389,12 @@ The gorilla, Echo v4, Gin, and Fiber binders decode the values, as
 `r.PathValue` themselves. When the request path is encoded, they give
 `a%40b`, the same value that their own handlers get. With Echo v5, set
 `UnescapePathParamValues` in `echo.RouterConfig` to get `a@b`. With chi,
-decode the value with `url.PathUnescape`. With Gin, the values stay encoded
-when the engine sets `UseRawPath` or `UseEscapedPath` and clears
-`UnescapePathValues`.
+decode the value with `url.PathUnescape`.
 
-A gorilla router with `UseEncodedPath` keeps the values encoded:
-`/users/a%40b` gives `a%40b`, as `mux.Vars` does. gorilla does not report this
-setting, so the binder cannot decode the values.
+Two router settings keep the values encoded, and the binders cannot read
+these settings. A gorilla router with `UseEncodedPath` gives `a%40b`, as
+`mux.Vars` does. A Gin engine gives `a%40b` when it sets `UseRawPath` or
+`UseEscapedPath` and clears `UnescapePathValues`.
 
 This Gin example registers a route on a group and checks the route table:
 
