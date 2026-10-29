@@ -1,6 +1,7 @@
 package specout_test
 
 import (
+	jsonv1 "encoding/json"
 	"errors"
 	"net/http"
 	"net/netip"
@@ -8,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/happytoolin/specout"
@@ -337,6 +339,63 @@ func TestLaunchUintptrIsAnInteger(t *testing.T) {
 	)
 	assert.Equal(t, "integer", props(t, doc, "response")["address"].(map[string]any)["type"])
 	assert.Equal(t, map[string]any{"type": "integer"}, launchResponseSchema(t, doc, "/root", "get"))
+}
+
+// schemaStamp gets MarshalJSON from its embedded time.Time, so the encoders
+// write the whole struct as a time string, without the note.
+type schemaStamp struct {
+	time.Time
+
+	Note string `json:"note"`
+}
+
+// schemaOwnStamp declares its own MarshalJSON, which wins over the promoted
+// one.
+type schemaOwnStamp struct {
+	time.Time
+
+	Note string `json:"note"`
+}
+
+func (s schemaOwnStamp) MarshalJSON() ([]byte, error) {
+	if s.Note == "" {
+		return nil, errors.New("empty note")
+	}
+	return []byte(strconv.Quote(s.Note)), nil
+}
+
+func TestLaunchPromotedEncoderSetsTheSchema(t *testing.T) {
+	type response struct {
+		At   schemaStamp   `json:"at"`
+		Ptr  *schemaStamp  `json:"ptr"`
+		List []schemaStamp `json:"list"`
+	}
+	d := newGen()
+	specout.Document(d, http.MethodGet, "/x", specout.Get[response]{HandlerFunc: noop})
+	specout.Document(d, http.MethodGet, "/stamp", specout.Get[schemaStamp]{HandlerFunc: noop})
+	specout.Document(d, http.MethodGet, "/own", specout.Get[schemaOwnStamp]{HandlerFunc: noop})
+	doc := buildDoc(t, d)
+	stamp := schemaStamp{Time: time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC), Note: "dropped"}
+	wire, err := jsonv1.Marshal(stamp)
+	require.NoError(t, err)
+	require.JSONEq(t, `"2026-10-29T12:00:00Z"`, string(wire), "encoding/json writes the embedded time")
+	value := response{At: stamp, List: []schemaStamp{stamp}}
+	exportLaunchSamples(t, doc,
+		launchSample{"promoted encoder", launchResponseSchema(t, doc, "/x", "get"), value, true},
+		launchSample{"promoted root", launchResponseSchema(t, doc, "/stamp", "get"), stamp, true},
+		launchSample{
+			"fields for a promoted encoder", launchResponseSchema(t, doc, "/stamp", "get"),
+			map[string]any{"note": "x"},
+			false,
+		},
+	)
+	timeSchema := map[string]any{"type": "string", "format": "date-time"}
+	p := props(t, doc, "response")
+	assert.Equal(t, timeSchema, p["at"])
+	assert.Equal(t, timeSchema, p["list"].(map[string]any)["items"])
+	assert.Equal(t, []any{"string", "null"}, p["ptr"].(map[string]any)["type"])
+	assert.Equal(t, timeSchema, componentsSchema(t, doc, "schemaStamp"))
+	assert.Contains(t, props(t, doc, "schemaOwnStamp"), "note", "a declared MarshalJSON keeps the reflected fields")
 }
 
 func TestUnencodableTypesPanicClearly(t *testing.T) {

@@ -143,9 +143,10 @@ func nonNullArms(groups ...[]*jsonschema.Schema) iter.Seq[*jsonschema.Schema] {
 }
 
 // fixContainer fixes what a slice, array, map or struct schema holds. A text
-// type is a string on the wire and holds nothing.
+// type is a string on the wire and holds nothing, and a struct written as its
+// embedded field has that field's schema, not its own fields.
 func (sr *schemaRegistry) fixContainer(t reflect.Type, s *jsonschema.Schema) {
-	if writesText(t) {
+	if _, promoted := promotedEncoder(t); promoted || writesText(t) {
 		return
 	}
 	switch t.Kind() {

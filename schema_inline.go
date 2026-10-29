@@ -53,8 +53,19 @@ func schemaFor(t reflect.Type, sr *schemaRegistry) any {
 }
 
 // propSchema builds a synthetic struct with one field shaped like f, so
-// invopop applies the field's jsonschema tag, then returns the property.
+// invopop applies the field's jsonschema tag, then returns the property. The
+// registry keeps it with the inline schemas outside components.
 func (sr *schemaRegistry) propSchema(t reflect.Type, tag reflect.StructTag) *jsonschema.Schema {
+	p := sr.fieldSchema(t, tag)
+	if p != nil {
+		sr.inline = append(sr.inline, p)
+	}
+	return p
+}
+
+// fieldSchema is the schema of a struct field of type t with tag, without
+// the registry keeping it: a caller puts it inside another schema.
+func (sr *schemaRegistry) fieldSchema(t reflect.Type, tag reflect.StructTag) *jsonschema.Schema {
 	validateAnonymousEmbeddings(t, make(map[reflect.Type]bool))
 	wrap := reflect.StructOf([]reflect.StructField{{Name: "Wrap", Type: t, Tag: tag}})
 	inlineRoot := true
@@ -67,7 +78,7 @@ func (sr *schemaRegistry) propSchema(t reflect.Type, tag reflect.StructTag) *jso
 			if t == wrap {
 				return nil
 			}
-			if s := wireSchema(t); s != nil {
+			if s := sr.wireSchema(t); s != nil {
 				inlineRoot = false
 				return s
 			}
@@ -93,7 +104,6 @@ func (sr *schemaRegistry) propSchema(t reflect.Type, tag reflect.StructTag) *jso
 	applyNumberEnumTag(p, t, tag)
 	splitEnums(p)
 	sr.applySchemaFixes(t, p)
-	sr.inline = append(sr.inline, p)
 	return p
 }
 
