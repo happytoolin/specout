@@ -596,7 +596,7 @@ type schemaStampJob struct {
 	Run func()
 }
 
-func TestOwnEncoderHidesUnencodableFields(t *testing.T) {
+func TestLaunchOwnEncoderHidesUnencodableFields(t *testing.T) {
 	type response struct {
 		Job   schemaJob      `json:"job"`
 		Jobs  []schemaJob    `json:"jobs"`
