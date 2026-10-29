@@ -80,6 +80,34 @@ func TestGapExternalDocsNeedsURL(t *testing.T) {
 	require.Panics(t, func() { buildDoc(t, d) })
 }
 
+// TestGapConfigThatBreaksTheDocument: each config emitted a document the
+// OpenAPI validator rejects, or dropped a declared scheme without a word.
+func TestGapConfigThatBreaksTheDocument(t *testing.T) {
+	for _, tc := range []struct {
+		name, want string
+		cfg        specout.Config
+	}{
+		{"license without name", "specout: License needs a Name", specout.Config{License: &specout.License{URL: "https://x.example"}}},
+		{"tag without name", `specout: empty or duplicate tag name ""`, specout.Config{Tags: []specout.Tag{{Description: "d"}}}},
+		{"duplicate tag", `specout: empty or duplicate tag name "a"`, specout.Config{Tags: []specout.Tag{{Name: "a"}, {Name: "a"}}}},
+		{
+			"auth name with a space", `specout: AuthScheme.Name "bearer auth" must contain only ASCII letters, digits, dots, hyphens or underscores`,
+			specout.Config{Auth: []specout.AuthScheme{{Name: "bearer auth", Type: "httpBearer"}}},
+		},
+		{
+			"duplicate auth name", "specout: duplicate AuthScheme name bearerAuth",
+			specout.Config{Auth: []specout.AuthScheme{specout.Bearer, specout.APIKey("bearerAuth", "k", specout.InHeader)}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.cfg.Title, tc.cfg.Version = "t", "1"
+			d := specout.New(tc.cfg)
+			specout.Document(d, http.MethodGet, "/x", okGet)
+			assert.PanicsWithValue(t, tc.want, func() { buildDoc(t, d) })
+		})
+	}
+}
+
 type probeQ struct {
 	Filter map[string]string `jsonschema:"style=deepObject,explode=true" query:"filter"`
 	Hdr    string            `header:"X-Req"`

@@ -1,13 +1,17 @@
 package specout
 
+import "strconv"
+
 // securitySchemeObj builds the named scheme entry from the doc-only
 // AuthScheme declaration. A typo in Type, Key, In or URL would emit a
 // securityScheme object the OpenAPI validator rejects (type must be one of
 // apiKey/http/mutualTLS/oauth2/openIdConnect; apiKey needs a real in), so
 // the declaration is checked here rather than shipped broken.
 func securitySchemeObj(a AuthScheme) *obj {
-	if a.Name == "" {
-		panic("specout: AuthScheme.Name must not be empty (it is the securitySchemes key)")
+	// the name is a securitySchemes key: the same rule as a component name
+	if a.Name == "" || componentChars.MatchString(a.Name) {
+		panic("specout: AuthScheme.Name " + strconv.Quote(a.Name) +
+			" must contain only ASCII letters, digits, dots, hyphens or underscores")
 	}
 	switch a.Type {
 	case "httpBearer":

@@ -1,6 +1,9 @@
 package specout
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // build assembles the OpenAPI document: resolve the routes, reflect schemas,
 // emit operations in path order.
@@ -56,7 +59,11 @@ func (d *Generator) infoObj() *obj {
 		info.set("contact", newObj().setIf("name", c.Name).setIf("url", c.URL).setIf("email", c.Email))
 	}
 	if l := d.cfg.License; l != nil {
-		info.set("license", newObj().setIf("name", l.Name).setIf("url", l.URL))
+		// OpenAPI requires the license name; a URL alone is invalid.
+		if l.Name == "" {
+			panic("specout: License needs a Name")
+		}
+		info.set("license", newObj().set("name", l.Name).setIf("url", l.URL))
 	}
 	return info
 }
@@ -70,10 +77,16 @@ func (d *Generator) serverObjs() []any {
 	return servers
 }
 
-// tagObjs is the declared tag list.
+// tagObjs is the declared tag list. OpenAPI requires each tag name, and
+// requires the names to be unique.
 func (d *Generator) tagObjs() []any {
 	tags := make([]any, 0, len(d.cfg.Tags))
+	seen := make(map[string]bool, len(d.cfg.Tags))
 	for _, t := range d.cfg.Tags {
+		if t.Name == "" || seen[t.Name] {
+			panic("specout: empty or duplicate tag name " + strconv.Quote(t.Name))
+		}
+		seen[t.Name] = true
 		e := newObj().set("name", t.Name).setIf("description", t.Description)
 		if t.ExternalDocs != nil {
 			e.set("externalDocs", externalDocsObj(t.ExternalDocs))
@@ -89,6 +102,10 @@ func (d *Generator) securityObjs() (*obj, []any) {
 	schemes := newObj()
 	alts := make([]any, 0, len(d.cfg.Auth))
 	for _, a := range d.cfg.Auth {
+		// a second scheme with one name would replace the first
+		if schemes.get(a.Name) != nil {
+			panic("specout: duplicate AuthScheme name " + a.Name)
+		}
 		schemes.set(a.Name, securitySchemeObj(a))
 		alts = append(alts, newObj().set(a.Name, []any{}))
 	}
