@@ -314,3 +314,47 @@ func TestRecordReportsMountedSubAppPath(t *testing.T) {
 		"handler wrote GET /sub/items/{id} 204 but spec does not declare it",
 	}, ft.Errs)
 }
+
+// Fiber tries the routes of one method in registration order, so an earlier
+// route can take every request of a later one. Adopt names both routes.
+func TestAdoptReportsRoutesThatNeverRun(t *testing.T) {
+	accepted := specout.Handler[struct{}, specout.NoContent]{
+		HandlerFunc: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusAccepted) },
+	}
+	for _, tc := range []struct{ first, second, target string }{
+		{"/users/:id", "/users/me", "/users/me"},
+		{"/users", "/Users", "/Users"},
+		{"/users", "/users/", "/users/"},
+		{"/users/:id", "/Users/:id/", "/Users/1/"},
+	} {
+		d, app := adaptertest.Generator(), fiber.New()
+		r := specoutfiber.New(d, app)
+		r.Get(tc.first, okRoute)
+		r.Get(tc.second, accepted)
+		status, _ := do(t, app, http.MethodGet, tc.target)
+		assert.Equal(t, http.StatusNoContent, status, "%s runs the first route", tc.target)
+		require.EqualError(t, specoutfiber.Adopt(d, app), "specoutfiber: GET "+tc.second+
+			" never runs: Fiber sends its requests to GET "+tc.first+", an earlier route")
+	}
+}
+
+// A later route that matches requests the earlier one does not take still
+// runs, and the Config can keep case or a trailing slash apart.
+func TestAdoptAcceptsRoutesThatRun(t *testing.T) {
+	for _, tc := range []struct {
+		cfg           fiber.Config
+		first, second string
+	}{
+		{fiber.Config{}, "/users/me", "/users/:id"},
+		{fiber.Config{}, "/users/:id<int>", "/users/me"},
+		{fiber.Config{}, "/files/:name", "/files/*"},
+		{fiber.Config{CaseSensitive: true}, "/users", "/Users"},
+		{fiber.Config{StrictRouting: true}, "/users", "/users/"},
+	} {
+		d, app := adaptertest.Generator(), fiber.New(tc.cfg)
+		r := specoutfiber.New(d, app)
+		r.Get(tc.first, okRoute)
+		r.Get(tc.second, okRoute)
+		require.NoError(t, specoutfiber.Adopt(d, app), "%s then %s", tc.first, tc.second)
+	}
+}

@@ -172,8 +172,17 @@ func serve(next http.Handler, route observed) fiber.Handler {
 //
 // Adopt also checks the translation of every path against the parameters
 // Fiber parsed from it, so syntax specout reads differently fails here.
+//
+// Adopt also reports a route that never runs. Fiber tries the routes of one
+// method in registration order, and an earlier route can take every request
+// of a later one: /users/:id takes /users/me, and with the default Config,
+// /users takes /Users and /users/. Register the specific route first, or set
+// Config.CaseSensitive or Config.StrictRouting.
 func Adopt(d *specout.Generator, app *fiber.App, skips ...specout.SkipRule) error {
 	table := endpoints(app)
+	if err := shadowed(app, table); err != nil {
+		return err
+	}
 	routes := make([]specout.RouteKey, 0, len(table))
 	for i := range table {
 		r := &table[i]
@@ -188,6 +197,21 @@ func Adopt(d *specout.Generator, app *fiber.App, skips ...specout.SkipRule) erro
 		routes = append(routes, specout.RouteKey{Method: r.Method, Path: documented})
 	}
 	return d.CheckRoutes(routes, skips...)
+}
+
+// shadowed reports the routes of table that never run on app, because an
+// earlier route takes their requests.
+func shadowed(app *fiber.App, table []fiber.Route) error {
+	cfg := app.Config()
+	routes := make([]fiberpath.Route, 0, len(table))
+	for i := range table {
+		routes = append(routes, fiberpath.Route{Method: table[i].Method, Path: table[i].Path})
+	}
+	return fiberpath.Shadowed("specoutfiber", routes, fiberpath.Reading{
+		CaseSensitive: cfg.CaseSensitive,
+		StrictRouting: cfg.StrictRouting,
+		Match:         func(path, pattern string) bool { return fiber.RoutePatternMatch(path, pattern, cfg) },
+	})
 }
 
 // endpoints lists the routes of app that run endpoint handlers, in Fiber's

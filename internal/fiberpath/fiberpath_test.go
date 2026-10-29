@@ -68,3 +68,33 @@ func TestJoin(t *testing.T) {
 		assert.Equal(t, tc.want, fiberpath.Join(tc.prefix, tc.p), tc)
 	}
 }
+
+// Two routes that Fiber reads the same way are one route, and only the first
+// runs. A constraint keeps its case, so \d and \D stay two routes.
+func TestShadowedByFold(t *testing.T) {
+	never := func(string, string) bool { return false }
+	for _, tc := range []struct {
+		rd            fiberpath.Reading
+		first, second string
+		shadowed      bool
+	}{
+		{fiberpath.Reading{}, "/users/:id", "/Users/:ID/", true},
+		{fiberpath.Reading{}, `/A\:b`, `/a\:B`, true},
+		{fiberpath.Reading{}, "/files/*", "/Files/*", true},
+		{fiberpath.Reading{}, "/:id?", "/:ID?", true},
+		{fiberpath.Reading{}, `/a/:x<regex(\d+)>`, `/a/:x<regex(\D+)>`, false},
+		{fiberpath.Reading{CaseSensitive: true}, "/users/:id", "/Users/:id", false},
+		{fiberpath.Reading{StrictRouting: true}, "/users/:id", "/users/:id/", false},
+	} {
+		tc.rd.Match = never
+		err := fiberpath.Shadowed("pkg", []fiberpath.Route{
+			{Method: "GET", Path: tc.first}, {Method: "POST", Path: tc.second}, {Method: "GET", Path: tc.second},
+		}, tc.rd)
+		if !tc.shadowed {
+			require.NoError(t, err, tc.second)
+			continue
+		}
+		require.EqualError(t, err,
+			"pkg: GET "+tc.second+" never runs: Fiber sends its requests to GET "+tc.first+", an earlier route")
+	}
+}
