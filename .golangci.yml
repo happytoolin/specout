@@ -32,7 +32,10 @@ linters:
     - err113
     # package level fixture tables are the clearest form for these
     - gochecknoglobals
+    # some tests replace process-wide state, such as the standard logger, so
+    # the suite cannot run in parallel
     - paralleltest
+    # revive unchecked-type-assertion checks this, and it accepts v, _ := x.(T)
     - forcetypeassert
     # no dependency allow list here
     - depguard
@@ -47,13 +50,20 @@ linters:
       enable-all: true
       disable:
         - fieldalignment
+      settings:
+        shadow:
+          strict: true
     staticcheck:
       checks: ["all"]
     gocritic:
-      enabled-tags: [diagnostic, style, experimental, opinionated]
+      enabled-tags: [diagnostic, style, performance, experimental, opinionated]
       disabled-checks:
         # nonamedreturns forbids what this check asks for
         - unnamedResult
+        # specout builds its document once, at startup. A pointer to save a
+        # 100-byte copy there would let a callee change the caller's value.
+        - hugeParam
+        - rangeValCopy
     nolintlint:
       require-explanation: true
       require-specific: true
@@ -92,28 +102,50 @@ linters:
         - name: flag-parameter
           disabled: true
         # v, _ := x.(T) is a checked assertion that wants the zero value
+        # more than three levels of control flow hide the main path
+        - name: max-control-nesting
+          arguments: [3]
+        # past five arguments, a call site has to name its values: use a struct
+        - name: argument-limit
+          arguments: [5]
         - name: unchecked-type-assertion
           arguments:
             - acceptIgnoredAssertionResult: true
+    # size and complexity limits. A function over a limit splits into named
+    # steps. cyclop and gocyclo count branches in different ways, so both run.
     cyclop:
-      # the reflect-driven field walks and the response planner are branchy by
-      # nature; 20 is the ceiling before a function has to split
-      max-complexity: 20
+      # McCabe's limit
+      max-complexity: 10
+    gocyclo:
+      min-complexity: 10
     gocognit:
-      min-complexity: 40
+      min-complexity: 15
     funlen:
-      lines: 70
-      statements: 50
+      lines: 50
+      statements: 35
     nestif:
-      min-complexity: 5
+      min-complexity: 4
+    maintidx:
+      under: 30
+    dupl:
+      threshold: 100
     goconst:
-      min-occurrences: 4
+      min-occurrences: 3
+    prealloc:
+      simple: true
+      range-loops: true
+      for-loops: true
+    unparam:
+      check-exported: true
+    testifylint:
+      enable-all: true
     lll:
       line-length: 120
     exhaustive:
       # a reflect.Kind switch is not an enum, so a default is the signifier for
       # the "every other kind" case
       default-signifies-exhaustive: true
+      check: [switch, map]
     wrapcheck:
       # specout errors already say "specout:", and the adapter packages pass
       # them on so callers can match *specout.StrayError
@@ -137,17 +169,23 @@ linters:
         text: "^(struct-tag|unchecked-type-assertion):"
       # the examples mirror published documents: their type names, struct tags,
       # status codes and data literals are the published ones
+      # the example route files are long tables of published operations, and
+      # their op helpers take each operation's fields in published order
       - path: ^examples/
         linters:
           - lll
           - mnd
           - goconst
           - cyclop
+          - gocyclo
+          - gocognit
+          - funlen
+          - maintidx
           - forbidigo
       - path: ^examples/
         linters:
           - revive
-        text: var-naming
+        text: "^(var-naming|argument-limit):"
       - path: ^examples/
         linters:
           - staticcheck
