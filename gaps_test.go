@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -62,33 +63,45 @@ func TestGapNoBodyStatuses(t *testing.T) {
 }
 
 // TestGapOAuth2: an oauth2 flow with no URL is a spec the validator rejects,
-// so it panics at build.
+// so New panics.
 func TestGapOAuth2(t *testing.T) {
-	bad := specout.New(specout.Config{
-		Title: "t", Version: "1",
-		Auth: []specout.AuthScheme{specout.OAuth2("x", map[string]specout.OAuth2Flow{"implicit": {}})},
+	require.Panics(t, func() {
+		specout.New(specout.Config{
+			Title: "t", Version: "1",
+			Auth: []specout.AuthScheme{specout.OAuth2("x", map[string]specout.OAuth2Flow{"implicit": {}})},
+		})
 	})
-	require.Panics(t, func() { buildDoc(t, bad) })
 }
 
 // TestGapExternalDocsNeedsURL: url is required by OpenAPI, and an empty one
 // used to emit an object the validator rejects.
 func TestGapExternalDocsNeedsURL(t *testing.T) {
-	d := specout.New(specout.Config{
-		Title: "t", Version: "1",
-		ExternalDocs: &specout.ExternalDocs{Description: "no link"},
+	require.Panics(t, func() {
+		specout.New(specout.Config{
+			Title: "t", Version: "1",
+			ExternalDocs: &specout.ExternalDocs{Description: "no link"},
+		})
 	})
-	require.Panics(t, func() { buildDoc(t, d) })
 }
 
 // TestGapConfigThatBreaksTheDocument: each config emitted a document the
-// OpenAPI validator rejects, or dropped a declared scheme without a word.
+// OpenAPI validator rejects, or dropped a declared scheme without a word. New
+// panics on it, before any route is registered.
 func TestGapConfigThatBreaksTheDocument(t *testing.T) {
 	for _, tc := range []struct {
 		name, want string
 		cfg        specout.Config
 	}{
 		{"license without name", "specout: License needs a Name", specout.Config{License: &specout.License{URL: "https://x.example"}}},
+		{"tag without a docs URL", "specout: ExternalDocs needs a URL", specout.Config{Tags: []specout.Tag{{Name: "a", ExternalDocs: &specout.ExternalDocs{}}}}},
+		{
+			"reflect.Type error envelope", "specout: a Type field takes a value such as Error{}, not a reflect.Type",
+			specout.Config{ErrorType: reflect.TypeFor[gapRes](), DefaultErrors: []int{http.StatusInternalServerError}},
+		},
+		{
+			"error status out of range", "specout: response status must be 0 (default) or 100-599, got 600",
+			specout.Config{ErrorType: gapRes{}, DefaultErrors: []int{600}},
+		},
 		{"tag without name", `specout: empty or duplicate tag name ""`, specout.Config{Tags: []specout.Tag{{Description: "d"}}}},
 		{"duplicate tag", `specout: empty or duplicate tag name "a"`, specout.Config{Tags: []specout.Tag{{Name: "a"}, {Name: "a"}}}},
 		{
@@ -102,9 +115,7 @@ func TestGapConfigThatBreaksTheDocument(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.cfg.Title, tc.cfg.Version = "t", "1"
-			d := specout.New(tc.cfg)
-			specout.Document(d, http.MethodGet, "/x", okGet)
-			assert.PanicsWithValue(t, tc.want, func() { buildDoc(t, d) })
+			assert.PanicsWithValue(t, tc.want, func() { specout.New(tc.cfg) })
 		})
 	}
 }

@@ -37,13 +37,16 @@ type Generator struct {
 }
 
 // New returns a Generator that collects routes for cfg. It is safe for
-// concurrent registration; the spec freezes on first read.
+// concurrent registration; the spec freezes on first read. A cfg that would
+// make the document invalid panics here.
 func New(cfg Config) *Generator {
-	return &Generator{
+	d := &Generator{
 		cfg:           cfg,
 		variants:      make(map[string]reflect.Type),
 		nameOverrides: make(map[reflect.Type]string),
 	}
+	d.checkConfig()
+	return d
 }
 
 // mustBeOpen panics when the spec was already built, so no registration can

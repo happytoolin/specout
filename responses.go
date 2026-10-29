@@ -188,6 +188,18 @@ func (d *Generator) putDefaultErrors(p *plannedResponses) {
 	}
 }
 
+// checkDefaultErrors checks the error responses that Config adds to every
+// route: ErrorType is a value, and each DefaultErrors entry is a status code.
+func (d *Generator) checkDefaultErrors() {
+	if d.cfg.ErrorType == nil {
+		return
+	}
+	valueType(d.cfg.ErrorType)
+	for _, code := range d.cfg.DefaultErrors {
+		responseKey(code, "")
+	}
+}
+
 // responsesFor renders a route's derived responses as the operation's
 // responses object, in plan order. checkResponses checked them when the route
 // was registered.

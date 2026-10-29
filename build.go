@@ -50,6 +50,18 @@ func (d *Generator) build() (*obj, error) {
 	return spec, nil
 }
 
+// checkConfig builds the parts of the document that come from Config alone
+// and drops them, so a Config that would break the document panics in New.
+func (d *Generator) checkConfig() {
+	d.infoObj()
+	d.tagObjs()
+	d.securityObjs()
+	if d.cfg.ExternalDocs != nil {
+		externalDocsObj(d.cfg.ExternalDocs)
+	}
+	d.checkDefaultErrors()
+}
+
 // infoObj is the document's info object.
 func (d *Generator) infoObj() *obj {
 	info := newObj().set("title", d.cfg.Title).set("version", d.cfg.Version)
