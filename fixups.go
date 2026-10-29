@@ -1,6 +1,7 @@
 package specout
 
 import (
+	"iter"
 	"reflect"
 	"slices"
 	"strconv"
@@ -27,6 +28,12 @@ func nullable(p *jsonschema.Schema) {
 	if len(p.Enum) > 0 {
 		p.Enum = append(p.Enum, nil)
 	}
+	allowNull(p)
+}
+
+// allowNull adds null to the shape p already has: its type, its $ref, or its
+// list of alternatives.
+func allowNull(p *jsonschema.Schema) {
 	if p.Type != "" {
 		if p.Extras == nil {
 			p.Extras = map[string]any{}
@@ -94,10 +101,8 @@ func (sr *schemaRegistry) applySchemaFixes(t reflect.Type, s *jsonschema.Schema)
 		return
 	}
 	t = deref(t)
-	if s.Ref != "" {
-		if body := sr.bodyForRef(s.Ref); body != nil {
-			s = body
-		}
+	if body := sr.bodyForRef(s.Ref); body != nil {
+		s = body
 	}
 	// Shared components need one pass, but repeated inline types have
 	// separate schema nodes and each needs its own fixes.
@@ -107,13 +112,28 @@ func (sr *schemaRegistry) applySchemaFixes(t reflect.Type, s *jsonschema.Schema)
 	sr.fixed[s] = true
 	// The nullable tag wraps the reflected shape in oneOf. Its non-null arm
 	// still needs the same field and container fixes as an unwrapped schema.
-	for _, group := range [][]*jsonschema.Schema{s.OneOf, s.AnyOf, s.AllOf} {
-		for _, child := range group {
-			if child != nil && child.Type != nullType {
-				sr.applySchemaFixes(t, child)
+	for child := range nonNullArms(s.OneOf, s.AnyOf, s.AllOf) {
+		sr.applySchemaFixes(t, child)
+	}
+	sr.fixContainer(t, s)
+}
+
+// nonNullArms yields the alternatives in groups, without the {"type": "null"}
+// arm that nullable adds.
+func nonNullArms(groups ...[]*jsonschema.Schema) iter.Seq[*jsonschema.Schema] {
+	return func(yield func(*jsonschema.Schema) bool) {
+		for _, group := range groups {
+			for _, child := range group {
+				if child != nil && child.Type != nullType && !yield(child) {
+					return
+				}
 			}
 		}
 	}
+}
+
+// fixContainer fixes what a slice, array, map or struct schema holds.
+func (sr *schemaRegistry) fixContainer(t reflect.Type, s *jsonschema.Schema) {
 	switch t.Kind() {
 	case reflect.Slice, reflect.Array:
 		sr.applySchemaFixes(t.Elem(), s.Items)
@@ -165,42 +185,64 @@ func (sr *schemaRegistry) fixStructFields(t reflect.Type, s *jsonschema.Schema) 
 	fields := jsonFields(t, false)
 	removeShadowedFields(t, s, fields)
 	for _, f := range fields {
-		if parts0(f.Tag.Get("jsonschema")) == "-" {
-			continue
-		}
-		name := fieldName(f)
-		p, ok := s.Properties.Get(name)
-		// encoding/json excludes only the exact tag "-". The reflector
-		// also drops "-,omitempty", which names a real property.
-		if !ok && name == "-" {
-			p = sr.propSchema(f.Type, bodyJSONTag(f.Tag, "Wrap"))
-			s.Properties.Set(name, p)
-			if !optionalTag(f.Tag.Get("json")) || slices.Contains(strings.Split(f.Tag.Get("jsonschema"), ","), "required") {
-				s.Required = append(s.Required, name)
-			}
-			ok = true
-		}
-		if !ok || p == nil {
-			continue
-		}
-		applyFormatTag(p, f.Tag)
-		applyBoolEnumTag(p, f.Type, f.Tag)
-		for part := range strings.SplitSeq(f.Tag.Get("jsonschema"), ",") {
-			switch part {
-			case "readonly", "readOnly=true":
-				p.ReadOnly = true
-			case "writeonly", "writeOnly=true":
-				p.WriteOnly = true
-			case "deprecated", "deprecated=true":
-				p.Deprecated = true
-			}
-		}
-		// descend before nullable() clears a $ref: the recursion needs the link
-		sr.applySchemaFixes(f.Type, p)
-		if f.Type.Kind() == reflect.Pointer {
-			nullable(p)
+		if parts0(f.Tag.Get("jsonschema")) != "-" {
+			sr.fixStructField(s, f)
 		}
 	}
+}
+
+func (sr *schemaRegistry) fixStructField(s *jsonschema.Schema, f reflect.StructField) {
+	name := fieldName(f)
+	p, ok := s.Properties.Get(name)
+	// encoding/json excludes only the exact tag "-". The reflector
+	// also drops "-,omitempty", which names a real property.
+	if !ok && name == "-" {
+		p, ok = sr.addDashProperty(s, f), true
+	}
+	if !ok || p == nil {
+		return
+	}
+	applyFormatTag(p, f.Tag)
+	applyBoolEnumTag(p, f.Type, f.Tag)
+	applyKeywordTags(p, f.Tag)
+	// descend before nullable() clears a $ref: the recursion needs the link
+	sr.applySchemaFixes(f.Type, p)
+	if f.Type.Kind() == reflect.Pointer {
+		nullable(p)
+	}
+}
+
+// addDashProperty adds the property of a field whose JSON name is "-". The
+// reflector drops it.
+func (sr *schemaRegistry) addDashProperty(s *jsonschema.Schema, f reflect.StructField) *jsonschema.Schema {
+	p := sr.propSchema(f.Type, bodyJSONTag(f.Tag, "Wrap"))
+	s.Properties.Set("-", p)
+	if requiredField(f.Tag) {
+		s.Required = append(s.Required, "-")
+	}
+	return p
+}
+
+// applyKeywordTags applies the bare readonly, writeonly and deprecated
+// keywords, which the reflector misses.
+func applyKeywordTags(p *jsonschema.Schema, tag reflect.StructTag) {
+	for part := range strings.SplitSeq(tag.Get("jsonschema"), ",") {
+		switch part {
+		case "readonly", "readOnly=true":
+			p.ReadOnly = true
+		case "writeonly", "writeOnly=true":
+			p.WriteOnly = true
+		case "deprecated", "deprecated=true":
+			p.Deprecated = true
+		}
+	}
+}
+
+// requiredField reports whether a field's tags make its property required:
+// the json tag has no omitempty or omitzero, or the jsonschema tag says
+// required.
+func requiredField(tag reflect.StructTag) bool {
+	return !optionalTag(tag.Get("json")) || slices.Contains(strings.Split(tag.Get("jsonschema"), ","), "required")
 }
 
 // The reflector accumulates required names even when a later field replaces
@@ -210,8 +252,7 @@ func removeShadowedFields(t reflect.Type, s *jsonschema.Schema, fields []reflect
 	for _, f := range fields {
 		selected[fieldName(f)] = f
 	}
-	var candidates []bodyFieldCandidate
-	collectBodyFields(t, 0, &candidates, make(map[reflect.Type]bool), false, false)
+	candidates := collectBodyFields(t, false)
 	counts := make(map[string]int)
 	for _, candidate := range candidates {
 		counts[candidate.name]++
@@ -223,8 +264,7 @@ func removeShadowedFields(t reflect.Type, s *jsonschema.Schema, fields []reflect
 		f, ok := selected[candidate.name]
 		if !ok || parts0(f.Tag.Get("jsonschema")) == "-" {
 			s.Properties.Delete(candidate.name)
-		} else if !optionalTag(f.Tag.Get("json")) ||
-			slices.Contains(strings.Split(f.Tag.Get("jsonschema"), ","), "required") {
+		} else if requiredField(f.Tag) {
 			continue
 		}
 		s.Required = slices.DeleteFunc(s.Required, func(name string) bool { return name == candidate.name })
@@ -238,13 +278,19 @@ func applyBoolEnumTag(p *jsonschema.Schema, t reflect.Type, tag reflect.StructTa
 		return
 	}
 	if len(p.OneOf) > 0 && admitsNull(p) {
-		for _, child := range p.OneOf {
-			if child != nil && child.Type != nullType {
-				applyBoolEnumTag(child, t, tag)
-			}
+		for child := range nonNullArms(p.OneOf) {
+			applyBoolEnumTag(child, t, tag)
 		}
 		return
 	}
+	if values, ok := boolEnum(tag); ok {
+		p.Enum = values
+	}
+}
+
+// boolEnum reads the enum=true|false values of a jsonschema tag, without
+// repeats. It reports false when a value is not a bool.
+func boolEnum(tag reflect.StructTag) ([]any, bool) {
 	var values []any
 	for item := range strings.SplitSeq(tag.Get("jsonschema"), ",") {
 		value, ok := strings.CutPrefix(item, "enum=")
@@ -254,14 +300,14 @@ func applyBoolEnumTag(p *jsonschema.Schema, t reflect.Type, tag reflect.StructTa
 		for part := range strings.SplitSeq(value, "|") {
 			v, err := strconv.ParseBool(part)
 			if err != nil {
-				return
+				return nil, false
 			}
 			if !slices.Contains(values, any(v)) {
 				values = append(values, v)
 			}
 		}
 	}
-	p.Enum = values
+	return values, true
 }
 
 // fieldName is a struct field's wire name: the json tag name when it has one,
@@ -279,8 +325,8 @@ func fieldName(f reflect.StructField) string {
 // bodyForRef resolves a component $ref to the schema it names, so the fixup
 // walk can follow a nested named struct into its hoisted component.
 func (sr *schemaRegistry) bodyForRef(ref string) *jsonschema.Schema {
-	name, ok := strings.CutPrefix(ref, "#/components/schemas/")
-	if !ok {
+	name, isComponent := strings.CutPrefix(ref, componentRef)
+	if !isComponent {
 		return nil
 	}
 	if s, ok := sr.byName[name]; ok {

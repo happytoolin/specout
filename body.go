@@ -70,8 +70,7 @@ func bodyFields(req reflect.Type) []reflect.StructField {
 // jsonFields resolves JSON name dominance. A split request keeps embedded
 // object-valued parameters intact so bodyFields can remove them afterwards.
 func jsonFields(req reflect.Type, splitParameters bool) []reflect.StructField {
-	var candidates []bodyFieldCandidate
-	collectBodyFields(req, 0, &candidates, make(map[reflect.Type]bool), splitParameters, false)
+	candidates := collectBodyFields(req, splitParameters)
 	byName := make(map[string][]bodyFieldCandidate)
 	var names []string
 	for _, candidate := range candidates {
@@ -96,36 +95,57 @@ func bodyJSONTag(tag reflect.StructTag, name string) reflect.StructTag {
 	return reflect.StructTag("json:" + strconv.Quote(name) + " " + string(tag))
 }
 
-func collectBodyFields(
-	t reflect.Type, depth int, out *[]bodyFieldCandidate, stack map[reflect.Type]bool, splitParameters, optional bool,
-) {
+// collectBodyFields lists the JSON field candidates of t and of the structs it
+// embeds, in declaration order. With splitParameters, an embedded parameter
+// field stays one candidate.
+func collectBodyFields(t reflect.Type, splitParameters bool) []bodyFieldCandidate {
+	c := fieldCollector{stack: make(map[reflect.Type]bool), splitParameters: splitParameters}
+	c.collect(t, 0, false)
+	return c.out
+}
+
+// fieldCollector holds the state of one collectBodyFields walk. stack holds
+// the embedded structs on the current path, so an embedding cycle stops.
+type fieldCollector struct {
+	out             []bodyFieldCandidate
+	stack           map[reflect.Type]bool
+	splitParameters bool
+}
+
+// collect adds the candidates of struct t, found depth embeddings down.
+// optional is true below an embedded pointer: those fields can be absent.
+func (c *fieldCollector) collect(t reflect.Type, depth int, optional bool) {
 	t = deref(t)
-	if t == nil || t.Kind() != reflect.Struct || stack[t] {
+	if t == nil || t.Kind() != reflect.Struct || c.stack[t] {
 		return
 	}
-	stack[t] = true
-	defer delete(stack, t)
+	c.stack[t] = true
+	defer delete(c.stack, t)
 	for f := range t.Fields() {
-		if f.Tag.Get("json") == "-" {
-			continue
-		}
-		if promotes(f) && (!splitParameters || !isParamField(f)) {
-			if parts0(f.Tag.Get("jsonschema")) != "-" {
-				collectBodyFields(f.Type, depth+1, out, stack, splitParameters, optional || f.Type.Kind() == reflect.Pointer)
-			}
-			continue
-		}
-		if f.PkgPath != "" && !f.Anonymous {
-			continue
-		}
-		name := parts0(f.Tag.Get("json"))
-		if optional {
-			f.Tag = reflect.StructTag("json:" + strconv.Quote(f.Tag.Get("json")+",omitempty") + " " + string(f.Tag))
-		}
-		*out = append(*out, bodyFieldCandidate{
-			field: f, name: fieldName(f), depth: depth, tagged: name != "", optional: optional,
-		})
+		c.field(f, depth, optional)
 	}
+}
+
+func (c *fieldCollector) field(f reflect.StructField, depth int, optional bool) {
+	if f.Tag.Get("json") == "-" {
+		return
+	}
+	if promotes(f) && (!c.splitParameters || !isParamField(f)) {
+		if parts0(f.Tag.Get("jsonschema")) != "-" {
+			c.collect(f.Type, depth+1, optional || f.Type.Kind() == reflect.Pointer)
+		}
+		return
+	}
+	if f.PkgPath != "" && !f.Anonymous {
+		return
+	}
+	name := parts0(f.Tag.Get("json"))
+	if optional {
+		f.Tag = reflect.StructTag("json:" + strconv.Quote(f.Tag.Get("json")+",omitempty") + " " + string(f.Tag))
+	}
+	c.out = append(c.out, bodyFieldCandidate{
+		field: f, name: fieldName(f), depth: depth, tagged: name != "", optional: optional,
+	})
 }
 
 func dominantBodyField(fields []bodyFieldCandidate) (bodyFieldCandidate, bool) {

@@ -1,6 +1,7 @@
 package specout
 
 import (
+	"cmp"
 	"maps"
 	"reflect"
 	"slices"
@@ -38,6 +39,16 @@ func (sr *schemaRegistry) formSchema(body reflect.Type, base *jsonschema.Schema)
 	if source == nil || source.Properties == nil {
 		return *base
 	}
+	renames := formRenames(body)
+	if len(renames) == 0 {
+		return *base
+	}
+	return renamedSchema(source, renames)
+}
+
+// formRenames maps the JSON name of each body field to its form tag name,
+// for the fields where the two differ. No form name is empty.
+func formRenames(body reflect.Type) map[string]string {
 	renames := make(map[string]string)
 	for _, f := range jsonFields(body, false) {
 		name, form := fieldName(f), parts0(f.Tag.Get("form"))
@@ -45,17 +56,16 @@ func (sr *schemaRegistry) formSchema(body reflect.Type, base *jsonschema.Schema)
 			renames[name] = form
 		}
 	}
-	if len(renames) == 0 {
-		return *base
-	}
+	return renames
+}
+
+// renamedSchema copies source with its property and required names renamed.
+func renamedSchema(source *jsonschema.Schema, renames map[string]string) jsonschema.Schema {
 	form := *source
 	form.Extras = maps.Clone(source.Extras)
 	form.Properties = jsonschema.NewProperties()
 	for name := range source.Properties.KeysFromOldest() {
-		wireName := name
-		if renamed, ok := renames[name]; ok {
-			wireName = renamed
-		}
+		wireName := cmp.Or(renames[name], name)
 		if _, duplicate := form.Properties.Get(wireName); duplicate {
 			panic("specout: duplicate form field " + wireName)
 		}
@@ -63,9 +73,7 @@ func (sr *schemaRegistry) formSchema(body reflect.Type, base *jsonschema.Schema)
 	}
 	form.Required = slices.Clone(source.Required)
 	for i, name := range form.Required {
-		if renamed, ok := renames[name]; ok {
-			form.Required[i] = renamed
-		}
+		form.Required[i] = cmp.Or(renames[name], name)
 	}
 	return form
 }

@@ -11,6 +11,9 @@ import (
 	"github.com/invopop/jsonschema"
 )
 
+// componentRef is the $ref prefix of a schema in components.schemas.
+const componentRef = "#/components/schemas/"
+
 // schemaRegistry reflects Go types into JSON Schema, dedupes by Go type, and
 // names components.
 type schemaRegistry struct {
@@ -53,7 +56,7 @@ func (d *Generator) newSchemaRegistry() *schemaRegistry {
 func (sr *schemaRegistry) refFor(t reflect.Type) string {
 	t = deref(t)
 	if e, ok := sr.byType[t]; ok {
-		return "#/components/schemas/" + e.name
+		return componentRef + e.name
 	}
 	validateAnonymousEmbeddings(t, make(map[reflect.Type]bool))
 
@@ -101,7 +104,7 @@ func (sr *schemaRegistry) refFor(t reflect.Type) string {
 		closeSchema(s)
 	}
 
-	return "#/components/schemas/" + e.name
+	return componentRef + e.name
 }
 
 // claimName applies the same collision check to root types and nested definitions.
@@ -129,25 +132,32 @@ func validateAnonymousEmbeddings(t reflect.Type, checked map[reflect.Type]bool) 
 		return
 	}
 	checked[t] = true
-	if t.Kind() != reflect.Struct {
-		switch t.Kind() {
-		case reflect.Array, reflect.Slice, reflect.Map:
-			validateAnonymousEmbeddings(t.Elem(), checked)
-		default:
-		}
-		return
+	switch t.Kind() {
+	case reflect.Array, reflect.Slice, reflect.Map:
+		validateAnonymousEmbeddings(t.Elem(), checked)
+	case reflect.Struct:
+		validateStructEmbeddings(t, checked)
+	default:
 	}
+}
+
+func validateStructEmbeddings(t reflect.Type, checked map[reflect.Type]bool) {
 	checkPromotionCycle(t, map[reflect.Type]bool{t: true})
 	for f := range t.Fields() {
 		if f.Tag.Get("json") == "-" || parts0(f.Tag.Get("jsonschema")) == "-" || (f.PkgPath != "" && !f.Anonymous) {
 			continue
 		}
-		options := strings.Split(f.Tag.Get("json"), ",")[1:]
-		if !promotes(f) && (slices.Contains(options, "inline") || slices.Contains(options, "embed")) {
+		if !promotes(f) && embedOption(f.Tag) {
 			panic("specout: explicit JSON embedding requires an anonymous struct field")
 		}
 		validateAnonymousEmbeddings(f.Type, checked)
 	}
+}
+
+// embedOption reports whether a json tag has the inline or embed option.
+func embedOption(tag reflect.StructTag) bool {
+	options := strings.Split(tag.Get("json"), ",")[1:]
+	return slices.Contains(options, "inline") || slices.Contains(options, "embed")
 }
 
 func checkPromotionCycle(t reflect.Type, stack map[reflect.Type]bool) {

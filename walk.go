@@ -21,33 +21,41 @@ func walkSchemaSeen(s *jsonschema.Schema, fn func(*jsonschema.Schema), seen map[
 	}
 	seen[s] = true
 	fn(s)
-	for _, key := range slices.Sorted(maps.Keys(s.Definitions)) {
-		walkSchemaSeen(s.Definitions[key], fn, seen)
-	}
-	walkSchemaSeen(s.Items, fn, seen)
-	walkSchemaSeen(s.Not, fn, seen)
-	walkSchemaSeen(s.If, fn, seen)
-	walkSchemaSeen(s.Then, fn, seen)
-	walkSchemaSeen(s.Else, fn, seen)
-	walkSchemaSeen(s.Contains, fn, seen)
-	walkSchemaSeen(s.PropertyNames, fn, seen)
-	walkSchemaSeen(s.ContentSchema, fn, seen)
-	for _, key := range slices.Sorted(maps.Keys(s.DependentSchemas)) {
-		walkSchemaSeen(s.DependentSchemas[key], fn, seen)
-	}
+	eachSubschema(s, func(child *jsonschema.Schema) { walkSchemaSeen(child, fn, seen) })
+}
+
+// eachSubschema calls visit on each schema that s holds directly, in a fixed
+// order. It reads each field just before that visit, so a visit sees the
+// changes that earlier visits made. A visited schema can be nil.
+func eachSubschema(s *jsonschema.Schema, visit func(*jsonschema.Schema)) {
+	eachSorted(s.Definitions, visit)
+	visit(s.Items)
+	visit(s.Not)
+	visit(s.If)
+	visit(s.Then)
+	visit(s.Else)
+	visit(s.Contains)
+	visit(s.PropertyNames)
+	visit(s.ContentSchema)
+	eachSorted(s.DependentSchemas, visit)
 	for _, group := range [][]*jsonschema.Schema{s.AllOf, s.AnyOf, s.OneOf, s.PrefixItems} {
 		for _, sub := range group {
-			walkSchemaSeen(sub, fn, seen)
+			visit(sub)
 		}
 	}
 	if s.Properties != nil {
 		for key := range s.Properties.KeysFromOldest() {
-			walkSchemaSeen(s.Properties.Value(key), fn, seen)
+			visit(s.Properties.Value(key))
 		}
 	}
-	walkSchemaSeen(s.AdditionalProperties, fn, seen)
-	for _, key := range slices.Sorted(maps.Keys(s.PatternProperties)) {
-		walkSchemaSeen(s.PatternProperties[key], fn, seen)
+	visit(s.AdditionalProperties)
+	eachSorted(s.PatternProperties, visit)
+}
+
+// eachSorted calls visit on the values of m, in key order.
+func eachSorted(m map[string]*jsonschema.Schema, visit func(*jsonschema.Schema)) {
+	for _, key := range slices.Sorted(maps.Keys(m)) {
+		visit(m[key])
 	}
 }
 
@@ -56,7 +64,7 @@ func walkSchemaSeen(s *jsonschema.Schema, fn func(*jsonschema.Schema), seen map[
 func remapDefs(s *jsonschema.Schema) {
 	walkSchema(s, func(x *jsonschema.Schema) {
 		if x.Ref != "" {
-			x.Ref = strings.Replace(x.Ref, "#/$defs/", "#/components/schemas/", 1)
+			x.Ref = strings.Replace(x.Ref, "#/$defs/", componentRef, 1)
 		}
 	})
 }

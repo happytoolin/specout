@@ -49,6 +49,7 @@ func requiredParam(f reflect.StructField) bool {
 		tagValue(f.Tag.Get("jsonschema"), "default") == ""
 }
 
+// optionalTag reports whether a tag value has the omitempty or omitzero option.
 func optionalTag(tag string) bool {
 	_, options, _ := strings.Cut(tag, ",")
 	for option := range strings.SplitSeq(options, ",") {
