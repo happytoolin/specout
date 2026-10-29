@@ -50,6 +50,9 @@ func (d *Generator) operationFor(rec *routeRecord, sr *schemaRegistry) *obj {
 	return mergeRaw(op, rec.raw, operationFields)
 }
 
+// braces removes the parameter braces from a path segment.
+var braces = strings.NewReplacer("{", "", "}", "")
+
 // operationID derives a deterministic id from method+path:
 // GET /onboarding/{id}/sync -> getOnboardingByIdSync.
 func operationID(method, path string) string {
@@ -59,7 +62,8 @@ func operationID(method, path string) string {
 		if seg == "" {
 			continue
 		}
-		seg = strings.Trim(seg, "{}")
+		// every brace goes, so /files/{name}.{ext} gives FilesName.ext
+		seg = braces.Replace(seg)
 		// braces with nothing to name: no derivable id
 		if seg == "" {
 			return ""

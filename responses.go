@@ -1,6 +1,7 @@
 package specout
 
 import (
+	"cmp"
 	"encoding/json/jsontext"
 	json "encoding/json/v2"
 	"net/http"
@@ -333,11 +334,21 @@ func mergeRaw(base *obj, raw map[string]any, fields []string) *obj {
 
 func contentResponse(code int, t reflect.Type, sr *schemaRegistry) *obj {
 	if t == nil || isEmptyStruct(t) {
-		return newObj().set("description", http.StatusText(code))
+		return newObj().set("description", statusText(code))
 	}
-	return newObj().set("description", http.StatusText(code)).
+	return newObj().set("description", statusText(code)).
 		set("content", newObj().set("application/json",
 			newObj().set("schema", schemaFor(t, sr))))
+}
+
+// statusText describes a response: the status text, or a placeholder for the
+// default response and for a code Go has no text for. OpenAPI requires the
+// field, and an empty one tells the reader nothing.
+func statusText(code int) string {
+	if code == 0 {
+		return defaultResponseKey + " response"
+	}
+	return cmp.Or(http.StatusText(code), strconv.Itoa(code)+" response")
 }
 
 // headerObj builds one OpenAPI header object: bare Name = string schema;
