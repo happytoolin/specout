@@ -226,7 +226,9 @@ the route stays.
 
 The adapter copies `c.Params` into `r.PathValue` before the handler runs. A
 catch-all value drops the leading slash that Gin gives it, so `/files/a/b`
-gives `a/b`, as `/files/{path...}` does on `http.ServeMux`. `Adopt` needs the
+gives `a/b`, as `/files/{path...}` does on `http.ServeMux`. Gin decodes the
+values unless the engine sets `UseRawPath` or `UseEscapedPath` and clears
+`UnescapePathValues`. `Adopt` needs the
 `*gin.Engine`. Gin's `Any` registers one route for each method, so `Adopt` also
 reports its `CONNECT` route.
 

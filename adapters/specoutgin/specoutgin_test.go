@@ -80,6 +80,29 @@ func TestHandlerSeesPathValues(t *testing.T) {
 	}
 }
 
+// The values are the ones Gin gives: decoded by default, and encoded when the
+// engine reads the raw path and does not unescape the values.
+func TestPathValuesFollowGinUnescaping(t *testing.T) {
+	for _, tc := range []struct {
+		raw, unescape bool
+		want          string
+	}{
+		{false, true, "a@b"},
+		{true, true, "a@b"},
+		{true, false, "a%40b"},
+	} {
+		d, e := adaptertest.Generator(), gin.New()
+		e.UseRawPath, e.UnescapePathValues = tc.raw, tc.unescape
+		specoutgin.New(d, e).Get("/users/:id", specout.Handler[struct{}, specout.NoContent]{
+			HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("X-Value", r.PathValue("id"))
+				w.WriteHeader(http.StatusNoContent)
+			},
+		})
+		assert.Equal(t, tc.want, get(t, e, "/users/a%40b").Header().Get("X-Value"), "%+v", tc)
+	}
+}
+
 func TestRouteMiddlewareRunsFirst(t *testing.T) {
 	d, e := adaptertest.Generator(), gin.New()
 	var order []string
