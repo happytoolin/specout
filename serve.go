@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"reflect"
 	"strconv"
 
 	json "encoding/json/v2"
@@ -22,11 +23,7 @@ func (d *Generator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var outer routeSource
-	if rctx := chi.RouteContext(r.Context()); rctx != nil && rctx.Routes != nil {
-		outer = chiWalkSource{rctx.Routes}
-	}
-	spec, fresh, err := d.bytes(outer)
+	spec, fresh, err := d.bytes(chiOuter(r))
 	if err != nil {
 		if fresh {
 			log.Print(err)
@@ -39,6 +36,16 @@ func (d *Generator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodHead {
 		_, _ = w.Write(spec)
 	}
+}
+
+// chiOuter returns the chi router that served r, or nil. bytes compares it with
+// ==, so a chi.Routes of a type that Go cannot compare is not used.
+func chiOuter(r *http.Request) routeSource {
+	rctx := chi.RouteContext(r.Context())
+	if rctx == nil || rctx.Routes == nil || !reflect.TypeOf(rctx.Routes).Comparable() {
+		return nil
+	}
+	return chiWalkSource{rctx.Routes}
 }
 
 // WriteJSON writes the spec to w. Builds and freezes if not already.

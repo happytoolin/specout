@@ -72,7 +72,7 @@ func remapDefs(s *jsonschema.Schema) {
 // closeSchema sets additionalProperties: false on every object node.
 func closeSchema(s *jsonschema.Schema) {
 	walkSchema(s, func(x *jsonschema.Schema) {
-		if hasSchemaType(x, "object") && x.AdditionalProperties == nil {
+		if hasSchemaType(x, typeObject) && x.AdditionalProperties == nil {
 			x.AdditionalProperties = jsonschema.FalseSchema
 		}
 	})

@@ -1,6 +1,7 @@
 package specout_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -449,4 +450,26 @@ func TestServeKeepsBuildErrorAndHidesIt(t *testing.T) {
 	w := serve()
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Body.String(), "/api/secret")
+}
+
+// uncomparableRoutes is a chi.Routes that Go cannot compare with ==.
+type uncomparableRoutes struct {
+	*chi.Mux
+
+	_ []int
+}
+
+func TestServeIgnoresUncomparableChiRoutes(t *testing.T) {
+	captureLog(t)
+	d := newGen()
+	specout.Chi(d, chi.NewRouter()).Get("/never", okGet)
+	rctx := chi.NewRouteContext()
+	rctx.Routes = uncomparableRoutes{Mux: chi.NewRouter()}
+	for range 2 {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/openapi.json", http.NoBody)
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		w := httptest.NewRecorder()
+		require.NotPanics(t, func() { d.ServeHTTP(w, req) })
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	}
 }

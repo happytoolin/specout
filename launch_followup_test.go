@@ -1,6 +1,7 @@
 package specout_test
 
 import (
+	"io"
 	"net/http"
 	"testing"
 
@@ -125,6 +126,15 @@ func TestLaunchRawStatusRangesAndDefaults(t *testing.T) {
 		assert.NotContains(t, allowed, 200)
 		assert.NotContains(t, allowed, 500)
 	}
+}
+
+func TestLaunchRawResponseMustBeAnObject(t *testing.T) {
+	d := newGen()
+	raw := map[string]any{"200": "ok"}
+	specout.Document(d, http.MethodGet, "/x", specout.Get[string]{HandlerFunc: noop, Raw: map[string]any{"responses": raw}})
+	assert.PanicsWithValue(t, "specout: Raw.responses 200 must be a Response object", func() {
+		_ = d.WriteJSON(io.Discard)
+	})
 }
 
 func TestLaunchUnionNameCollisionWithNestedComponent(t *testing.T) {

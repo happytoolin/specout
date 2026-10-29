@@ -11,7 +11,13 @@ import (
 	"github.com/invopop/jsonschema"
 )
 
-const nullType = "null"
+// JSON Schema type and format names that specout writes.
+const (
+	nullType     = "null"
+	typeString   = "string"
+	typeObject   = "object"
+	formatBinary = "binary"
+)
 
 // nullable makes a property schema accept null. It is safe to call more than
 // once because shared and recursive components can be reached from several

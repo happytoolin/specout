@@ -1,5 +1,6 @@
-// Package exampletest is the test plumbing the specout examples share. It is
-// internal to this repo and is never part of the library.
+// Package exampletest is the test plumbing the specout examples share. The
+// router adapter tests use its CaptureT too. It is internal to this repo and is
+// never part of the library.
 package exampletest
 
 import (

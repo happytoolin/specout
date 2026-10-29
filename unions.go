@@ -205,10 +205,10 @@ func (sr *schemaRegistry) addUnionBranch(source *jsonschema.Schema, u unionDecl,
 		discriminatorSchema.Const = b.value
 		properties.Set(u.disc, &discriminatorSchema)
 	} else {
-		properties.Set(u.disc, &jsonschema.Schema{Type: "string", Const: b.value})
+		properties.Set(u.disc, &jsonschema.Schema{Type: typeString, Const: b.value})
 	}
 	properties.Set(u.dataName, &jsonschema.Schema{Ref: b.dataRef})
-	branch.Type = "object"
+	branch.Type = typeObject
 	branch.Properties = properties
 	branch.Required = slices.Clone(source.Required)
 	for _, name := range []string{u.disc, u.dataName} {

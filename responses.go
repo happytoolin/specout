@@ -110,10 +110,11 @@ func declaredType(res reflect.Type, resp *Response) reflect.Type {
 // Raw replaces the entire responses object, including inherited defaults.
 // Read its JSON keys so typed maps and json.RawMessage behave like plain maps.
 func rawResponsePlan(raw any) []respEntry {
+	responses := rawResponses(raw)
 	var entries []respEntry
-	for _, key := range sortedKeys(rawResponses(raw)) {
+	for _, key := range sortedKeys(responses) {
 		if !strings.HasPrefix(key, "x-") {
-			entries = append(entries, rawEntry(key))
+			entries = append(entries, rawEntry(key, responses[key]))
 		}
 	}
 	if len(entries) == 0 {
@@ -135,16 +136,21 @@ func rawResponses(raw any) map[string]jsontext.Value {
 	return responses
 }
 
-// rawEntry checks one Raw.responses key: default, a range, or a status code.
-func rawEntry(key string) respEntry {
-	if _, _, isRange := rangeOf(key); key == defaultResponseKey || isRange {
-		return respEntry{key: key}
+// rawEntry checks one Raw.responses entry. Its key is default, a range, or a
+// status code, and its value is a Response or Reference object.
+func rawEntry(key string, v jsontext.Value) respEntry {
+	e := respEntry{key: key}
+	if _, _, isRange := rangeOf(key); key != defaultResponseKey && !isRange {
+		code, err := strconv.Atoi(key)
+		if err != nil || !isStatus(code) || strconv.Itoa(code) != key {
+			panic("specout: invalid Raw.responses status " + key)
+		}
+		e.code = code
 	}
-	code, err := strconv.Atoi(key)
-	if err != nil || !isStatus(code) || strconv.Itoa(code) != key {
-		panic("specout: invalid Raw.responses status " + key)
+	if v.Kind() != '{' {
+		panic("specout: Raw.responses " + key + " must be a Response object")
 	}
-	return respEntry{key: key, code: code}
+	return e
 }
 
 // isStatus reports whether code is an HTTP status code, 100-599.
@@ -318,7 +324,7 @@ func contentResponse(code int, t reflect.Type, sr *schemaRegistry) *obj {
 // Type set = the type schema (components dedupe applies).
 func headerObj(hd Header, sr *schemaRegistry) *obj {
 	if hd.Type == nil {
-		return newObj().set("schema", newObj().set("type", "string"))
+		return newObj().set("schema", newObj().set("type", typeString))
 	}
 	return newObj().set("schema", schemaFor(reflect.TypeOf(hd.Type), sr))
 }

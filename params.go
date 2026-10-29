@@ -97,7 +97,7 @@ func (sr *schemaRegistry) taggedParams(req reflect.Type) []any {
 // parameter builds every location from the same field metadata. An untyped
 // path placeholder has no field and uses the default required string schema.
 func (sr *schemaRegistry) parameter(name, loc string, f reflect.StructField) *obj {
-	schema := &jsonschema.Schema{Type: "string"}
+	schema := &jsonschema.Schema{Type: typeString}
 	if f.Type != nil {
 		schema = sr.reflectParam(f)
 		if loc != pathLocation && f.Type.Kind() == reflect.Pointer {

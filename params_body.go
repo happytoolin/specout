@@ -94,7 +94,7 @@ func requestBodyFor(body reflect.Type, sr *schemaRegistry) (string, *jsonschema.
 
 // binarySchema is the schema of a raw byte payload.
 func binarySchema() *jsonschema.Schema {
-	return &jsonschema.Schema{Type: "string", Format: "binary"}
+	return &jsonschema.Schema{Type: typeString, Format: formatBinary}
 }
 
 // hasBinaryField reports whether any field is a File marker or tagged format=binary.
@@ -115,7 +115,7 @@ func hasBinaryField(t reflect.Type) bool {
 		if ft == fileT || (ft.Kind() == reflect.Slice && deref(ft.Elem()) == fileT) {
 			return true
 		}
-		if tagValue(field.Tag.Get("jsonschema"), "format") == "binary" {
+		if tagValue(field.Tag.Get("jsonschema"), "format") == formatBinary {
 			return true
 		}
 	}
