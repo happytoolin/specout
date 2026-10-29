@@ -283,7 +283,11 @@ func TestNewPanics(t *testing.T) {
 	assert.Panics(t, func() { specoutfiberv2.New(nil, app) })
 	assert.Panics(t, func() { specoutfiberv2.New(adaptertest.Generator(), nil) })
 	assert.Contains(t, adaptertest.PanicMessage(t, func() { specoutfiberv2.New(adaptertest.Generator(), otherRouter{app}) }),
-		"specoutfiberv2: New needs a *fiber.App or *fiber.Group")
+		"specoutfiberv2: New needs a non-nil *fiber.App or *fiber.Group")
+	for _, r := range []fiber.Router{(*fiber.App)(nil), (*fiber.Group)(nil)} {
+		assert.Contains(t, adaptertest.PanicMessage(t, func() { specoutfiberv2.New(adaptertest.Generator(), r) }),
+			"specoutfiberv2: New needs a non-nil")
+	}
 }
 
 // Fiber keeps the group prefix as written when the route path is empty, so

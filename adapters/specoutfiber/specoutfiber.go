@@ -34,12 +34,15 @@ func New(d *specout.Generator, r fiber.Router) *Router {
 	}
 	switch g := r.(type) {
 	case *fiber.App:
-		return &Router{d: d, r: g}
+		if g != nil {
+			return &Router{d: d, r: g}
+		}
 	case *fiber.Group:
-		return &Router{d: d, r: g, prefix: g.Prefix}
-	default:
-		panic(fmt.Sprintf("specoutfiber: New needs a *fiber.App or *fiber.Group, got %T", r))
+		if g != nil {
+			return &Router{d: d, r: g, prefix: g.Prefix}
+		}
 	}
+	panic(fmt.Sprintf("specoutfiber: New needs a non-nil *fiber.App or *fiber.Group, got %T", r))
 }
 
 // Handle registers h for method on p. Route middleware m runs before h.
