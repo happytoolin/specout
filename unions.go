@@ -20,15 +20,18 @@ func (sr *schemaRegistry) normalizeUnions() {
 	sr.eachSchema(func(_ string, s *jsonschema.Schema) { checkTypes(s) })
 }
 
-// eachSchema calls fn with each schema that the registry holds and the name
-// of its owner: the typed components, then the hoisted definitions, then the
-// inline schemas. It does not visit schemas that fn adds.
+// eachSchema calls fn with each schema that the document can hold and the
+// name of its owner: the typed components, then the hoisted definitions, then
+// the inline schemas. It skips a definition with the name of a typed
+// component, which replaces it, and the schemas that fn adds.
 func (sr *schemaRegistry) eachSchema(fn func(owner string, s *jsonschema.Schema)) {
 	for _, e := range sr.order {
 		fn(e.name, e.s)
 	}
 	for _, name := range sr.nameOrder {
-		fn(name, sr.byName[name])
+		if sr.byType[sr.owners[name]] == nil {
+			fn(name, sr.byName[name])
+		}
 	}
 	for _, s := range sr.inline {
 		fn("Inline", s)

@@ -128,6 +128,30 @@ func TestNestedUnionsUseDistinctBranchNames(t *testing.T) {
 	assert.Len(t, refs, 4)
 }
 
+func TestUnionUsedAsRootAndFieldHasOneSetOfBranches(t *testing.T) {
+	for _, rootFirst := range []bool{true, false} {
+		d := newGen()
+		d.Register[unionEmail]("email")
+		d.Register[unionSlack]("slack")
+		root := specout.Get[unionEnvelope]{HandlerFunc: noop}
+		holder := specout.Get[unionNamedHolder]{HandlerFunc: noop}
+		if rootFirst {
+			specout.Document(d, http.MethodGet, "/union", root)
+		}
+		specout.Document(d, http.MethodGet, "/holder", holder)
+		if !rootFirst {
+			specout.Document(d, http.MethodGet, "/union", root)
+		}
+		var branches []string
+		for name := range schemas(t, buildDoc(t, d)) {
+			if strings.HasPrefix(name, "unionEnvelopeVariant") {
+				branches = append(branches, name)
+			}
+		}
+		assert.ElementsMatch(t, []string{"unionEnvelopeVariant1", "unionEnvelopeVariant2"}, branches, "rootFirst=%t", rootFirst)
+	}
+}
+
 func TestLaunchSingleVariantUnion(t *testing.T) {
 	type envelope struct {
 		Kind string `json:"kind" jsonschema:"enum=email,description=Discriminator"`
@@ -209,7 +233,7 @@ func TestUnknownSchemaTypesPanic(t *testing.T) {
 			d.Register[unionSlack]("slack")
 			specout.Document(d, http.MethodGet, "/x", okGet.WithResponse(specout.Response{Status: http.StatusOK, Type: value}))
 			assert.PanicsWithValue(t, "specout: schema type "+want+" is not a JSON Schema type; "+
-				"a oneof_type union also needs a Discriminator field", func() { _ = d.WriteJSON(io.Discard) })
+				"a oneof_type union separates its variants with | and needs a Discriminator field", func() { _ = d.WriteJSON(io.Discard) })
 		})
 	}
 }

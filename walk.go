@@ -87,7 +87,7 @@ func checkTypes(s *jsonschema.Schema) {
 		for _, name := range names {
 			if name != "" && !jsonSchemaTypes[name] {
 				panic("specout: schema type " + strconv.Quote(name) + " is not a JSON Schema type; " +
-					"a oneof_type union also needs a Discriminator field")
+					"a oneof_type union separates its variants with | and needs a Discriminator field")
 			}
 		}
 	})
