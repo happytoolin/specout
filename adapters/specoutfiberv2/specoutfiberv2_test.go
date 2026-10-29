@@ -63,16 +63,39 @@ func TestHandlerSeesPathValues(t *testing.T) {
 	} {
 		t.Run(tc.route, func(t *testing.T) {
 			d, app := adaptertest.Generator(), fiber.New()
-			specoutfiberv2.New(d, app).Get(tc.route, specout.Handler[struct{}, specout.NoContent]{
-				HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
-					w.Header().Set("X-Value", r.PathValue(tc.name))
-					w.WriteHeader(http.StatusNoContent)
-				},
-			})
+			specoutfiberv2.New(d, app).Get(tc.route, pathValueRoute(tc.name))
 			status, header := do(t, app, http.MethodGet, tc.target)
 			require.Equal(t, http.StatusNoContent, status)
 			assert.Equal(t, tc.want, header.Get("X-Value"))
 		})
+	}
+}
+
+// pathValueRoute answers with r.PathValue(name) in the X-Value header.
+func pathValueRoute(name string) specout.Handler[struct{}, specout.NoContent] {
+	return specout.Handler[struct{}, specout.NoContent]{
+		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Value", r.PathValue(name))
+			w.WriteHeader(http.StatusNoContent)
+		},
+	}
+}
+
+// Fiber leaves path values encoded unless the app unescapes the path. The
+// handler sees them decoded either way, and only once, as on http.ServeMux.
+func TestHandlerSeesDecodedPathValues(t *testing.T) {
+	for _, tc := range []struct {
+		cfg          fiber.Config
+		target, want string
+	}{
+		{fiber.Config{}, "/users/a%40b%20c", "a@b c"},
+		{fiber.Config{UnescapePath: true}, "/users/a%2541", "a%41"},
+	} {
+		d, app := adaptertest.Generator(), fiber.New(tc.cfg)
+		specoutfiberv2.New(d, app).Get("/users/:id", pathValueRoute("id"))
+		status, header := do(t, app, http.MethodGet, tc.target)
+		require.Equal(t, http.StatusNoContent, status)
+		assert.Equal(t, tc.want, header.Get("X-Value"), tc.target)
 	}
 }
 

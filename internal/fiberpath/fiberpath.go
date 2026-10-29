@@ -4,6 +4,7 @@ package fiberpath
 
 import (
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -38,6 +39,23 @@ func Table(p string) string {
 		return p
 	}
 	return full
+}
+
+// Value returns a copy of a path parameter value, percent-decoded as
+// r.PathValue reports it on http.ServeMux. Fiber leaves values encoded unless
+// Config.UnescapePath is set, so decode tells whether the app left this one
+// encoded; a value Fiber already decoded is not decoded twice. The copy
+// matters: Fiber reuses the bytes of its strings after the request, and a
+// net/http handler may keep r.PathValue results.
+func Value(raw string, decode bool) string {
+	v := strings.Clone(raw)
+	if !decode {
+		return v
+	}
+	if unescaped, err := url.PathUnescape(v); err == nil {
+		return unescaped
+	}
+	return v
 }
 
 // Join is Fiber's own join of a group prefix and a route path, with the

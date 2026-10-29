@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
-	"strings"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/adaptor"
@@ -120,8 +119,9 @@ const (
 
 // serve runs next as the route's last handler. The adaptor builds the
 // *http.Request on Fiber's request context, so path parameters cross over as
-// a request local. They are copied: Fiber may reuse the bytes of its strings
-// after the request, and a net/http handler may keep r.PathValue results.
+// a request local. They arrive decoded, as on http.ServeMux, and copied:
+// Fiber may reuse the bytes of its strings after the request, and a net/http
+// handler may keep r.PathValue results.
 func serve(next http.Handler, route observed) fiber.Handler {
 	h := adaptor.HTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if values, ok := r.Context().Value(pathValuesKey).([]pathValue); ok {
@@ -132,10 +132,11 @@ func serve(next http.Handler, route observed) fiber.Handler {
 		next.ServeHTTP(w, r)
 	}))
 	return func(c fiber.Ctx) error {
+		decode := !c.App().Config().UnescapePath
 		params := c.Route().Params
 		values := make([]pathValue, 0, len(params))
 		for _, name := range params {
-			values = append(values, pathValue{name: name, value: strings.Clone(c.Params(name))})
+			values = append(values, pathValue{name: name, value: fiberpath.Value(c.Params(name), decode)})
 		}
 		c.Locals(pathValuesKey, values)
 		c.Locals(observedKey, route)
