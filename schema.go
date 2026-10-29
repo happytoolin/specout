@@ -81,7 +81,7 @@ func (sr *schemaRegistry) refFor(t reflect.Type) string {
 			if t == reflect.TypeFor[File]() {
 				return binarySchema()
 			}
-			return textSchema(t)
+			return wireSchema(t)
 		},
 		// invopop names hoisted $defs after the bare Go type name, so a
 		// SchemaName override never reached a nested-only type, and two
@@ -126,18 +126,31 @@ func writesText(t reflect.Type) bool {
 		!t.Implements(schemaMethodType) && t != reflect.TypeFor[net.IP]()
 }
 
-// textSchema is the string schema of a type that writesText reports, or nil
-// for any other type. The reflector reads the Go fields of such a type, such
-// as netip.Addr or a UUID array, not the string on the wire.
-func textSchema(t reflect.Type) *jsonschema.Schema {
-	if !writesText(t) {
+// wireSchema is the schema of a type whose JSON form the reflector gets wrong,
+// or nil for any other type. The reflector reads the Go fields of a type that
+// writesText reports, such as netip.Addr or a UUID array, not the string on
+// the wire. The reflector panics on a uintptr, which the encoders write as an
+// integer.
+func wireSchema(t reflect.Type) *jsonschema.Schema {
+	var s *jsonschema.Schema
+	switch {
+	case writesText(t):
+		s = &jsonschema.Schema{Type: typeString}
+	case t.Kind() == reflect.Uintptr && !customJSON(t):
+		s = &jsonschema.Schema{Type: typeInteger}
+	default:
 		return nil
 	}
-	s := &jsonschema.Schema{Type: typeString}
 	if extender, ok := reflect.TypeAssert[interface{ JSONSchemaExtend(s *jsonschema.Schema) }](reflect.New(t)); ok {
 		extender.JSONSchemaExtend(s)
 	}
 	return s
+}
+
+// customJSON reports whether a method of t sets its JSON form or its schema.
+func customJSON(t reflect.Type) bool {
+	return t.Implements(textMarshalerType) || t.Implements(jsonMarshalerType) ||
+		t.Implements(jsonMarshalerToType) || t.Implements(schemaMethodType)
 }
 
 // claimName applies the same collision check to root types and nested definitions.
@@ -170,6 +183,10 @@ func validateAnonymousEmbeddings(t reflect.Type, checked map[reflect.Type]bool) 
 		validateAnonymousEmbeddings(t.Elem(), checked)
 	case reflect.Struct:
 		validateStructEmbeddings(t, checked)
+	case reflect.Complex64, reflect.Complex128, reflect.Chan, reflect.Func, reflect.UnsafePointer:
+		if !customJSON(t) {
+			panic("specout: JSON cannot encode " + t.String() + `; tag its field json:"-"`)
+		}
 	default:
 	}
 }

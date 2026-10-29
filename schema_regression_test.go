@@ -322,6 +322,48 @@ func TestLaunchTextMarshalersAreStrings(t *testing.T) {
 	assert.Equal(t, "string", componentsSchema(t, doc, "schemaTextID")["type"])
 }
 
+func TestLaunchUintptrIsAnInteger(t *testing.T) {
+	type response struct {
+		Address uintptr `json:"address"`
+	}
+	d := newGen()
+	specout.Document(d, http.MethodGet, "/x", specout.Get[response]{HandlerFunc: noop})
+	specout.Document(d, http.MethodGet, "/root", specout.Get[uintptr]{HandlerFunc: noop})
+	doc := buildDoc(t, d)
+	exportLaunchSamples(t, doc,
+		launchSample{"uintptr field", launchResponseSchema(t, doc, "/x", "get"), response{Address: 42}, true},
+		launchSample{"uintptr root", launchResponseSchema(t, doc, "/root", "get"), uintptr(7), true},
+		launchSample{"string for uintptr", launchResponseSchema(t, doc, "/root", "get"), "7", false},
+	)
+	assert.Equal(t, "integer", props(t, doc, "response")["address"].(map[string]any)["type"])
+	assert.Equal(t, map[string]any{"type": "integer"}, launchResponseSchema(t, doc, "/root", "get"))
+}
+
+func TestUnencodableTypesPanicClearly(t *testing.T) {
+	for want, value := range map[string]any{
+		"complex64": struct {
+			C complex64 `json:"c"`
+		}{},
+		"func()": struct {
+			F func() `json:"f"`
+		}{},
+		"chan int": struct {
+			L []chan int `json:"l"`
+		}{},
+	} {
+		t.Run(want, func(t *testing.T) {
+			assert.PanicsWithValue(t, "specout: JSON cannot encode "+want+`; tag its field json:"-"`, func() {
+				docOf(t, http.MethodGet, "/x", okGet.WithResponse(specout.Response{Status: http.StatusOK, Type: value}))
+			})
+		})
+	}
+	type skipped struct {
+		F func() `json:"-"`
+		A int    `json:"a"`
+	}
+	assert.NotPanics(t, func() { docOf(t, http.MethodGet, "/x", specout.Get[skipped]{HandlerFunc: noop}) })
+}
+
 type (
 	dupA struct{ A string }
 	dupB struct{ B int }

@@ -26,7 +26,7 @@ func isBuiltin(t reflect.Type) bool {
 		return t.PkgPath() == "" && isBuiltin(t.Elem())
 	case reflect.Bool, reflect.String,
 		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
 		reflect.Float32, reflect.Float64:
 		// PkgPath is empty for the predeclared types only: a named alias
 		// (type Password string) keeps its own component.
@@ -67,7 +67,7 @@ func (sr *schemaRegistry) propSchema(t reflect.Type, tag reflect.StructTag) *jso
 			if t == wrap {
 				return nil
 			}
-			if s := textSchema(t); s != nil {
+			if s := wireSchema(t); s != nil {
 				inlineRoot = false
 				return s
 			}
