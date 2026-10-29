@@ -182,6 +182,35 @@ func TestBooleanEnumTagIsPreserved(t *testing.T) {
 	assert.Equal(t, []any{false}, parameter["schema"].(map[string]any)["enum"])
 }
 
+func TestLaunchNumberEnumTagsSplitOnPipes(t *testing.T) {
+	type response struct {
+		Code  int      `json:"code"  jsonschema:"enum=1|2"`
+		Mixed int      `json:"mixed" jsonschema:"enum=1|2,enum=3"`
+		Ratio float64  `json:"ratio" jsonschema:"enum=0.5|1.5"`
+		Ptr   *uint    `json:"ptr"   jsonschema:"enum=4|5"`
+		List  []int    `json:"list"  jsonschema:"enum=6|7"`
+		Null  *float32 `json:"null"  jsonschema:"nullable,enum=8|9"`
+	}
+	type request struct {
+		Level int `jsonschema:"enum=1|2" query:"level"`
+	}
+	doc := docOf(t, http.MethodGet, "/x", specout.Handler[request, response]{HandlerFunc: noop})
+	schema := launchResponseSchema(t, doc, "/x", "get")
+	exportLaunchSamples(t, doc,
+		launchSample{"listed numbers", schema, response{Code: 2, Mixed: 1, Ratio: 1.5, List: []int{7}}, true},
+		launchSample{"unlisted number", schema, response{Code: 3, Mixed: 3, Ratio: 0.5}, false},
+	)
+	p := props(t, doc, "response")
+	assert.Equal(t, []any{1.0, 2.0}, p["code"].(map[string]any)["enum"])
+	assert.Equal(t, []any{1.0, 2.0, 3.0}, p["mixed"].(map[string]any)["enum"])
+	assert.Equal(t, []any{0.5, 1.5}, p["ratio"].(map[string]any)["enum"])
+	assert.Equal(t, []any{4.0, 5.0, nil}, p["ptr"].(map[string]any)["enum"])
+	assert.Equal(t, []any{6.0, 7.0}, p["list"].(map[string]any)["items"].(map[string]any)["enum"])
+	assert.Equal(t, []any{8.0, 9.0}, p["null"].(map[string]any)["oneOf"].([]any)[0].(map[string]any)["enum"])
+	parameter := paramsOf(t, opOf(t, doc, "/x", "get"))["level"]
+	assert.Equal(t, []any{1.0, 2.0}, parameter["schema"].(map[string]any)["enum"])
+}
+
 func TestUnionConstrainsTheCompleteEnvelope(t *testing.T) {
 	d := newGen()
 	d.Register[schemaEmail]("email")

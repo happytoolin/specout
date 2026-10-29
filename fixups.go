@@ -1,6 +1,8 @@
 package specout
 
 import (
+	jsonv1 "encoding/json"
+	"encoding/json/jsontext"
 	"iter"
 	"reflect"
 	"slices"
@@ -227,6 +229,7 @@ func (sr *schemaRegistry) fixStructField(s *jsonschema.Schema, f reflect.StructF
 	}
 	applyFormatTag(p, f.Tag)
 	applyBoolEnumTag(p, f.Type, f.Tag)
+	applyNumberEnumTag(p, f.Type, f.Tag)
 	applyKeywordTags(p, f.Tag)
 	// descend before nullable() clears a $ref: the recursion needs the link
 	sr.applySchemaFixes(f.Type, p)
@@ -309,6 +312,60 @@ func applyBoolEnumTag(p *jsonschema.Schema, t reflect.Type, tag reflect.StructTa
 	if values, ok := boolEnum(tag); ok {
 		p.Enum = values
 	}
+}
+
+// applyNumberEnumTag applies enum=1|2 values to a number or a list of numbers.
+// The reflector reads each enum value as one number, so it drops a value that
+// lists several. Tags without a pipe keep the reflector's values.
+func applyNumberEnumTag(p *jsonschema.Schema, t reflect.Type, tag reflect.StructTag) {
+	if p == nil {
+		return
+	}
+	t = deref(t)
+	switch {
+	case len(p.OneOf) > 0 && admitsNull(p):
+		for child := range nonNullArms(p.OneOf) {
+			applyNumberEnumTag(child, t, tag)
+		}
+	case p.Items != nil && (t.Kind() == reflect.Slice || t.Kind() == reflect.Array):
+		applyNumberEnumTag(p.Items, t.Elem(), tag)
+	case p.Type == "integer" || p.Type == "number":
+		p.Enum = numberEnum(tag, p.Enum)
+	}
+}
+
+// numberEnum reads the number values of a jsonschema tag's enum items, without
+// repeats. It returns reflected unchanged when no item lists several values,
+// or when a value is not a JSON number.
+func numberEnum(tag reflect.StructTag, reflected []any) []any {
+	var values []any
+	listed := false
+	for item := range strings.SplitSeq(tag.Get("jsonschema"), ",") {
+		value, isEnum := strings.CutPrefix(item, "enum=")
+		if !isEnum {
+			continue
+		}
+		listed = listed || strings.Contains(value, "|")
+		for part := range strings.SplitSeq(value, "|") {
+			n, ok := jsonNumber(part)
+			if !ok {
+				return reflected
+			}
+			if !slices.Contains(values, any(n)) {
+				values = append(values, n)
+			}
+		}
+	}
+	if !listed {
+		return reflected
+	}
+	return values
+}
+
+// jsonNumber reports whether s is exactly one JSON number, with no space.
+func jsonNumber(s string) (jsonv1.Number, bool) {
+	v := jsontext.Value(s)
+	return jsonv1.Number(s), v.IsValid() && v.Kind() == '0' && strings.TrimSpace(s) == s
 }
 
 // boolEnum reads the enum=true|false values of a jsonschema tag, without

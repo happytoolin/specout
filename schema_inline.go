@@ -90,6 +90,7 @@ func (sr *schemaRegistry) propSchema(t reflect.Type, tag reflect.StructTag) *jso
 	}
 	applyFormatTag(p, tag)
 	applyBoolEnumTag(p, t, tag)
+	applyNumberEnumTag(p, t, tag)
 	splitEnums(p)
 	sr.applySchemaFixes(t, p)
 	sr.inline = append(sr.inline, p)
