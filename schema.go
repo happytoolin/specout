@@ -119,9 +119,9 @@ var (
 
 // writesText reports whether the JSON encoders write t through its
 // MarshalText method, as a JSON string. A JSON marshaler takes precedence. A
-// JSONSchema method and net.IP keep the reflector's schema.
+// string kind, a JSONSchema method and net.IP keep the reflector's schema.
 func writesText(t reflect.Type) bool {
-	return t.Kind() != reflect.Interface && t.Implements(textMarshalerType) &&
+	return t.Kind() != reflect.Interface && t.Kind() != reflect.String && t.Implements(textMarshalerType) &&
 		!t.Implements(jsonMarshalerType) && !t.Implements(jsonMarshalerToType) &&
 		!t.Implements(schemaMethodType) && t != reflect.TypeFor[net.IP]()
 }
