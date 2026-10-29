@@ -3,6 +3,7 @@ package specout_test
 import (
 	jsonv1 "encoding/json"
 	"errors"
+	"io"
 	"math/big"
 	"net/http"
 	"net/netip"
@@ -138,6 +139,52 @@ func TestClosedSchemasPreserveTypedAndFreeMaps(t *testing.T) {
 	typed := p["typed"].(map[string]any)
 	assert.Equal(t, "string", typed["additionalProperties"].(map[string]any)["type"])
 	assert.NotEqual(t, false, p["free"].(map[string]any)["additionalProperties"])
+}
+
+// schemaHiddenEmbed is embedded by a test type with a hidden field.
+type schemaHiddenEmbed struct {
+	Secret string `json:"secret" jsonschema:"-"`
+}
+
+// jsonschema:"-" hides a field that JSON still writes, so a closed schema
+// would reject every real payload. json:"-" hides it from both.
+func TestClosedSchemasRejectHiddenFields(t *testing.T) {
+	type direct struct {
+		Name   string `json:"name"`
+		Secret string `json:"secret" jsonschema:"-"`
+	}
+	type embedded struct {
+		schemaHiddenEmbed
+
+		Name string `json:"name"`
+	}
+	type hiddenEmbed struct {
+		schemaHiddenEmbed `jsonschema:"-"`
+
+		Name string `json:"name"`
+	}
+	type ignored struct {
+		Name   string `json:"name"`
+		Secret string `json:"-"    jsonschema:"-"`
+	}
+	for want, body := range map[string]any{
+		"direct field Secret":                 direct{},
+		"embedded field Secret":               embedded{},
+		"hiddenEmbed field schemaHiddenEmbed": hiddenEmbed{},
+	} {
+		t.Run(want, func(t *testing.T) {
+			d := specout.New(specout.Config{Title: "t", Version: "1", ClosedSchemas: true})
+			specout.Document(d, http.MethodGet, "/x", okGet.WithResponse(specout.Response{Status: http.StatusOK, Type: body}))
+			assert.PanicsWithValue(t, "specout: specout_test."+want+` has jsonschema:"-", but JSON still writes it, `+
+				`and ClosedSchemas rejects it; tag it json:"-", or drop ClosedSchemas`, func() { _ = d.WriteJSON(io.Discard) })
+		})
+	}
+	d := specout.New(specout.Config{Title: "t", Version: "1", ClosedSchemas: true})
+	specout.Document(d, http.MethodGet, "/x", okGet.WithResponse(specout.Response{Status: http.StatusOK, Type: ignored{}}))
+	assert.NotContains(t, props(t, buildDoc(t, d), "ignored"), "secret")
+	open := newGen()
+	specout.Document(open, http.MethodGet, "/x", okGet.WithResponse(specout.Response{Status: http.StatusOK, Type: direct{}}))
+	assert.NotContains(t, props(t, buildDoc(t, open), "direct"), "secret", "an open schema keeps the hidden field out")
 }
 
 func TestRequestBodyViewDoesNotReplaceTheFullResponseSchema(t *testing.T) {

@@ -210,11 +210,35 @@ func fixIntegerKeys(key reflect.Type, s *jsonschema.Schema) {
 // fixStructFields applies tags only from the winning JSON field. Hidden
 // embedded fields must not change the schema of the field that shadows them.
 func (sr *schemaRegistry) fixStructFields(t reflect.Type, s *jsonschema.Schema) {
+	if sr.closed {
+		checkHiddenFields(t, t, make(map[reflect.Type]bool))
+	}
 	fields := jsonFields(t, false)
 	removeShadowedFields(t, s, fields)
 	for _, f := range fields {
 		if parts0(f.Tag.Get("jsonschema")) != "-" {
 			sr.fixStructField(s, f)
+		}
+	}
+}
+
+// checkHiddenFields panics on a field of owner, or of a struct that owner
+// embeds, that jsonschema:"-" hides from the schema. JSON still writes and
+// reads that field, and a closed schema rejects every payload that holds it.
+func checkHiddenFields(owner, t reflect.Type, seen map[reflect.Type]bool) {
+	t = deref(t)
+	if t.Kind() != reflect.Struct || seen[t] {
+		return
+	}
+	seen[t] = true
+	for f := range t.Fields() {
+		switch {
+		case f.Tag.Get("json") == "-" || (f.PkgPath != "" && !f.Anonymous):
+		case parts0(f.Tag.Get("jsonschema")) == "-":
+			panic("specout: " + owner.String() + " field " + f.Name + ` has jsonschema:"-", but JSON still ` +
+				`writes it, and ClosedSchemas rejects it; tag it json:"-", or drop ClosedSchemas`)
+		case promotes(f):
+			checkHiddenFields(owner, f.Type, seen)
 		}
 	}
 }
