@@ -447,6 +447,11 @@ The optional `recorder` package can compare response statuses from HTTP tests
 with the declared statuses. It does not check response bodies. With Echo, Gin,
 and Fiber, install the adapter's `Record` middleware.
 
+A handler that hijacks the connection writes its response itself. When the
+request asks to switch protocols and the handler wrote no status, as in a
+WebSocket handshake, the recorder records 101. It records nothing for any other
+hijack that wrote no status.
+
 ## More information
 
 - [Runnable examples](examples/README.md).

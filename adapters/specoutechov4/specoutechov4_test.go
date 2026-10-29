@@ -362,3 +362,20 @@ func TestPanickedRegistrationServesNothing(t *testing.T) {
 		assert.Equal(t, http.StatusNotFound, get(t, e, target).Code, target)
 	}
 }
+
+// A handler that hijacks the connection writes the response itself. Record
+// used to report a 200 for each case of adaptertest.HijackCases.
+func TestRecordHijackedResponses(t *testing.T) {
+	for _, tc := range adaptertest.HijackCases() {
+		t.Run(tc.Name, func(t *testing.T) {
+			d, e := adaptertest.Generator(), echo.New()
+			rec := recorder.New(nil)
+			e.Use(specoutechov4.Record(rec))
+			specoutechov4.New(d, e).Get("/ws", tc.Route())
+			assert.Equal(t, tc.Status, adaptertest.RawStatus(t, e, "/ws", tc.Upgrade))
+			var ft adaptertest.FakeT
+			recorder.Verify(&ft, d, rec)
+			assert.Equal(t, tc.Errs, ft.Errs)
+		})
+	}
+}

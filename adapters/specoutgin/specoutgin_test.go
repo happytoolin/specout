@@ -301,3 +301,20 @@ func TestNewPanicsOnNil(t *testing.T) {
 	assert.Panics(t, func() { specoutgin.New(nil, gin.New()) })
 	assert.Panics(t, func() { specoutgin.New(adaptertest.Generator(), nil) })
 }
+
+// A handler that hijacks the connection writes the response itself. Record
+// used to report a 200 for each case of adaptertest.HijackCases.
+func TestRecordHijackedResponses(t *testing.T) {
+	for _, tc := range adaptertest.HijackCases() {
+		t.Run(tc.Name, func(t *testing.T) {
+			d, e := adaptertest.Generator(), gin.New()
+			rec := recorder.New(nil)
+			e.Use(specoutgin.Record(rec))
+			specoutgin.New(d, e).Get("/ws", tc.Route())
+			assert.Equal(t, tc.Status, adaptertest.RawStatus(t, e, "/ws", tc.Upgrade))
+			var ft adaptertest.FakeT
+			recorder.Verify(&ft, d, rec)
+			assert.Equal(t, tc.Errs, ft.Errs)
+		})
+	}
+}

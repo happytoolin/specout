@@ -17,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/gorilla/mux"
 	"github.com/happytoolin/specout"
+	"github.com/happytoolin/specout/internal/hijack"
 )
 
 // Recorder wraps a router and observes status codes per route, keyed by the
@@ -60,7 +61,9 @@ func (rec *Recorder) Observe(method, path string, status int) {
 }
 
 // ServeHTTP serves r through the wrapped router and records the status of the
-// route that ran.
+// route that ran. A handler that hijacks the connection writes the response
+// itself: a WebSocket handshake that wrote no status records 101, and any
+// other hijack without a status records nothing.
 func (rec *Recorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if rec.next == nil {
 		panic("recorder: ServeHTTP on a Recorder without a router; route requests through the router, " +
@@ -68,7 +71,8 @@ func (rec *Recorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	fallback := rec.match(r)
 	r, rctx := rec.withRouteContext(r)
-	rw := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+	hw, watch := hijack.Wrap(w)
+	rw := middleware.NewWrapResponseWriter(hw, r.ProtoMajor)
 	rec.next.ServeHTTP(rw, r)
 
 	method, pattern := servedRoute(r, rctx, fallback)
@@ -83,7 +87,10 @@ func (rec *Recorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rec.mu.Unlock()
 		return
 	}
-	rec.Observe(method, pattern, rw.Status())
+	// a handler that hijacked the connection wrote its own status
+	if status, ok := hijack.Status(r.Header, rw.Status(), rw.Status() != 0, watch.Hijacked()); ok {
+		rec.Observe(method, pattern, status)
+	}
 }
 
 // withRouteContext gives a chi router a route context the recorder owns, so

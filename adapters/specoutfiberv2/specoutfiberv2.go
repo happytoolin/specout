@@ -18,6 +18,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/adaptor"
 	"github.com/happytoolin/specout"
 	"github.com/happytoolin/specout/internal/fiberpath"
+	"github.com/happytoolin/specout/internal/hijack"
 	"github.com/happytoolin/specout/recorder"
 )
 
@@ -270,6 +271,9 @@ func RequireDocumented(t specout.TestingT, d *specout.Generator, app *fiber.App,
 // Fiber picks the endpoint only when the chain reaches it. When other
 // middleware writes the response first, such as a 401, Record finds the
 // endpoint the request would have reached with fiber.RoutePatternMatch.
+//
+// A net/http handler that hijacks the connection writes the response itself:
+// a WebSocket handshake counts as 101, and any other hijack counts as nothing.
 func Record(rec *recorder.Recorder) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		if err := c.Next(); err != nil {
@@ -281,11 +285,27 @@ func Record(rec *recorder.Recorder) fiber.Handler {
 		if !ok {
 			route, ok = endpointFor(c)
 		}
-		if ok {
-			rec.Observe(route.method, route.path, c.Response().StatusCode())
+		if !ok {
+			return nil
+		}
+		if status, recorded := recordedStatus(c); recorded {
+			rec.Observe(route.method, route.path, status)
 		}
 		return nil
 	}
+}
+
+// recordedStatus returns the status to record for c, and false when there is
+// none. A net/http handler that hijacked the connection wrote the response
+// itself, and Fiber kept its default 200: a WebSocket handshake counts as
+// 101, and any other hijack as nothing. A flushed response streams its body,
+// so its status reached the client before any hijack.
+func recordedStatus(c *fiber.Ctx) (int, bool) {
+	res := c.Response()
+	if res.IsBodyStream() || !c.Context().Hijacked() {
+		return res.StatusCode(), true
+	}
+	return hijack.Status(http.Header(c.GetReqHeaders()), 0, false, true)
 }
 
 // endpointFor returns the endpoint a request matches, as the document spells

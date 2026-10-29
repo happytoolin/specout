@@ -16,6 +16,7 @@ import (
 
 	"github.com/happytoolin/specout"
 	"github.com/happytoolin/specout/internal/echopath"
+	"github.com/happytoolin/specout/internal/hijack"
 	"github.com/happytoolin/specout/recorder"
 	"github.com/labstack/echo/v4"
 )
@@ -206,14 +207,24 @@ func RequireDocumented(t specout.TestingT, d *specout.Generator, e *echo.Echo, s
 // before it runs middleware, so a response that other middleware writes, such
 // as a 401, still counts for its route. Record hands a returned error to the
 // Echo error handler, so it reads the status the client gets.
+//
+// A handler that hijacks the connection writes the response itself: a
+// WebSocket handshake that wrote no status counts as 101, and any other
+// hijack without a status counts as nothing.
 func Record(rec *recorder.Recorder) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
+			resp := c.Response()
+			writer := resp.Writer
+			w, watch := hijack.Wrap(writer)
+			resp.Writer = w
 			if err := next(c); err != nil {
 				c.Error(err)
 			}
-			if routed(c) {
-				rec.Observe(c.Request().Method, echopath.Table(c.Path()), c.Response().Status)
+			resp.Writer = writer
+			status, ok := hijack.Status(c.Request().Header, resp.Status, resp.Committed, watch.Hijacked())
+			if ok && routed(c) {
+				rec.Observe(c.Request().Method, echopath.Table(c.Path()), status)
 			}
 			return nil
 		}

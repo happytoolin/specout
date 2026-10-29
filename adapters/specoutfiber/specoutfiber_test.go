@@ -1,6 +1,7 @@
 package specoutfiber_test
 
 import (
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -368,4 +369,36 @@ func TestAdoptSkippedGuardShadowsNothing(t *testing.T) {
 	status, _ := do(t, app, http.MethodGet, "/api/users")
 	require.Equal(t, http.StatusNoContent, status, "the guard lets the route run")
 	require.NoError(t, specoutfiber.Adopt(d, app, specout.Skip("/api/*")))
+}
+
+// A net/http handler that hijacks the connection writes the response itself,
+// and Fiber keeps its default 200. Record used to report that 200 for each
+// case of adaptertest.HijackCases. fasthttp's adaptor cannot hijack a
+// response that it already streams, so the flushed case does not run.
+func TestRecordHijackedResponses(t *testing.T) {
+	for _, tc := range adaptertest.HijackCases() {
+		if tc.Flushed {
+			continue
+		}
+		t.Run(tc.Name, func(t *testing.T) {
+			d, app := adaptertest.Generator(), fiber.New()
+			recorded := make(chan struct{}, 1)
+			app.Use(func(c fiber.Ctx) error {
+				defer func() { recorded <- struct{}{} }()
+				return c.Next()
+			})
+			rec := recorder.New(nil)
+			app.Use(specoutfiber.Record(rec))
+			specoutfiber.New(d, app).Get("/ws", tc.Route())
+			ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+			require.NoError(t, err)
+			go func() { _ = app.Listener(ln, fiber.ListenConfig{DisableStartupMessage: true}) }()
+			t.Cleanup(func() { _ = app.Shutdown() })
+			assert.Equal(t, tc.Status, adaptertest.RawGet(t, ln.Addr().String(), "/ws", tc.Upgrade))
+			<-recorded
+			var ft adaptertest.FakeT
+			recorder.Verify(&ft, d, rec)
+			assert.Equal(t, tc.Errs, ft.Errs)
+		})
+	}
 }

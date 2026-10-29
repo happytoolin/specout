@@ -6,7 +6,9 @@
 package specoutgin
 
 import (
+	"bufio"
 	"fmt"
+	"net"
 	"net/http"
 	"path"
 	"slices"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/happytoolin/specout"
+	"github.com/happytoolin/specout/internal/hijack"
 	"github.com/happytoolin/specout/recorder"
 )
 
@@ -192,22 +195,57 @@ func RequireDocumented(t specout.TestingT, d *specout.Generator, e *gin.Engine, 
 // the route is registered, so call e.Use(Record(rec)) before any route. Gin
 // routes before it runs middleware, so a response that other middleware
 // writes, such as a 401, still counts for its route.
+//
+// A handler that hijacks the connection writes the response itself: a
+// WebSocket handshake that wrote no status counts as 101, and any other
+// hijack without a status counts as nothing.
 func Record(rec *recorder.Recorder) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		watch := &hijackWatch{ResponseWriter: c.Writer}
+		c.Writer = watch
 		c.Next()
-		// A specout route names itself. FullPath loses Gin's \: escapes after
-		// the first request, so it is the fallback for other routes and for
-		// responses that middleware wrote before the handler.
-		v, _ := c.Get(observedKey{})
-		if route, ok := v.(observed); ok {
-			rec.Observe(route.method, route.path, c.Writer.Status())
+		c.Writer = watch.ResponseWriter
+		status, ok := hijack.Status(c.Request.Header, watch.Status(), watch.wrote, watch.watch.Hijacked())
+		if !ok {
 			return
 		}
-		if full := c.FullPath(); full != "" {
-			rec.Observe(c.Request.Method, tablePath(escapeLiteralColons(full, c.Params)), c.Writer.Status())
+		if method, p, routed := ranRoute(c); routed {
+			rec.Observe(method, p, status)
 		}
 	}
 }
+
+// ranRoute returns the method and path of the route that c ran, as the
+// document spells them. A specout route names itself. FullPath loses Gin's \:
+// escapes after the first request, so it is the fallback for other routes and
+// for responses that middleware wrote before the handler.
+func ranRoute(c *gin.Context) (string, string, bool) {
+	v, _ := c.Get(observedKey{})
+	if route, ok := v.(observed); ok {
+		return route.method, route.path, true
+	}
+	if full := c.FullPath(); full != "" {
+		return c.Request.Method, tablePath(escapeLiteralColons(full, c.Params)), true
+	}
+	return "", "", false
+}
+
+// hijackWatch notes a Hijack of the connection, and whether Gin had written a
+// status before it: Gin reports 200 for a response that wrote none.
+type hijackWatch struct {
+	gin.ResponseWriter
+
+	watch hijack.Watch
+	wrote bool
+}
+
+func (w *hijackWatch) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	w.wrote = w.Written()
+	return w.watch.Hijack(w.ResponseWriter)
+}
+
+// Unwrap returns Gin's writer, for http.ResponseController.
+func (w *hijackWatch) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 // escapeLiteralColons puts back the \: escapes that Gin drops from a matched
 // route's full path after the first request. A colon starts a parameter only

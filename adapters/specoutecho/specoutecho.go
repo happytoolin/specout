@@ -17,6 +17,7 @@ import (
 
 	"github.com/happytoolin/specout"
 	"github.com/happytoolin/specout/internal/echopath"
+	"github.com/happytoolin/specout/internal/hijack"
 	"github.com/happytoolin/specout/recorder"
 	"github.com/labstack/echo/v5"
 )
@@ -157,12 +158,18 @@ func RequireDocumented(t specout.TestingT, d *specout.Generator, e *echo.Echo, s
 // before it runs middleware, so a response that other middleware writes, such
 // as a 401, still counts for its route. Record hands a returned error to the
 // Echo error handler, so it reads the status the client gets.
+//
+// A handler that hijacks the connection writes the response itself: a
+// WebSocket handshake that wrote no status counts as 101, and any other
+// hijack without a status counts as nothing.
 func Record(rec *recorder.Recorder) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c *echo.Context) error {
+			watch, undo := watchHijack(c)
 			if err := next(c); err != nil {
 				c.Echo().HTTPErrorHandler(c, err)
 			}
+			undo()
 			ri := c.RouteInfo()
 			method := ri.Method
 			switch method {
@@ -171,9 +178,24 @@ func Record(rec *recorder.Recorder) echo.MiddlewareFunc {
 			case echo.RouteAny:
 				method = c.Request().Method
 			}
-			_, status := echo.ResolveResponseStatus(c.Response(), nil)
-			rec.Observe(method, echopath.Table(ri.Path), status)
+			resp, code := echo.ResolveResponseStatus(c.Response(), nil)
+			if status, ok := hijack.Status(c.Request().Header, code, resp != nil && resp.Committed, watch.Hijacked()); ok {
+				rec.Observe(method, echopath.Table(ri.Path), status)
+			}
 			return nil
 		}
 	}
+}
+
+// watchHijack makes the writer under the echo.Response of c note a Hijack.
+// undo puts the writer back.
+func watchHijack(c *echo.Context) (*hijack.Watch, func()) {
+	resp, err := echo.UnwrapResponse(c.Response())
+	if err != nil {
+		return nil, func() {}
+	}
+	writer := resp.ResponseWriter
+	w, watch := hijack.Wrap(writer)
+	resp.ResponseWriter = w
+	return watch, func() { resp.ResponseWriter = writer }
 }
