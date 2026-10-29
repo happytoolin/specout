@@ -82,6 +82,12 @@ shape. Give the type a `JSONSchema()` method, which is the hook of
 func (Money) JSONSchema() *jsonschema.Schema { return &jsonschema.Schema{Type: "string"} }
 ```
 
+### JSON encoder version
+
+specout schemas describe the output of `encoding/json` (v1). `encoding/json/v2`
+writes some values differently. For example, it writes a `[N]byte` array as a
+base64 string, and a nil slice or map as an empty value instead of `null`.
+
 ## Install
 
 Use **Go 1.27 or later**.
