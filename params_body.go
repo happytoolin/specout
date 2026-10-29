@@ -19,6 +19,7 @@ func requestBodyObj(rec *routeRecord, body reflect.Type, sr *schemaRegistry) *ob
 		types = []string{ct}
 	}
 	for _, c := range types {
+		c = mediaType(c, "RequestContentTypes")
 		schema := *base
 		if c == "multipart/form-data" || c == "application/x-www-form-urlencoded" {
 			schema = sr.formSchema(body, base)

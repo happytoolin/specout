@@ -100,7 +100,7 @@ func resDefault(rec *routeRecord) (respEntry, bool) {
 // HTTP spec forbids. An explicit Type still wins.
 func declaredType(res reflect.Type, resp *Response) reflect.Type {
 	if resp.Type != nil {
-		return reflect.TypeOf(resp.Type)
+		return valueType(resp.Type)
 	}
 	if bodyless(resp.Status) || resp.Key == "1XX" {
 		return nil
@@ -174,10 +174,10 @@ func bodyless(code int) bool {
 // putDefaultErrors adds the configured error responses for every code the route
 // neither declared nor omitted.
 func (d *Generator) putDefaultErrors(p *plannedResponses) {
-	et := reflect.TypeOf(d.cfg.ErrorType)
-	if et == nil {
+	if d.cfg.ErrorType == nil {
 		return
 	}
+	et := valueType(d.cfg.ErrorType)
 	for _, code := range d.cfg.DefaultErrors {
 		key := responseKey(code, "")
 		_, declared := p.byKey[key]
@@ -220,16 +220,24 @@ func responseBody(e respEntry, sr *schemaRegistry) *obj {
 		// placeholder beats an empty string.
 		body.set("description", resp.Key+" response")
 	}
-	if resp.ContentType != "" {
-		body.set("content", binaryContent(resp.ContentType))
-	}
-	if len(resp.ContentTypes) > 0 {
-		body.set("content", sharedContent(e.typ, resp.ContentTypes, sr))
-	}
+	setDeclaredContent(body, e, sr)
 	if len(resp.Headers) > 0 {
 		body.set("headers", responseHeaders(resp.Headers, sr))
 	}
 	return mergeRaw(body, resp.Raw, responseFields)
+}
+
+// setDeclaredContent replaces the inherited content of body with the media
+// types that e's Response declares, if it declares any.
+func setDeclaredContent(body *obj, e respEntry, sr *schemaRegistry) {
+	switch resp := e.resp; {
+	case resp.ContentType != "" && len(resp.ContentTypes) > 0:
+		panic("specout: Response sets both ContentType and ContentTypes; set one")
+	case resp.ContentType != "":
+		body.set("content", binaryContent(resp.ContentType))
+	case len(resp.ContentTypes) > 0:
+		body.set("content", sharedContent(e.typ, resp.ContentTypes, sr))
+	}
 }
 
 // binaryContent is the content object for Response.ContentType: one media type
@@ -250,15 +258,30 @@ func sharedContent(t reflect.Type, types []string, sr *schemaRegistry) *obj {
 	}
 	content := newObj()
 	for _, ct := range types {
-		content.set(ct, newObj().set("schema", schemaFor(t, sr)))
+		content.set(mediaType(ct, "Response.ContentTypes"), newObj().set("schema", schemaFor(t, sr)))
 	}
 	return content
 }
 
+// mediaType returns ct, a content map key, and panics when it is empty.
+func mediaType(ct, field string) string {
+	if ct == "" {
+		panic("specout: " + field + " has an empty media type")
+	}
+	return ct
+}
+
 // responseHeaders is the headers object of one response, in declared order.
+// HTTP header names ignore case, so X-Id and x-id are one header.
 func responseHeaders(headers []Header, sr *schemaRegistry) *obj {
 	out := newObj()
+	seen := make(map[string]bool, len(headers))
 	for _, hd := range headers {
+		key := strings.ToLower(hd.Name)
+		if hd.Name == "" || seen[key] {
+			panic("specout: empty or duplicate response header " + strconv.Quote(hd.Name))
+		}
+		seen[key] = true
 		out.set(hd.Name, headerObj(hd, sr))
 	}
 	return out
@@ -357,5 +380,14 @@ func headerObj(hd Header, sr *schemaRegistry) *obj {
 	if hd.Type == nil {
 		return newObj().set("schema", newObj().set("type", typeString))
 	}
-	return newObj().set("schema", schemaFor(reflect.TypeOf(hd.Type), sr))
+	return newObj().set("schema", schemaFor(valueType(hd.Type), sr))
+}
+
+// valueType is the type of the value in a Type field. A reflect.Type there is
+// a mistake: it would document the reflect package's own rtype struct.
+func valueType(v any) reflect.Type {
+	if _, ok := v.(reflect.Type); ok {
+		panic("specout: a Type field takes a value such as Error{}, not a reflect.Type")
+	}
+	return reflect.TypeOf(v)
 }

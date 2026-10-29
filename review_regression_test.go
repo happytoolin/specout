@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -252,6 +253,43 @@ func TestInvalidResponseKeyStatusCombinationsFail(t *testing.T) {
 	} {
 		assert.Panics(t, func() {
 			docOf(t, http.MethodGet, "/x", okGet.WithResponse(response))
+		})
+	}
+}
+
+func TestMisusedResponseFieldsFail(t *testing.T) {
+	type errBody struct {
+		Message string `json:"message"`
+	}
+	post := specout.Handler[errBody, specout.NoContent]{HandlerFunc: noop}
+	for _, tc := range []struct {
+		name, want string
+		h          specout.Handler[errBody, specout.NoContent]
+	}{
+		{
+			"both content type fields", "specout: Response sets both ContentType and ContentTypes; set one",
+			post.WithResponse(specout.Response{Status: 200, Type: errBody{}, ContentType: "application/pdf", ContentTypes: []string{"application/xml"}}),
+		},
+		{
+			"empty response media type", "specout: Response.ContentTypes has an empty media type",
+			post.WithResponse(specout.Response{Status: 200, Type: errBody{}, ContentTypes: []string{""}}),
+		},
+		{"empty request media type", "specout: RequestContentTypes has an empty media type", post.WithRequestContentTypes("")},
+		{
+			"empty header name", `specout: empty or duplicate response header ""`,
+			post.WithResponse(specout.Response{Status: 204, Headers: []specout.Header{{}}}),
+		},
+		{
+			"duplicate header name", `specout: empty or duplicate response header "x-id"`,
+			post.WithResponse(specout.Response{Status: 204, Headers: []specout.Header{{Name: "X-Id"}, {Name: "x-id"}}}),
+		},
+		{
+			"reflect.Type as a Type", "specout: a Type field takes a value such as Error{}, not a reflect.Type",
+			post.WithResponse(specout.Response{Status: 404, Type: reflect.TypeFor[errBody]()}),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.PanicsWithValue(t, tc.want, func() { docOf(t, http.MethodPost, "/x", tc.h) })
 		})
 	}
 }
