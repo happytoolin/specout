@@ -3,6 +3,7 @@ package specout_test
 import (
 	jsonv1 "encoding/json"
 	"errors"
+	"math/big"
 	"net/http"
 	"net/netip"
 	"regexp"
@@ -396,6 +397,42 @@ func TestLaunchPromotedEncoderSetsTheSchema(t *testing.T) {
 	assert.Equal(t, []any{"string", "null"}, p["ptr"].(map[string]any)["type"])
 	assert.Equal(t, timeSchema, componentsSchema(t, doc, "schemaStamp"))
 	assert.Contains(t, props(t, doc, "schemaOwnStamp"), "note", "a declared MarshalJSON keeps the reflected fields")
+}
+
+// The math/big types write a number or text through pointer methods, so the
+// reflector would read their Go fields.
+func TestLaunchBigNumbers(t *testing.T) {
+	type response struct {
+		Int   *big.Int   `json:"int"`
+		Float *big.Float `json:"float"`
+		Rat   *big.Rat   `json:"rat"`
+	}
+	d := newGen()
+	specout.Document(d, http.MethodGet, "/x", specout.Get[response]{HandlerFunc: noop})
+	specout.Document(d, http.MethodGet, "/int", specout.Get[*big.Int]{HandlerFunc: noop})
+	doc := buildDoc(t, d)
+	huge, ok := new(big.Int).SetString("123456789012345678901234567890", 10)
+	require.True(t, ok)
+	value := response{Int: huge, Float: big.NewFloat(1.5), Rat: big.NewRat(1, 3)}
+	wire, err := jsonv1.Marshal(value)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"int":123456789012345678901234567890,"float":"1.5","rat":"1/3"}`, string(wire))
+	exportLaunchSamples(t, doc,
+		launchSample{"big values", launchResponseSchema(t, doc, "/x", "get"), value, true},
+		launchSample{"null big values", launchResponseSchema(t, doc, "/x", "get"), response{}, true},
+		launchSample{
+			"string for big.Int", launchResponseSchema(t, doc, "/x", "get"),
+			map[string]any{"int": "1", "float": "1", "rat": "1"},
+			false,
+		},
+	)
+	p := props(t, doc, "response")
+	assert.Equal(t, []any{"integer", "null"}, p["int"].(map[string]any)["type"])
+	assert.Equal(t, []any{"string", "null"}, p["float"].(map[string]any)["type"])
+	assert.Equal(t, []any{"string", "null"}, p["rat"].(map[string]any)["type"])
+	root := opOf(t, doc, "/int", "get")["responses"].(map[string]any)["200"].(map[string]any)
+	assert.Equal(t, map[string]any{"anyOf": []any{map[string]any{"type": "integer"}, map[string]any{"type": "null"}}},
+		root["content"].(map[string]any)["application/json"].(map[string]any)["schema"])
 }
 
 func TestUnencodableTypesPanicClearly(t *testing.T) {

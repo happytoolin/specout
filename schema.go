@@ -4,6 +4,7 @@ import (
 	"encoding"
 	json "encoding/json/v2"
 	"maps"
+	"math/big"
 	"net"
 	"reflect"
 	"regexp"
@@ -130,15 +131,26 @@ func writesText(t reflect.Type) bool {
 		!t.Implements(schemaMethodType) && t != reflect.TypeFor[net.IP]()
 }
 
+// bigTypes maps the math/big types to their JSON type. Their encoder methods
+// have pointer receivers, which writesText does not see: *big.Int writes a
+// number, *big.Float and *big.Rat write text.
+var bigTypes = map[reflect.Type]string{
+	reflect.TypeFor[big.Int]():   typeInteger,
+	reflect.TypeFor[big.Float](): typeString,
+	reflect.TypeFor[big.Rat]():   typeString,
+}
+
 // wireSchema is the schema of a type whose JSON form the reflector gets wrong,
-// or nil for any other type. The reflector reads the Go fields of a type that
-// writesText reports, such as netip.Addr or a UUID array, not the string on
-// the wire, and of a struct whose JSON encoder method comes from an embedded
-// field, such as time.Time. The reflector panics on a uintptr, which the
-// encoders write as an integer.
+// or nil for any other type. The reflector reads the Go fields of a math/big
+// type, of a type that writesText reports, such as netip.Addr or a UUID array,
+// and of a struct whose JSON encoder method comes from an embedded field, such
+// as time.Time. The encoders write none of these as an object. The reflector
+// panics on a uintptr, which the encoders write as an integer.
 func (sr *schemaRegistry) wireSchema(t reflect.Type) *jsonschema.Schema {
 	var s *jsonschema.Schema
 	switch {
+	case bigTypes[t] != "":
+		s = &jsonschema.Schema{Type: bigTypes[t]}
 	case writesText(t):
 		s = &jsonschema.Schema{Type: typeString}
 	case t.Kind() == reflect.Uintptr && !customJSON(t):
