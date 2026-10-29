@@ -224,8 +224,9 @@ func (sr *schemaRegistry) addUnionBranch(source *jsonschema.Schema, u unionDecl,
 	}
 	// The payload keeps the optionality and nullability of its field: Go
 	// omits it with omitempty and writes a nil pointer as null.
-	data := &jsonschema.Schema{Ref: b.dataRef}
-	if payload, _ := properties.Get(u.dataName); admitsNull(payload) {
+	payload, _ := properties.Get(u.dataName)
+	data := sr.payloadSchema(payload, b.dataRef)
+	if admitsNull(payload) {
 		nullable(data)
 	}
 	properties.Set(u.dataName, data)
@@ -240,6 +241,44 @@ func (sr *schemaRegistry) addUnionBranch(source *jsonschema.Schema, u unionDecl,
 	}
 	sr.byName[b.name] = &branch
 	sr.nameOrder = append(sr.nameOrder, b.name)
+}
+
+// payloadSchema is the payload of one union branch: the variant ref where the
+// payload field holds any, inside the field's lists and maps. A []any payload
+// is a list of variants.
+func (sr *schemaRegistry) payloadSchema(payload *jsonschema.Schema, ref string) *jsonschema.Schema {
+	t, ok := sr.payloads[payload]
+	if !ok {
+		return &jsonschema.Schema{Ref: ref}
+	}
+	s := variantShape(deref(t), ref)
+	if s.Type == typeArray {
+		// the reflector bounds a fixed-size array
+		s.MinItems, s.MaxItems = payload.MinItems, payload.MaxItems
+	}
+	return s
+}
+
+// variantShape is the schema of t with the variant ref in place of its any.
+func variantShape(t reflect.Type, ref string) *jsonschema.Schema {
+	switch t.Kind() {
+	case reflect.Slice, reflect.Array:
+		return &jsonschema.Schema{Type: typeArray, Items: variantElem(t.Elem(), ref)}
+	case reflect.Map:
+		return &jsonschema.Schema{Type: typeObject, AdditionalProperties: variantElem(t.Elem(), ref)}
+	default:
+		return &jsonschema.Schema{Ref: ref}
+	}
+}
+
+// variantElem is the schema of a list or map element of type t. Go writes a
+// nil pointer element as null.
+func variantElem(t reflect.Type, ref string) *jsonschema.Schema {
+	s := variantShape(deref(t), ref)
+	if t.Kind() == reflect.Pointer {
+		nullable(s)
+	}
+	return s
 }
 
 func (sr *schemaRegistry) unionBranchName(owner string, index int) string {

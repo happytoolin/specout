@@ -237,3 +237,56 @@ func TestUnknownSchemaTypesPanic(t *testing.T) {
 		})
 	}
 }
+
+// A payload field that holds its variants in a list or a map gets a branch
+// payload of the same shape, one variant per element.
+func TestLaunchUnionPayloadInContainers(t *testing.T) {
+	type listed struct {
+		Kind string `json:"kind" jsonschema:"enum=email|slack,description=Discriminator"`
+		Data []any  `json:"data" jsonschema:"oneof_type=email|slack"`
+	}
+	type mapped struct {
+		Kind string         `json:"kind" jsonschema:"enum=email|slack,description=Discriminator"`
+		Data map[string]any `json:"data" jsonschema:"oneof_type=email|slack"`
+	}
+	type pointers struct {
+		Kind string `json:"kind" jsonschema:"enum=email|slack,description=Discriminator"`
+		Data []*any `json:"data" jsonschema:"oneof_type=email|slack"`
+	}
+	type fixed struct {
+		Kind string `json:"kind" jsonschema:"enum=email|slack,description=Discriminator"`
+		Data [2]any `json:"data" jsonschema:"oneof_type=email|slack"`
+	}
+	d := newGen()
+	d.Register[unionEmail]("email")
+	d.Register[unionSlack]("slack")
+	specout.Document(d, http.MethodGet, "/listed", specout.Get[listed]{HandlerFunc: noop})
+	specout.Document(d, http.MethodGet, "/mapped", specout.Get[mapped]{HandlerFunc: noop})
+	specout.Document(d, http.MethodGet, "/pointers", specout.Get[pointers]{HandlerFunc: noop})
+	specout.Document(d, http.MethodGet, "/fixed", specout.Get[fixed]{HandlerFunc: noop})
+	doc := buildDoc(t, d)
+	var email any = unionEmail{Address: "ops@example.com"}
+	listedSchema := launchResponseSchema(t, doc, "/listed", "get")
+	mappedSchema := launchResponseSchema(t, doc, "/mapped", "get")
+	pointersSchema := launchResponseSchema(t, doc, "/pointers", "get")
+	exportLaunchSamples(t, doc,
+		launchSample{"listed payload", listedSchema, listed{Kind: "email", Data: []any{email, email}}, true},
+		launchSample{"unlisted payload", listedSchema, map[string]any{"kind": "email", "data": email}, false},
+		launchSample{"wrong listed payload", listedSchema, listed{Kind: "slack", Data: []any{email}}, false},
+		launchSample{"mapped payload", mappedSchema, mapped{Kind: "email", Data: map[string]any{"a": email}}, true},
+		launchSample{"wrong mapped payload", mappedSchema, mapped{Kind: "slack", Data: map[string]any{"a": email}}, false},
+		launchSample{"null element", pointersSchema, pointers{Kind: "email", Data: []*any{&email, nil}}, true},
+	)
+	components := schemas(t, doc)
+	data := func(branch string) any {
+		return components[branch].(map[string]any)["properties"].(map[string]any)["data"]
+	}
+	emailRef := map[string]any{"$ref": "#/components/schemas/unionEmail"}
+	assert.Equal(t, map[string]any{"type": "array", "items": emailRef}, data("listedVariant1"))
+	assert.Equal(t, map[string]any{"type": "object", "additionalProperties": emailRef}, data("mappedVariant1"))
+	assert.Equal(t, map[string]any{"type": "array", "items": map[string]any{
+		"anyOf": []any{emailRef, map[string]any{"type": "null"}},
+	}}, data("pointersVariant1"))
+	assert.Equal(t, map[string]any{"type": "array", "items": emailRef, "minItems": float64(2), "maxItems": float64(2)},
+		data("fixedVariant1"))
+}

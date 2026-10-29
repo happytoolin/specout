@@ -26,11 +26,12 @@ type schemaRegistry struct {
 	nameOrder []string
 	inline    []*jsonschema.Schema // parameter and media-specific schemas outside components
 	names     map[reflect.Type]string
-	overrides map[reflect.Type]string     // SchemaName[T] component-name overrides
-	owners    map[string]reflect.Type     // component name -> type that claimed it
-	variants  map[string]reflect.Type     // Register[T] union variants, by name
-	anon      int                         // anonymous struct component counter
-	fixed     map[*jsonschema.Schema]bool // schema nodes whose field fixes are complete
+	overrides map[reflect.Type]string             // SchemaName[T] component-name overrides
+	owners    map[string]reflect.Type             // component name -> type that claimed it
+	variants  map[string]reflect.Type             // Register[T] union variants, by name
+	anon      int                                 // anonymous struct component counter
+	fixed     map[*jsonschema.Schema]bool         // schema nodes whose field fixes are complete
+	payloads  map[*jsonschema.Schema]reflect.Type // union payload property -> its field type
 	closed    bool
 }
 
@@ -49,6 +50,7 @@ func (d *Generator) newSchemaRegistry() *schemaRegistry {
 		owners:    make(map[string]reflect.Type),
 		variants:  d.variants,
 		fixed:     make(map[*jsonschema.Schema]bool),
+		payloads:  make(map[*jsonschema.Schema]reflect.Type),
 		closed:    d.cfg.ClosedSchemas,
 	}
 	maps.Copy(sr.overrides, d.nameOverrides)

@@ -19,6 +19,7 @@ const (
 	typeString   = "string"
 	typeObject   = "object"
 	typeInteger  = "integer"
+	typeArray    = "array"
 	formatBinary = "binary"
 )
 
@@ -232,6 +233,10 @@ func (sr *schemaRegistry) fixStructField(s *jsonschema.Schema, f reflect.StructF
 	applyBoolEnumTag(p, f.Type, f.Tag)
 	applyNumberEnumTag(p, f.Type, f.Tag)
 	applyKeywordTags(p, f.Tag)
+	// a union branch puts its variant where the payload field holds any
+	if strings.Contains(f.Tag.Get("jsonschema"), "oneof_type=") {
+		sr.payloads[p] = f.Type
+	}
 	// descend before nullable() clears a $ref: the recursion needs the link
 	sr.applySchemaFixes(f.Type, p)
 	if f.Type.Kind() == reflect.Pointer {
