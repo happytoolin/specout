@@ -229,7 +229,10 @@ type nameClash string
 func (sr *schemaRegistry) claimName(t reflect.Type) string {
 	name := sr.nameFor(t)
 	if owner, ok := sr.owners[name]; ok && owner != t {
-		if isAnonymousStruct(owner) && !isAnonymousStruct(t) {
+		// A reserved name that an anonymous struct still holds did not come
+		// from nextAnonymousName, as a generated body name: another run
+		// cannot free it.
+		if isAnonymousStruct(owner) && !isAnonymousStruct(t) && !sr.reserved[name] {
 			panic(nameClash(name))
 		}
 		panicDuplicateName(name, owner, t)
