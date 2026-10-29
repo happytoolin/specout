@@ -30,6 +30,7 @@ type schemaRegistry struct {
 	owners    map[string]reflect.Type             // component name -> type that claimed it
 	variants  map[string]reflect.Type             // Register[T] union variants, by name
 	anon      int                                 // anonymous struct component counter
+	reserved  map[string]bool                     // AnonymousN names that a named type uses
 	fixed     map[*jsonschema.Schema]bool         // schema nodes whose field fixes are complete
 	payloads  map[*jsonschema.Schema]reflect.Type // union payload property -> its field type
 	closed    bool
@@ -155,10 +156,18 @@ func customJSON(t reflect.Type) bool {
 		t.Implements(jsonMarshalerToType) || t.Implements(schemaMethodType)
 }
 
+// nameClash is the panic value of claimName when a named type claims a name
+// that an anonymous struct holds. pathsAndSchemas recovers it and reflects
+// the routes again with the name reserved.
+type nameClash string
+
 // claimName applies the same collision check to root types and nested definitions.
 func (sr *schemaRegistry) claimName(t reflect.Type) string {
 	name := sr.nameFor(t)
 	if owner, ok := sr.owners[name]; ok && owner != t {
+		if isAnonymousStruct(owner) && !isAnonymousStruct(t) {
+			panic(nameClash(name))
+		}
 		panicDuplicateName(name, owner, t)
 	}
 	sr.owners[name] = t
@@ -237,12 +246,29 @@ func (sr *schemaRegistry) nameFor(t reflect.Type) string {
 		return n
 	}
 	n := sanitizeName(t)
-	if t.Kind() == reflect.Struct && t.Name() == "" {
-		sr.anon++
-		n = "Anonymous" + strconv.Itoa(sr.anon)
+	if isAnonymousStruct(t) {
+		n = sr.nextAnonymousName()
 	}
 	sr.names[t] = n
 	return n
+}
+
+// isAnonymousStruct reports a struct type with no name, struct{...}.
+func isAnonymousStruct(t reflect.Type) bool {
+	t = deref(t)
+	return t.Kind() == reflect.Struct && t.Name() == ""
+}
+
+// nextAnonymousName returns the next AnonymousN name that no type holds and
+// no named type reserved.
+func (sr *schemaRegistry) nextAnonymousName() string {
+	for {
+		sr.anon++
+		n := "Anonymous" + strconv.Itoa(sr.anon)
+		if _, taken := sr.owners[n]; !taken && !sr.reserved[n] {
+			return n
+		}
+	}
 }
 
 var (

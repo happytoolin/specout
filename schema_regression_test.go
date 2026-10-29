@@ -418,3 +418,30 @@ func TestNestedOnlyOverrideApplies(t *testing.T) {
 	assert.Equal(t, "#/components/schemas/LocalContact", np["local"].(map[string]any)["$ref"], "local ref")
 	assert.Equal(t, "#/components/schemas/Contact", np["lib"].(map[string]any)["$ref"], "lib ref")
 }
+
+// Anonymous1 is a user type with the name that the first anonymous struct
+// would get.
+type Anonymous1 struct {
+	ID string `json:"id"`
+}
+
+// An anonymous struct takes the next AnonymousN name that no named type uses,
+// so the user type keeps Anonymous1 whichever route the build reaches first.
+func TestAnonymousNameSkipsUserTypeName(t *testing.T) {
+	type anonymous = struct {
+		Name string `json:"name"`
+	}
+	for _, userFirst := range []bool{true, false} {
+		d := newGen()
+		userPath, anonPath := "/a", "/b"
+		if !userFirst {
+			userPath, anonPath = anonPath, userPath
+		}
+		specout.Document(d, http.MethodGet, userPath, specout.Get[Anonymous1]{HandlerFunc: noop})
+		specout.Document(d, http.MethodGet, anonPath, specout.Get[anonymous]{HandlerFunc: noop})
+		doc := buildDoc(t, d)
+		assert.Contains(t, props(t, doc, "Anonymous1"), "id", "userFirst=%t", userFirst)
+		assert.Contains(t, props(t, doc, "Anonymous2"), "name", "userFirst=%t", userFirst)
+		assert.Equal(t, "#/components/schemas/Anonymous2", launchResponseSchema(t, doc, anonPath, "get")["$ref"])
+	}
+}

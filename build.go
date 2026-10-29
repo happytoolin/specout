@@ -23,9 +23,8 @@ func (d *Generator) build() (*obj, error) {
 		spec.set("servers", servers)
 	}
 
-	sr := d.newSchemaRegistry()
-	// paths first: it is what fills sr, and components reads sr back.
-	spec.set("paths", d.pathObj(d.records, sr))
+	paths, schemas := d.pathsAndSchemas()
+	spec.set("paths", paths)
 	if tags := d.tagObjs(); len(tags) > 0 {
 		spec.set("tags", tags)
 	}
@@ -38,7 +37,7 @@ func (d *Generator) build() (*obj, error) {
 		components.set("securitySchemes", schemes)
 		spec.set("security", alts)
 	}
-	if schemas := sr.schemaObjs(); len(schemas.keys) > 0 {
+	if len(schemas.keys) > 0 {
 		components.set("schemas", schemas)
 	}
 	if len(components.keys) > 0 {
@@ -60,6 +59,41 @@ func (d *Generator) checkConfig() {
 		externalDocsObj(d.cfg.ExternalDocs)
 	}
 	d.checkDefaultErrors()
+}
+
+// pathsAndSchemas reflects the routes into the paths object and the schema
+// components. An anonymous struct takes the next AnonymousN name that no
+// named type uses. When a named type claims a name that an anonymous struct
+// took first, the reflection runs again with that name reserved, so the names
+// do not depend on the route order.
+func (d *Generator) pathsAndSchemas() (*obj, *obj) {
+	reserved := make(map[string]bool)
+	for {
+		if paths, schemas, ok := d.reflectRoutes(reserved); ok {
+			return paths, schemas
+		}
+	}
+}
+
+// reflectRoutes is one run of pathsAndSchemas. It reports false, and adds the
+// name to reserved, when a named type claims a name that an anonymous struct
+// holds: the recovered run returns its zero results.
+func (d *Generator) reflectRoutes(reserved map[string]bool) (*obj, *obj, bool) {
+	defer func() {
+		r := recover()
+		clash, isClash := r.(nameClash)
+		switch {
+		case isClash:
+			reserved[string(clash)] = true
+		case r != nil:
+			panic(r)
+		}
+	}()
+	sr := d.newSchemaRegistry()
+	sr.reserved = reserved
+	// paths first: it is what fills sr, and components reads sr back.
+	paths := d.pathObj(d.records, sr)
+	return paths, sr.schemaObjs(), true
 }
 
 // infoObj is the document's info object.
