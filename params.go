@@ -224,7 +224,7 @@ func tagValue(tag, key string) string {
 // tagParts splits a jsonschema tag on its commas as invopop does: a comma
 // after a backslash belongs to the value, as in description=a\, b.
 func tagParts(tag string) []string {
-	var parts []string
+	parts := make([]string, 0, strings.Count(tag, ",")+1)
 	for part := range strings.SplitSeq(tag, ",") {
 		if n := len(parts); n > 0 && strings.HasSuffix(parts[n-1], `\`) {
 			parts[n-1] = strings.TrimSuffix(parts[n-1], `\`) + "," + part
