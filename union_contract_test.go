@@ -145,6 +145,48 @@ func TestLaunchSingleVariantUnion(t *testing.T) {
 	assert.Len(t, schemas(t, doc)["envelope"].(map[string]any)["oneOf"], 1)
 }
 
+func TestLaunchUnionPayloadKeepsItsOptionality(t *testing.T) {
+	type optional struct {
+		Kind string `json:"kind"           jsonschema:"enum=email|slack,description=Discriminator"`
+		Data any    `json:"data,omitempty" jsonschema:"oneof_type=email|slack"`
+	}
+	type nullable struct {
+		Kind string `json:"kind" jsonschema:"enum=email|slack,description=Discriminator"`
+		Data *any   `json:"data" jsonschema:"oneof_type=email|slack"`
+	}
+	d := newGen()
+	d.Register[unionEmail]("email")
+	d.Register[unionSlack]("slack")
+	specout.Document(d, http.MethodGet, "/optional", specout.Get[optional]{HandlerFunc: noop})
+	specout.Document(d, http.MethodGet, "/nullable", specout.Get[nullable]{HandlerFunc: noop})
+	doc := buildDoc(t, d)
+	var email any = unionEmail{Address: "ops@example.com"}
+	optionalSchema := launchResponseSchema(t, doc, "/optional", "get")
+	nullableSchema := launchResponseSchema(t, doc, "/nullable", "get")
+	exportLaunchSamples(t, doc,
+		launchSample{"optional payload", optionalSchema, optional{Kind: "email", Data: email}, true},
+		launchSample{"omitted payload", optionalSchema, optional{Kind: "email"}, true},
+		launchSample{"wrong optional payload", optionalSchema, optional{Kind: "slack", Data: email}, false},
+		launchSample{"nullable payload", nullableSchema, nullable{Kind: "email", Data: &email}, true},
+		launchSample{"null payload", nullableSchema, nullable{Kind: "email"}, true},
+		launchSample{"wrong nullable payload", nullableSchema, nullable{Kind: "slack", Data: &email}, false},
+	)
+	components := schemas(t, doc)
+	for name, wantRequired := range map[string][]any{
+		"optional": {"kind"},
+		"nullable": {"kind", "data"},
+	} {
+		for _, raw := range components[name].(map[string]any)["oneOf"].([]any) {
+			ref := raw.(map[string]any)["$ref"].(string)
+			branch := components[strings.TrimPrefix(ref, "#/components/schemas/")].(map[string]any)
+			assert.ElementsMatch(t, wantRequired, branch["required"], name)
+		}
+	}
+	nullBranch := components["nullableVariant1"].(map[string]any)["properties"].(map[string]any)["data"]
+	assert.Equal(t, []any{map[string]any{"$ref": "#/components/schemas/unionEmail"}, map[string]any{"type": "null"}},
+		nullBranch.(map[string]any)["anyOf"])
+}
+
 func TestUnknownSchemaTypesPanic(t *testing.T) {
 	type noDiscriminator struct {
 		Data any `json:"data" jsonschema:"oneof_type=email|slack"`

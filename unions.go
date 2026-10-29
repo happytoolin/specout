@@ -219,14 +219,18 @@ func (sr *schemaRegistry) addUnionBranch(source *jsonschema.Schema, u unionDecl,
 	} else {
 		properties.Set(u.disc, &jsonschema.Schema{Type: typeString, Const: b.value})
 	}
-	properties.Set(u.dataName, &jsonschema.Schema{Ref: b.dataRef})
+	// The payload keeps the optionality and nullability of its field: Go
+	// omits it with omitempty and writes a nil pointer as null.
+	data := &jsonschema.Schema{Ref: b.dataRef}
+	if payload, _ := properties.Get(u.dataName); admitsNull(payload) {
+		nullable(data)
+	}
+	properties.Set(u.dataName, data)
 	branch.Type = typeObject
 	branch.Properties = properties
 	branch.Required = slices.Clone(source.Required)
-	for _, name := range []string{u.disc, u.dataName} {
-		if !slices.Contains(branch.Required, name) {
-			branch.Required = append(branch.Required, name)
-		}
+	if !slices.Contains(branch.Required, u.disc) {
+		branch.Required = append(branch.Required, u.disc)
 	}
 	if sr.closed {
 		branch.AdditionalProperties = jsonschema.FalseSchema
