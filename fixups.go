@@ -138,8 +138,12 @@ func nonNullArms(groups ...[]*jsonschema.Schema) iter.Seq[*jsonschema.Schema] {
 	}
 }
 
-// fixContainer fixes what a slice, array, map or struct schema holds.
+// fixContainer fixes what a slice, array, map or struct schema holds. A text
+// type is a string on the wire and holds nothing.
 func (sr *schemaRegistry) fixContainer(t reflect.Type, s *jsonschema.Schema) {
+	if writesText(t) {
+		return
+	}
 	switch t.Kind() {
 	case reflect.Slice, reflect.Array:
 		sr.applySchemaFixes(t.Elem(), s.Items)
@@ -157,16 +161,7 @@ func (sr *schemaRegistry) fixContainer(t reflect.Type, s *jsonschema.Schema) {
 }
 
 func (sr *schemaRegistry) fixMapValues(t reflect.Type, s *jsonschema.Schema) {
-	// The reflector places signed integer keys in patternProperties and
-	// closes additionalProperties. Go also serializes negative integer keys.
-	if value, ok := s.PatternProperties["^[0-9]+$"]; ok {
-		switch t.Key().Kind() {
-		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-			delete(s.PatternProperties, "^[0-9]+$")
-			s.PatternProperties["^-?[0-9]+$"] = value
-		default:
-		}
-	}
+	fixIntegerKeys(t.Key(), s)
 	fix := func(value *jsonschema.Schema) {
 		sr.applySchemaFixes(t.Elem(), value)
 		if t.Elem().Kind() == reflect.Pointer {
@@ -183,6 +178,28 @@ func (sr *schemaRegistry) fixMapValues(t reflect.Type, s *jsonschema.Schema) {
 		s.AdditionalProperties = jsonschema.TrueSchema
 	}
 	fix(s.AdditionalProperties)
+}
+
+// fixIntegerKeys corrects the key pattern of a map with signed integer keys.
+// The reflector places such keys in patternProperties and closes
+// additionalProperties. Go also serializes negative integer keys, and writes
+// a key type with a MarshalText method through that method.
+func fixIntegerKeys(key reflect.Type, s *jsonschema.Schema) {
+	value, ok := s.PatternProperties["^[0-9]+$"]
+	switch key.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+	default:
+		ok = false
+	}
+	if !ok {
+		return
+	}
+	delete(s.PatternProperties, "^[0-9]+$")
+	if key.Implements(textMarshalerType) {
+		s.AdditionalProperties = value
+		return
+	}
+	s.PatternProperties["^-?[0-9]+$"] = value
 }
 
 // fixStructFields applies tags only from the winning JSON field. Hidden

@@ -1,7 +1,10 @@
 package specout
 
 import (
+	"encoding"
+	json "encoding/json/v2"
 	"maps"
+	"net"
 	"reflect"
 	"regexp"
 	"slices"
@@ -78,7 +81,7 @@ func (sr *schemaRegistry) refFor(t reflect.Type) string {
 			if t == reflect.TypeFor[File]() {
 				return binarySchema()
 			}
-			return nil
+			return textSchema(t)
 		},
 		// invopop names hoisted $defs after the bare Go type name, so a
 		// SchemaName override never reached a nested-only type, and two
@@ -105,6 +108,36 @@ func (sr *schemaRegistry) refFor(t reflect.Type) string {
 	}
 
 	return componentRef + e.name
+}
+
+var (
+	textMarshalerType   = reflect.TypeFor[encoding.TextMarshaler]()
+	jsonMarshalerType   = reflect.TypeFor[json.Marshaler]()
+	jsonMarshalerToType = reflect.TypeFor[json.MarshalerTo]()
+	schemaMethodType    = reflect.TypeFor[interface{ JSONSchema() *jsonschema.Schema }]()
+)
+
+// writesText reports whether the JSON encoders write t through its
+// MarshalText method, as a JSON string. A JSON marshaler takes precedence. A
+// JSONSchema method and net.IP keep the reflector's schema.
+func writesText(t reflect.Type) bool {
+	return t.Kind() != reflect.Interface && t.Implements(textMarshalerType) &&
+		!t.Implements(jsonMarshalerType) && !t.Implements(jsonMarshalerToType) &&
+		!t.Implements(schemaMethodType) && t != reflect.TypeFor[net.IP]()
+}
+
+// textSchema is the string schema of a type that writesText reports, or nil
+// for any other type. The reflector reads the Go fields of such a type, such
+// as netip.Addr or a UUID array, not the string on the wire.
+func textSchema(t reflect.Type) *jsonschema.Schema {
+	if !writesText(t) {
+		return nil
+	}
+	s := &jsonschema.Schema{Type: typeString}
+	if extender, ok := reflect.TypeAssert[interface{ JSONSchemaExtend(s *jsonschema.Schema) }](reflect.New(t)); ok {
+		extender.JSONSchemaExtend(s)
+	}
+	return s
 }
 
 // claimName applies the same collision check to root types and nested definitions.

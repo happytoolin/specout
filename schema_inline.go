@@ -67,23 +67,15 @@ func (sr *schemaRegistry) propSchema(t reflect.Type, tag reflect.StructTag) *jso
 			if t == wrap {
 				return nil
 			}
+			if s := textSchema(t); s != nil {
+				inlineRoot = false
+				return s
+			}
 			if inlineRoot {
 				inlineRoot = false
 				return nil
 			}
-			if isBuiltin(t) {
-				return nil
-			}
-			switch t.Kind() {
-			case reflect.Struct, reflect.Map:
-				return &jsonschema.Schema{Ref: sr.refFor(t)}
-			case reflect.Slice, reflect.Array:
-				if recursiveContainer(t) {
-					return &jsonschema.Schema{Ref: sr.refFor(t)}
-				}
-			default:
-			}
-			return nil
+			return sr.nestedRef(t)
 		},
 	}
 	s := r.Reflect(reflect.New(wrap).Interface())
@@ -102,6 +94,25 @@ func (sr *schemaRegistry) propSchema(t reflect.Type, tag reflect.StructTag) *jso
 	sr.applySchemaFixes(t, p)
 	sr.inline = append(sr.inline, p)
 	return p
+}
+
+// nestedRef is the component $ref of a type nested in an inline schema: a
+// struct, a map or a recursive container. It is nil for a type that stays
+// inline.
+func (sr *schemaRegistry) nestedRef(t reflect.Type) *jsonschema.Schema {
+	if isBuiltin(t) {
+		return nil
+	}
+	switch t.Kind() {
+	case reflect.Struct, reflect.Map:
+	case reflect.Slice, reflect.Array:
+		if !recursiveContainer(t) {
+			return nil
+		}
+	default:
+		return nil
+	}
+	return &jsonschema.Schema{Ref: sr.refFor(t)}
 }
 
 // Recursive container chains have no struct boundary to stop inline expansion.

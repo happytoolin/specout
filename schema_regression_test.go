@@ -1,8 +1,11 @@
 package specout_test
 
 import (
+	"errors"
 	"net/http"
+	"net/netip"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -241,6 +244,53 @@ func assertNoEmptySchemaTypes(t *testing.T, v any) {
 			assertNoEmptySchemaTypes(t, child)
 		}
 	}
+}
+
+// schemaTextID has no exported fields: the JSON encoders write it only
+// through MarshalText.
+type schemaTextID struct{ hi, lo uint64 }
+
+func (id schemaTextID) MarshalText() ([]byte, error) {
+	if id == (schemaTextID{}) {
+		return nil, errors.New("empty ID")
+	}
+	return []byte(strconv.FormatUint(id.hi, 16) + "-" + strconv.FormatUint(id.lo, 16)), nil
+}
+
+// schemaTextKey is an integer that the encoders write through MarshalText,
+// also as a map key.
+type schemaTextKey int
+
+func (k schemaTextKey) MarshalText() ([]byte, error) {
+	if k < 0 {
+		return nil, errors.New("negative key")
+	}
+	return []byte("key-" + strconv.Itoa(int(k))), nil
+}
+
+func TestLaunchTextMarshalersAreStrings(t *testing.T) {
+	type response struct {
+		ID   schemaTextID          `json:"id"`
+		Ptr  *schemaTextID         `json:"ptr"`
+		Addr netip.Addr            `json:"addr"`
+		Keys map[schemaTextKey]int `json:"keys"`
+	}
+	d := newGen()
+	specout.Document(d, http.MethodGet, "/x", specout.Get[response]{HandlerFunc: noop})
+	specout.Document(d, http.MethodGet, "/id", specout.Get[schemaTextID]{HandlerFunc: noop})
+	doc := buildDoc(t, d)
+	value := response{ID: schemaTextID{1, 2}, Addr: netip.MustParseAddr("::1"), Keys: map[schemaTextKey]int{5: 1}}
+	exportLaunchSamples(t, doc,
+		launchSample{"text values", launchResponseSchema(t, doc, "/x", "get"), value, true},
+		launchSample{"text root", launchResponseSchema(t, doc, "/id", "get"), schemaTextID{3, 4}, true},
+		launchSample{"object for a text value", launchResponseSchema(t, doc, "/id", "get"), map[string]any{}, false},
+	)
+	p := props(t, doc, "response")
+	assert.Equal(t, "string", p["id"].(map[string]any)["type"])
+	assert.Equal(t, []any{"string", "null"}, p["ptr"].(map[string]any)["type"])
+	assert.Equal(t, "string", p["addr"].(map[string]any)["type"])
+	assert.NotContains(t, p["keys"], "patternProperties", "MarshalText writes the keys, not the integers")
+	assert.Equal(t, "string", componentsSchema(t, doc, "schemaTextID")["type"])
 }
 
 type (
