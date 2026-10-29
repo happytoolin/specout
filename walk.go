@@ -3,6 +3,7 @@ package specout
 import (
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/invopop/jsonschema"
@@ -65,6 +66,29 @@ func remapDefs(s *jsonschema.Schema) {
 	walkSchema(s, func(x *jsonschema.Schema) {
 		if x.Ref != "" {
 			x.Ref = strings.Replace(x.Ref, "#/$defs/", componentRef, 1)
+		}
+	})
+}
+
+// jsonSchemaTypes are the type names that JSON Schema defines.
+var jsonSchemaTypes = map[string]bool{
+	nullType: true, "boolean": true, typeObject: true, "array": true, "number": true, typeString: true, "integer": true,
+}
+
+// checkTypes panics on a type name that JSON Schema does not define. A
+// oneof_type tag outside a union envelope leaves its variant names there, and
+// the document is then invalid.
+func checkTypes(s *jsonschema.Schema) {
+	walkSchema(s, func(x *jsonschema.Schema) {
+		names := []string{x.Type}
+		if types, ok := x.Extras["type"].([]string); ok {
+			names = types
+		}
+		for _, name := range names {
+			if name != "" && !jsonSchemaTypes[name] {
+				panic("specout: schema type " + strconv.Quote(name) + " is not a JSON Schema type; " +
+					"a oneof_type union also needs a Discriminator field")
+			}
 		}
 	})
 }

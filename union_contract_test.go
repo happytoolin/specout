@@ -1,6 +1,7 @@
 package specout_test
 
 import (
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -125,4 +126,48 @@ func TestNestedUnionsUseDistinctBranchNames(t *testing.T) {
 		}
 	}
 	assert.Len(t, refs, 4)
+}
+
+func TestLaunchSingleVariantUnion(t *testing.T) {
+	type envelope struct {
+		Kind string `json:"kind" jsonschema:"enum=email,description=Discriminator"`
+		Data any    `json:"data" jsonschema:"oneof_type=email"`
+	}
+	d := newGen()
+	d.Register[unionEmail]("email")
+	specout.Document(d, http.MethodGet, "/x", specout.Get[envelope]{HandlerFunc: noop})
+	doc := buildDoc(t, d)
+	schema := launchResponseSchema(t, doc, "/x", "get")
+	exportLaunchSamples(t, doc,
+		launchSample{"single variant", schema, envelope{Kind: "email", Data: unionEmail{Address: "ops@example.com"}}, true},
+		launchSample{"wrong single variant payload", schema, map[string]any{"kind": "email", "data": map[string]any{"channel": "#ops"}}, false},
+	)
+	assert.Len(t, schemas(t, doc)["envelope"].(map[string]any)["oneOf"], 1)
+}
+
+func TestUnknownSchemaTypesPanic(t *testing.T) {
+	type noDiscriminator struct {
+		Data any `json:"data" jsonschema:"oneof_type=email|slack"`
+	}
+	type semicolons struct {
+		Kind string `json:"kind" jsonschema:"enum=email|slack,description=Discriminator"`
+		Data any    `json:"data" jsonschema:"oneof_type=email;slack"`
+	}
+	type typeTag struct {
+		Name string `json:"name" jsonschema:"type=text"`
+	}
+	for want, value := range map[string]any{
+		`"email|slack"`: noDiscriminator{},
+		`"email"`:       semicolons{},
+		`"text"`:        typeTag{},
+	} {
+		t.Run(want, func(t *testing.T) {
+			d := newGen()
+			d.Register[unionEmail]("email")
+			d.Register[unionSlack]("slack")
+			specout.Document(d, http.MethodGet, "/x", okGet.WithResponse(specout.Response{Status: http.StatusOK, Type: value}))
+			assert.PanicsWithValue(t, "specout: schema type "+want+" is not a JSON Schema type; "+
+				"a oneof_type union also needs a Discriminator field", func() { _ = d.WriteJSON(io.Discard) })
+		})
+	}
 }

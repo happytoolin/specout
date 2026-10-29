@@ -16,14 +16,22 @@ func (sr *schemaRegistry) normalizeUnions() {
 	// Reflect all reachable variants before choosing generated names. A Go
 	// type used by a later route or variant must keep its component name.
 	sr.reflectAllVariants()
+	sr.eachSchema(func(owner string, s *jsonschema.Schema) { normalizeOneOf(s, sr, owner) })
+	sr.eachSchema(func(_ string, s *jsonschema.Schema) { checkTypes(s) })
+}
+
+// eachSchema calls fn with each schema that the registry holds and the name
+// of its owner: the typed components, then the hoisted definitions, then the
+// inline schemas. It does not visit schemas that fn adds.
+func (sr *schemaRegistry) eachSchema(fn func(owner string, s *jsonschema.Schema)) {
 	for _, e := range sr.order {
-		normalizeOneOf(e.s, sr, e.name)
+		fn(e.name, e.s)
 	}
 	for _, name := range sr.nameOrder {
-		normalizeOneOf(sr.byName[name], sr, name)
+		fn(name, sr.byName[name])
 	}
 	for _, s := range sr.inline {
-		normalizeOneOf(s, sr, "Inline")
+		fn("Inline", s)
 	}
 }
 
@@ -163,9 +171,13 @@ func unionDataProperty(s *jsonschema.Schema) (string, *jsonschema.Schema) {
 	return "", nil
 }
 
+// unionVariantNames reads the variant names of a oneof_type tag. The names
+// are in the type of one oneOf arm, separated by pipes. A union with one
+// variant has one arm, and its type is no JSON Schema type.
 func unionVariantNames(oneOf []*jsonschema.Schema) []string {
-	for _, sub := range oneOf {
-		if sub != nil && strings.Contains(sub.Type, "|") {
+	arms := slices.Collect(nonNullArms(oneOf))
+	for _, sub := range arms {
+		if strings.Contains(sub.Type, "|") || len(arms) == 1 && sub.Type != "" && !jsonSchemaTypes[sub.Type] {
 			var names []string
 			seen := make(map[string]bool)
 			for name := range strings.SplitSeq(sub.Type, "|") {
