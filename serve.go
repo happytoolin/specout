@@ -2,10 +2,12 @@ package specout
 
 import (
 	"encoding/json/jsontext"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 
 	json "encoding/json/v2"
@@ -15,14 +17,16 @@ import (
 
 // ServeHTTP serves the built spec. GET (and HEAD) only; other methods get 405.
 // A failed build gets a 500 that does not name routes or types. The error goes
-// to the standard logger once per failed build; WriteJSON returns it.
+// to the standard logger once per failed build; WriteJSON returns it. A panic
+// in the build counts as a failed build here, and the log gets its stack;
+// WriteJSON panics.
 func (d *Generator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	spec, fresh, err := d.bytes(chiOuter(r))
+	spec, fresh, err := d.bytes(chiOuter(r), true)
 	if err != nil {
 		if fresh {
 			log.Print(err)
@@ -49,7 +53,7 @@ func chiOuter(r *http.Request) routeSource {
 
 // WriteJSON writes the spec to w. Builds and freezes if not already.
 func (d *Generator) WriteJSON(w io.Writer) error {
-	b, _, err := d.bytes(nil)
+	b, _, err := d.bytes(nil, false)
 	if err != nil {
 		return err
 	}
@@ -64,8 +68,10 @@ func (d *Generator) WriteJSON(w io.Writer) error {
 // a broken spec costs one build, not one per request. The bool reports an
 // error from a build that ran in this call. A route added to an adopted router
 // after a failed build is an input change specout cannot see. outer, when not
-// nil, is the chi router that served the spec request.
-func (d *Generator) bytes(outer routeSource) ([]byte, bool, error) {
+// nil, is the chi router that served the spec request. With catch, a panic in
+// the build is kept as its error; without it, a kept panic does not count, so
+// the build runs again and the panic reaches the caller.
+func (d *Generator) bytes(outer routeSource, catch bool) ([]byte, bool, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.specJSON != nil {
@@ -75,16 +81,53 @@ func (d *Generator) bytes(outer routeSource) ([]byte, bool, error) {
 		d.outer = outer
 		d.inputs++
 	}
-	if d.buildErr != nil && d.errAt == d.inputs {
+	if d.buildErr != nil && d.errAt == d.inputs && (catch || !isBuildPanic(d.buildErr)) {
 		return nil, false, d.buildErr
 	}
-	b, err := d.encode()
+	encode := d.encode
+	if catch {
+		encode = d.encodeCaught
+	}
+	b, err := encode()
 	if err != nil {
 		d.buildErr, d.errAt = err, d.inputs
 		return nil, true, err
 	}
 	d.specJSON, d.buildErr = b, nil
 	return b, false, nil
+}
+
+// buildPanicError is a panic in a build that ServeHTTP ran, kept as the build
+// error.
+type buildPanicError struct {
+	value any
+	stack []byte
+}
+
+func (p *buildPanicError) Error() string {
+	return fmt.Sprintf("specout: spec build panicked: %v\n%s", p.value, p.stack)
+}
+
+// isBuildPanic reports whether err is a kept build panic.
+func isBuildPanic(err error) bool {
+	var p *buildPanicError
+	return errors.As(err, &p)
+}
+
+// encodeCaught runs encode and returns a panic in it as a *buildPanicError.
+// Caller holds d.mu.
+func (d *Generator) encodeCaught() ([]byte, error) {
+	var b []byte
+	var err error
+	func() {
+		defer func() {
+			if v := recover(); v != nil {
+				err = &buildPanicError{value: v, stack: debug.Stack()}
+			}
+		}()
+		b, err = d.encode()
+	}()
+	return b, err
 }
 
 // encode builds the spec and encodes it as indented JSON. Caller holds d.mu.

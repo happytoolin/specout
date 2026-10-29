@@ -2,6 +2,7 @@ package specout_test
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -503,6 +504,27 @@ func TestServeKeepsBuildErrorAndHidesIt(t *testing.T) {
 	w := serve()
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Body.String(), "/api/secret")
+}
+
+// A panic in a build that ServeHTTP runs counts as a failed build: each
+// request gets a 500 without the panic text, the log gets it once with its
+// stack, and the build does not run again. WriteJSON still panics.
+func TestServeKeepsBuildPanic(t *testing.T) {
+	const want = "specout: union variant a is not registered"
+	logs := captureLog(t)
+	d := newGen()
+	specout.Document(d, http.MethodPost, "/u", specout.Handler[UnregisteredUnionReq, struct{}]{HandlerFunc: noop})
+	for range 3 {
+		w := httptest.NewRecorder()
+		require.NotPanics(t, func() {
+			d.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/openapi.json", http.NoBody))
+		})
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.NotContains(t, w.Body.String(), "union")
+	}
+	assert.Equal(t, 1, strings.Count(logs.String(), "specout: spec build panicked: "+want), logs.String())
+	assert.Contains(t, logs.String(), "goroutine", "the log names where the build panicked")
+	assert.PanicsWithValue(t, want, func() { _ = d.WriteJSON(io.Discard) })
 }
 
 // uncomparableRoutes is a chi.Routes that Go cannot compare with ==.

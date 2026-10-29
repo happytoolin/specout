@@ -407,7 +407,8 @@ invalid panics there, and the router does not get the route.
 
 If the build fails, `WriteJSON` returns the error. `ServeHTTP` returns `500`
 without the error text, and it writes the error to the standard `log` package
-once.
+once. A panic in the build is a failed build for `ServeHTTP`, and the log also
+gets its stack. `WriteJSON` panics.
 
 ## Check the API docs
 

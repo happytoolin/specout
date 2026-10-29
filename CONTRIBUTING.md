@@ -21,7 +21,8 @@ coverage.
    variants before it assigns names to generated union branches.
 6. A successful build stores the JSON document. That stored document also marks
    the generator as frozen. A failed build keeps its error until a registration
-   or an `Adopt` changes the input, then it can run again.
+   or an `Adopt` changes the input, then it can run again. `ServeHTTP` also
+   keeps a panic in the build as that error; `WriteJSON` lets it through.
 
 ## Where to change code
 

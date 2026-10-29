@@ -386,7 +386,8 @@ func TestDuplicateComponentNamePanics(t *testing.T) {
 	r := chi.NewRouter()
 	specout.Chi(d, r).Get("/a", specout.Handler[struct{}, dupA]{HandlerFunc: noop})
 	specout.Chi(d, r).Get("/b", specout.Handler[struct{}, dupB]{HandlerFunc: noop})
-	require.Panics(t, func() { serveDoc(t, d, r) }, "expected duplicate-name panic")
+	adopt(t, specout.Chi(d, r))
+	require.Panics(t, func() { buildDoc(t, d) }, "expected duplicate-name panic")
 }
 
 // Regression: two distinct types with one name, reached only through a nested
@@ -395,7 +396,8 @@ func TestDuplicateComponentNamePanics(t *testing.T) {
 func TestSameNamedNestedTypesPanic(t *testing.T) {
 	d, r := newGen(), chi.NewRouter()
 	specout.Chi(d, r).Get("/x", specout.Handler[struct{}, nestedDup]{HandlerFunc: noop})
-	require.Panics(t, func() { serveDoc(t, d, r) }, "expected a duplicate-name panic")
+	adopt(t, specout.Chi(d, r))
+	require.Panics(t, func() { buildDoc(t, d) }, "expected a duplicate-name panic")
 }
 
 // SchemaName must reach a type that is only ever nested: both components are
