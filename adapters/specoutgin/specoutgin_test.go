@@ -152,6 +152,7 @@ func TestEscapedColonRecordWhenMiddlewareAnswers(t *testing.T) {
 		{`/v1\:batch`, "/v1:batch"},
 		{`/v1\:batch/:id`, "/v1:batch/7"},
 		{`/items/:id/x\:y`, "/items/7/x:y"},
+		{`/x\:id/:id`, "/x:id/7"},
 	} {
 		t.Run(tc.route, func(t *testing.T) {
 			d, e := adaptertest.Generator(), gin.New()

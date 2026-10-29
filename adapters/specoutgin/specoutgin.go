@@ -13,6 +13,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/gin-gonic/gin"
@@ -58,6 +59,7 @@ func (b *Router) Handle[Req, Res any](method, p string, h specout.Handler[Req, R
 		b.r.Handle(method, p, append(slices.Clip(m), run)...)
 		return documented
 	})
+	remember(method, full, documented)
 	bound.Store(true)
 }
 
@@ -234,18 +236,47 @@ func Record(rec *recorder.Recorder) gin.HandlerFunc {
 }
 
 // ranRoute returns the method and path of the route that c ran, as the
-// document spells them. A specout route names itself. FullPath loses Gin's \:
-// escapes after the first request, so it is the fallback for other routes and
-// for responses that middleware wrote before the handler.
+// document spells them. A specout route names itself. When middleware wrote
+// the response before the handler, Gin's full path names the route instead.
 func ranRoute(c *gin.Context) (string, string, bool) {
 	v, _ := c.Get(observedKey{})
 	if route, ok := v.(observed); ok {
 		return route.method, route.path, true
 	}
 	if full := c.FullPath(); full != "" {
-		return c.Request.Method, tablePath(escapeLiteralColons(full, c.Params)), true
+		return c.Request.Method, documentedPath(c.Request.Method, full), true
 	}
 	return "", "", false
+}
+
+// routeKey is the method and Gin path of a route.
+type routeKey struct{ method, path string }
+
+// documentedPaths holds the documented path of each specout route, under
+// its routeKey, for the life of the process. Gin drops the \: escapes from
+// c.FullPath after the first request, so a route is stored under both
+// spellings. A spelling that two routes on two engines share maps to "".
+var documentedPaths sync.Map
+
+// remember stores documented, the documented path of the specout route at
+// Gin path full.
+func remember(method, full, documented string) {
+	for _, p := range []string{full, strings.ReplaceAll(full, `\:`, ":")} {
+		key := routeKey{method, p}
+		if v, loaded := documentedPaths.LoadOrStore(key, documented); loaded && v != documented {
+			documentedPaths.Store(key, "")
+		}
+	}
+}
+
+// documentedPath returns the documented path of the route at Gin path full.
+// A route that no Router registered keeps Gin's spelling, translated.
+func documentedPath(method, full string) string {
+	v, _ := documentedPaths.Load(routeKey{method, full})
+	if p, ok := v.(string); ok && p != "" {
+		return p
+	}
+	return tablePath(full)
 }
 
 // hijackWatch notes a Hijack of the connection, and whether Gin had written a
@@ -264,36 +295,6 @@ func (w *hijackWatch) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 
 // Unwrap returns Gin's writer, for http.ResponseController.
 func (w *hijackWatch) Unwrap() http.ResponseWriter { return w.ResponseWriter }
-
-// escapeLiteralColons puts back the \: escapes that Gin drops from a matched
-// route's full path after the first request. A colon starts a parameter only
-// when the request has that parameter next in order, so any other colon is
-// a literal. A literal colon followed by the name of the next parameter reads
-// as that parameter.
-func escapeLiteralColons(full string, params gin.Params) string {
-	var b strings.Builder
-	next := 0
-	for i := 0; i < len(full); i++ {
-		switch full[i] {
-		case '\\':
-			// an escape Gin kept, for a route added after the first request
-			b.WriteByte(full[i])
-			i++
-		case '*':
-			next++
-		case ':':
-			if next < len(params) && params[next].Key == full[i+1:segmentEnd(full, i+1)] {
-				next++
-			} else {
-				b.WriteByte('\\')
-			}
-		}
-		if i < len(full) {
-			b.WriteByte(full[i])
-		}
-	}
-	return b.String()
-}
 
 // segmentEnd returns the index of the first slash at or after i, or len(p).
 func segmentEnd(p string, i int) int {
