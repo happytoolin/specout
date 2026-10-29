@@ -54,9 +54,14 @@ scans.
 
 `just lint` runs golangci-lint with every linter enabled. The config lists each
 disabled linter or rule with its reason; a `nolint` comment must name the
-linter and give a reason. `just nilaway` runs [NilAway](https://github.com/uber-go/nilaway)
-on library and example code, and fails on any nil flow that can panic. Fix the
-code so the flow is guarded. NilAway has no suppression comment. It skips test
+linter and give a reason. Library code has firm size limits: cyclomatic
+complexity 10, cognitive complexity 15, 50 lines or 35 statements per function,
+three levels of control nesting, and five arguments. When a function goes over
+a limit, split it into named steps. Do not raise the limit.
+
+`just nilaway` runs [NilAway](https://github.com/uber-go/nilaway) on library
+and example code, and fails on any nil flow that can panic. Fix the code so the
+flow is guarded. NilAway has no suppression comment. It skips test
 files, because it cannot see that a testify `require` call stops the test.
 
 Keep regression tests when simplifying code. Check the emitted document as well
