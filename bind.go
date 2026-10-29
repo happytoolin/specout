@@ -2,6 +2,7 @@ package specout
 
 import (
 	"cmp"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,7 +16,8 @@ import (
 //
 // Bind checks the method and the freeze before mount runs, and records h only
 // after mount returns, so a router that panics on a bad pattern leaves no
-// record. A second route with the same method and path panics. mount runs
+// record. Such a panic is raised again with the method and pattern in
+// front. A second route with the same method and path panics. mount runs
 // while d is locked, so it must not call d. The route's identity is its method
 // and returned path; CheckRoutes compares a live route table against it.
 func Bind[Req, Res any](d *Generator, method, pattern string, h Handler[Req, Res], mount func(http.Handler) string) {
@@ -27,7 +29,7 @@ func Bind[Req, Res any](d *Generator, method, pattern string, h Handler[Req, Res
 	rec.method, rec.pattern = method, pattern
 	rec.absolute, rec.literalStars, rec.byPath = true, true, true
 	d.addRoute(rec, func(rec *routeRecord) {
-		rec.full = mount(rec)
+		rec.full = mountRoute(method, pattern, mount, rec)
 		if err := cmp.Or(checkOpenAPIPath(rec.full), checkSegments(rec.full)); err != "" {
 			panic("specout: " + method + " " + pattern + " mounted at " + rec.full + ": " + err)
 		}
@@ -42,6 +44,34 @@ func Bind[Req, Res any](d *Generator, method, pattern string, h Handler[Req, Res
 			}
 		}
 	})
+}
+
+// mountRoute runs mount and returns the path it reports. A panic from the
+// router, such as Gin's on /a*b, panics again with the route named. An error
+// stays reachable through errors.Is and errors.As. A message that already
+// names a specout package passes through as it is.
+func mountRoute(method, pattern string, mount func(http.Handler) string, h http.Handler) string {
+	defer func() {
+		if v := recover(); v != nil {
+			panic(routePanic(method+" "+pattern, v))
+		}
+	}()
+	return mount(h)
+}
+
+// routePanic adds the route to the panic value v.
+func routePanic(route string, v any) any {
+	switch v := v.(type) {
+	case error:
+		return fmt.Errorf("specout: %s: %w", route, v)
+	case string:
+		if strings.HasPrefix(v, "specout") {
+			return v
+		}
+		return "specout: " + route + ": " + v
+	default:
+		return fmt.Sprintf("specout: %s: %v", route, v)
+	}
 }
 
 // CheckRoutes reports the routes of a live router table that specout cannot

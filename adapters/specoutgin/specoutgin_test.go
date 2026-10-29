@@ -192,7 +192,8 @@ func TestRegistrationPanicLeavesNoRecord(t *testing.T) {
 	}{
 		{"literal braces", "specoutgin: GET /a/{b}: literal braces", func(r *specoutgin.Router) { r.Get("/a/{b}", okRoute) }},
 		{"bad escape", `specoutgin: GET /a\b: gin escapes only a colon`, func(r *specoutgin.Router) { r.Get(`/a\b`, okRoute) }},
-		{"duplicate", "handlers are already registered for path '/ok'", func(r *specoutgin.Router) { r.Get("/ok", okRoute) }},
+		{"duplicate", "specout: GET /ok: handlers are already registered for path '/ok'", func(r *specoutgin.Router) { r.Get("/ok", okRoute) }},
+		{"gin rejects", "specout: GET /a*b: ", func(r *specoutgin.Router) { r.Get("/a*b", okRoute) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			d, e := adaptertest.Generator(), gin.New()

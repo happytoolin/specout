@@ -1,6 +1,7 @@
 package specout_test
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"net/http"
@@ -348,6 +349,34 @@ func TestBindRecordsOnlyAfterTheRouterAccepts(t *testing.T) {
 		specout.Bind(d, http.MethodGet, "/late", okGet, func(http.Handler) string { called = true; return "/late" })
 	})
 	assert.False(t, called, "a frozen generator must not touch the router")
+}
+
+// A router panic names no route, so Bind raises it again with the method and
+// pattern in front. An error stays reachable, and a panic from a specout
+// adapter, which names the route itself, passes through as it is.
+func TestBindNamesTheRouteInRouterPanics(t *testing.T) {
+	errRouter := errors.New("router said no")
+	for name, tc := range map[string]struct {
+		value any
+		want  string
+	}{
+		"string":  {"wildcards must be named", "specout: GET /a*b: wildcards must be named"},
+		"error":   {errRouter, "specout: GET /a*b: router said no"},
+		"other":   {42, "specout: GET /a*b: 42"},
+		"adapter": {"specoutgin: GET /a*b: bad", "specoutgin: GET /a*b: bad"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := newGen()
+			v := panicValue(func() {
+				specout.Bind(d, http.MethodGet, "/a*b", okGet, func(http.Handler) string { panic(tc.value) })
+			})
+			assert.Equal(t, tc.want, fmt.Sprint(v))
+			if err, ok := tc.value.(error); ok {
+				require.ErrorIs(t, v.(error), err)
+			}
+			assert.Empty(t, docPaths(t, d), "the panicked route left a record")
+		})
+	}
 }
 
 func TestBindRejectsADuplicateRoute(t *testing.T) {
