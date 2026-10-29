@@ -33,6 +33,7 @@ func (g *GorillaRouter) register(method, pattern string, rec routeRecord) {
 	rec.method, rec.pattern = method, pattern
 	rec.absolute = true
 	rec.literalStars = true
+	rec.fn = withVars(rec.fn)
 	g.d.addRoute(rec, func(rec *routeRecord) {
 		// gorilla keeps a route with a bad template and never matches it, so
 		// fail with gorilla's reason rather than document a dead path.
@@ -49,6 +50,21 @@ func (g *GorillaRouter) register(method, pattern string, rec routeRecord) {
 		rec.full = tpl
 		rec.catchAll = spansSegments(tpl)
 	})
+}
+
+// withVars copies gorilla's route variables into r.PathValue before fn runs,
+// so a handler reads its path parameters as on every other router. gorilla
+// keeps them in mux.Vars only.
+func withVars(fn http.HandlerFunc) http.HandlerFunc {
+	if fn == nil {
+		return nil
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		for name, value := range mux.Vars(r) {
+			r.SetPathValue(name, value)
+		}
+		fn(w, r)
+	}
 }
 
 // Get registers a GET route on p.

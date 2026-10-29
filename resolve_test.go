@@ -132,6 +132,22 @@ func TestGorillaAdapter(t *testing.T) {
 }
 
 // Gorilla Adopt: a plain gorilla route is a stray; a skip suppresses it.
+// gorilla keeps route variables in mux.Vars only. The binder copies them into
+// r.PathValue, so a handler reads them as on every other router.
+func TestGorillaHandlerSeesPathValues(t *testing.T) {
+	r := gmux.NewRouter()
+	var id, name string
+	specout.Gorilla(newGen(), r).Get("/items/{id:[0-9]+}/{name}", noBody{
+		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
+			id, name = r.PathValue("id"), r.PathValue("name")
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/items/42/a%40b", nil))
+	assert.Equal(t, "42", id)
+	assert.Equal(t, "a@b", name)
+}
+
 func TestGorillaAdoptStrayAndSkip(t *testing.T) {
 	d, g := newGen(), gmux.NewRouter()
 	specout.Gorilla(d, g).Get("/ok", okGet)
