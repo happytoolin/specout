@@ -116,7 +116,7 @@ func FuzzLaunchResponsePlanParity(f *testing.F) {
 		if omitDefault && (code != http.StatusOK || ranged) {
 			handler = handler.WithResponse(specout.Response{Status: http.StatusOK, Omit: true})
 		}
-		specout.Document(d, http.MethodGet, "/x", handler)
+		d.Document(http.MethodGet, "/x", handler)
 		doc := buildDoc(t, d)
 		want := map[int]bool{}
 		for key := range opOf(t, doc, "/x", "get")["responses"].(map[string]any) {

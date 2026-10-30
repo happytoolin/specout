@@ -6,9 +6,6 @@ import (
 	"strings"
 )
 
-// typeHTTPBearer is the AuthScheme.Type of http with the bearer scheme.
-const typeHTTPBearer = "httpBearer"
-
 // securitySchemeObj builds the named scheme entry from the doc-only
 // AuthScheme declaration. A typo in Type, Key, In or URL would emit a
 // securityScheme object the OpenAPI validator rejects (type must be one of
@@ -17,7 +14,7 @@ const typeHTTPBearer = "httpBearer"
 func securitySchemeObj(a AuthScheme) *obj {
 	// the name is a securitySchemes key: the same rule as a component name
 	if a.Name == "" || componentChars.MatchString(a.Name) {
-		panic("specout: AuthScheme.Name " + strconv.Quote(a.Name) +
+		panic("specout: Config.Auth: scheme name " + strconv.Quote(a.Name) +
 			" must contain only ASCII letters, digits, dots, hyphens or underscores")
 	}
 	return schemeOfType(a).setIf("description", a.Description)
@@ -26,53 +23,58 @@ func securitySchemeObj(a AuthScheme) *obj {
 // schemeOfType builds the fields that a scheme's Type selects.
 func schemeOfType(a AuthScheme) *obj {
 	switch a.Type {
-	case typeHTTPBearer, "http":
+	case authHTTP:
 		return httpScheme(a)
-	case "mutualTLS":
-		return newObj().set("type", "mutualTLS")
-	case "apiKey":
+	case authMutualTLS:
+		return newObj().set("type", authMutualTLS)
+	case authAPIKey:
 		return apiKeyScheme(a)
-	case "oauth2":
+	case authOAuth2:
 		if len(a.Flows) == 0 {
-			panic("specout: AuthScheme " + a.Name + " is oauth2 but has no Flows")
+			panic("specout: " + authWhere(a) + ": oauth2 needs Flows")
 		}
-		return newObj().set("type", "oauth2").set("flows", oauth2Flows(a))
-	case "openIdConnect":
+		return newObj().set("type", authOAuth2).set("flows", oauth2Flows(a))
+	case authOpenIDConnect:
 		if a.URL == "" {
-			panic("specout: AuthScheme " + a.Name + " is openIdConnect but has no URL")
+			panic("specout: " + authWhere(a) + ": openIdConnect needs a URL, the discovery document")
 		}
-		return newObj().set("type", "openIdConnect").set("openIdConnectUrl", a.URL)
+		return newObj().set("type", authOpenIDConnect).set("openIdConnectUrl", a.URL)
 	default:
-		panic("specout: AuthScheme " + a.Name + " has type " + a.Type +
-			", must be httpBearer, http, apiKey, oauth2, openIdConnect or mutualTLS")
+		types := []string{authHTTP, authAPIKey, authOAuth2, authOpenIDConnect, authMutualTLS}
+		panic("specout: " + authWhere(a) + ": Type " + strconv.Quote(a.Type) + " is not valid; use " +
+			strings.Join(types, ", ") + didYouMean(a.Type, types))
 	}
 }
 
-// httpScheme builds an http scheme. httpBearer is http with the bearer scheme.
+// authWhere names a scheme in a message.
+func authWhere(a AuthScheme) string { return "Config.Auth " + strconv.Quote(a.Name) }
+
+// httpScheme builds an http scheme.
 func httpScheme(a AuthScheme) *obj {
-	scheme := a.Scheme
-	if a.Type == typeHTTPBearer {
-		scheme = "bearer"
+	if a.Scheme == "" {
+		panic("specout: " + authWhere(a) + `: http needs a Scheme, such as "bearer" or "basic"`)
 	}
-	if scheme == "" {
-		panic("specout: AuthScheme " + a.Name + " is http but has no Scheme")
+	if a.BearerFormat != "" && !strings.EqualFold(a.Scheme, "bearer") {
+		panic("specout: " + authWhere(a) + ": BearerFormat needs the scheme \"bearer\", but the scheme is " +
+			strconv.Quote(a.Scheme))
 	}
-	if a.BearerFormat != "" && !strings.EqualFold(scheme, "bearer") {
-		panic("specout: AuthScheme " + a.Name + " sets BearerFormat, but its scheme is " + scheme)
-	}
-	return newObj().set("type", "http").set("scheme", scheme).setIf("bearerFormat", a.BearerFormat)
+	return newObj().set("type", authHTTP).set("scheme", a.Scheme).setIf("bearerFormat", a.BearerFormat)
 }
 
 // checkSecurity panics when a route's Security names a scheme that Config.Auth
 // does not declare, or when a Public route also sets it.
 func (d *Generator) checkSecurity(rec *routeRecord) {
 	if rec.public && len(rec.security) > 0 {
-		panic("specout: " + rec.method + " " + rec.pattern + " sets both Public and Security; set one")
+		panic("specout: " + rec.label() + ": sets both Public and Security; set one")
+	}
+	names := make([]string, 0, len(d.cfg.Auth))
+	for _, a := range d.cfg.Auth {
+		names = append(names, a.Name)
 	}
 	for _, sec := range rec.security {
-		if !slices.ContainsFunc(d.cfg.Auth, func(a AuthScheme) bool { return a.Name == sec.Scheme }) {
-			panic("specout: " + rec.method + " " + rec.pattern + " names security scheme " +
-				strconv.Quote(sec.Scheme) + ", which Config.Auth does not declare")
+		if !slices.Contains(names, sec.Scheme) {
+			panic("specout: " + rec.label() + ": Security names scheme " + strconv.Quote(sec.Scheme) +
+				", but Config.Auth does not declare it" + didYouMean(sec.Scheme, names))
 		}
 	}
 }
@@ -97,14 +99,14 @@ func (d *Generator) routeSecurity(rec *routeRecord) []any {
 // location that OpenAPI allows.
 func apiKeyScheme(a AuthScheme) *obj {
 	if a.Key == "" {
-		panic("specout: AuthScheme " + a.Name + " is apiKey but has no Key (the parameter name)")
+		panic("specout: " + authWhere(a) + ": apiKey needs a Key, the parameter name")
 	}
 	switch a.In {
 	case InHeader, InQuery, InCookie:
 	default:
-		panic("specout: AuthScheme " + a.Name + " has in=" + a.In + ", must be header, query or cookie")
+		panic("specout: " + authWhere(a) + ": In " + strconv.Quote(a.In) + " is not valid; use header, query or cookie")
 	}
-	return newObj().set("type", "apiKey").set("name", a.Key).set("in", a.In)
+	return newObj().set("type", authAPIKey).set("name", a.Key).set("in", a.In)
 }
 
 // oauth2Flows emits an oauth2 scheme's flows object. Flow and scope names are
@@ -128,8 +130,9 @@ func oauth2Flows(a AuthScheme) *obj {
 			requireURL(a, name, "TokenURL", f.TokenURL)
 			fo.set("authorizationUrl", f.AuthorizationURL).set("tokenUrl", f.TokenURL)
 		default:
-			panic("specout: AuthScheme " + a.Name + " has flow " + name +
-				", must be implicit, password, clientCredentials or authorizationCode")
+			names := []string{"implicit", "password", "clientCredentials", "authorizationCode"}
+			panic("specout: " + authWhere(a) + ": flow " + strconv.Quote(name) + " is not valid; use " +
+				strings.Join(names, ", ") + didYouMean(name, names))
 		}
 		if f.RefreshURL != "" {
 			fo.set("refreshUrl", f.RefreshURL)
@@ -145,6 +148,6 @@ func oauth2Flows(a AuthScheme) *obj {
 
 func requireURL(a AuthScheme, flow, field, url string) {
 	if url == "" {
-		panic("specout: AuthScheme " + a.Name + " flow " + flow + " has no " + field)
+		panic("specout: " + authWhere(a) + ": flow " + strconv.Quote(flow) + " needs " + field)
 	}
 }

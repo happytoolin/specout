@@ -2,7 +2,6 @@ package specout
 
 import (
 	"net/http"
-	"reflect"
 	"slices"
 )
 
@@ -20,42 +19,50 @@ type Handler[Req, Res any] struct {
 	Description string
 	// ExternalDocs links this operation to outside documentation.
 	ExternalDocs *ExternalDocs
-	// RequestContentTypes overrides the request body media types
-	// (application/x-www-form-urlencoded, application/xml, ...). The schema
-	// comes from Req; form media types use its form field names, while other
-	// media types use its JSON field names. A Req with no body panics.
-	RequestContentTypes []string
-	// RequestDescription describes the request body.
-	RequestDescription string
-	// RequestOptional marks the request body as optional. It is required by
-	// default.
-	RequestOptional bool
-	// RequestExample is one example of the request body. Use RequestExamples
-	// for several named examples. Set one of them.
-	RequestExample  any
-	RequestExamples map[string]Example
+	// Request describes the request body. Req gives its schema.
+	Request Request
 	// Security replaces the document's auth requirement for this operation.
 	// Each entry names a scheme from Config.Auth, and any one of them
 	// satisfies the requirement.
 	Security []Security
-	// Raw splices arbitrary keys into this operation object: x- extensions,
-	// or any other OpenAPI operation field specout does not model.
+	// Servers replaces the document's servers for this operation.
+	Servers []Server
+	// Callbacks documents the requests that your API sends back because of this
+	// operation. Make each one with NewCallback.
+	Callbacks []Callback
+	// Raw splices keys into this operation object: x- extensions, or a whole
+	// field that replaces what specout writes, such as responses. A field with
+	// a typed form, such as callbacks, panics.
 	Raw        map[string]any
 	Deprecated bool
 	Public     bool // exclude this operation from the global auth requirement
 }
 
+// Request describes the request body of an operation, as Response describes a
+// response. A Req with no body panics when any field is set.
+type Request struct {
+	// ContentTypes replaces the media types of the body, such as
+	// "application/x-www-form-urlencoded". Form media types use the form field
+	// names of Req, and other media types use its JSON field names.
+	ContentTypes []string
+	Description  string
+	// Optional marks the body as optional. It is required by default.
+	Optional bool
+	// Example is one example of the body. Use Examples for several named
+	// examples. Set one of them.
+	Example  any
+	Examples map[string]Example
+	// Encoding describes fields of a form or multipart body, by field name. The
+	// body must be a form, and each name must be one of its fields.
+	Encoding map[string]Encoding
+}
+
 // Security names one scheme of Config.Auth that an operation accepts. Scopes
-// lists the OAuth 2.0 scopes or the roles that the operation needs.
+// lists the OAuth 2.0 scopes or the roles that the operation needs. Make one
+// with AuthScheme.Require.
 type Security struct {
 	Scheme string
 	Scopes []string
-}
-
-// Types reifies the type parameters, making them visible to reflection at
-// registration time. It is the reification point; no AST analysis, ever.
-func (Handler[Req, Res]) Types() (reflect.Type, reflect.Type) {
-	return reflect.TypeFor[Req](), reflect.TypeFor[Res]()
 }
 
 // With* methods are the fluent form of the metadata fields: each returns a
@@ -98,33 +105,21 @@ func (h Handler[Req, Res]) WithResponses(rs ...Response) Handler[Req, Res] {
 	return h
 }
 
-// WithRequestContentTypes appends request body media types.
-func (h Handler[Req, Res]) WithRequestContentTypes(cts ...string) Handler[Req, Res] {
-	h.RequestContentTypes = append(slices.Clone(h.RequestContentTypes), cts...)
+// WithRequest describes the request body.
+func (h Handler[Req, Res]) WithRequest(request Request) Handler[Req, Res] {
+	h.Request = request
 	return h
 }
 
-// WithRequestDescription describes the request body.
-func (h Handler[Req, Res]) WithRequestDescription(desc string) Handler[Req, Res] {
-	h.RequestDescription = desc
+// WithServers appends servers that replace the document's for this operation.
+func (h Handler[Req, Res]) WithServers(servers ...Server) Handler[Req, Res] {
+	h.Servers = append(slices.Clone(h.Servers), servers...)
 	return h
 }
 
-// WithRequestOptional marks the request body as optional.
-func (h Handler[Req, Res]) WithRequestOptional() Handler[Req, Res] {
-	h.RequestOptional = true
-	return h
-}
-
-// WithRequestExample sets one example of the request body.
-func (h Handler[Req, Res]) WithRequestExample(example any) Handler[Req, Res] {
-	h.RequestExample = example
-	return h
-}
-
-// WithRequestExamples sets named examples of the request body.
-func (h Handler[Req, Res]) WithRequestExamples(examples map[string]Example) Handler[Req, Res] {
-	h.RequestExamples = examples
+// WithCallbacks appends requests that your API sends because of this operation.
+func (h Handler[Req, Res]) WithCallbacks(callbacks ...Callback) Handler[Req, Res] {
+	h.Callbacks = append(slices.Clone(h.Callbacks), callbacks...)
 	return h
 }
 

@@ -68,6 +68,13 @@ and example code, and fails on any nil flow that can panic. Fix the code so the
 flow is guarded. NilAway has no suppression comment. It skips test
 files, because it cannot see that a testify `require` call stops the test.
 
+Each panic and error has one form: `specout: <where>: <problem>; <fix>`. Put the
+place first: a route such as `POST /jobs: response 200`, or a Go name such as
+`Config.Auth`. Quote the values that the user wrote. Give the fix when specout
+knows it, and use `didYouMean` when the value can be a typo. A check that cannot
+run at registration goes in the build, and the build returns every problem with
+`errors.Join`.
+
 `skills/specout/references/openapi-coverage.md` lists every field of the
 official OpenAPI 3.1 schema in `testdata/openapi-3.1-schema.json`.
 `TestOpenAPICoverage` fails when the table and the code disagree, so update the

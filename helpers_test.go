@@ -110,7 +110,7 @@ func serveDoc(t *testing.T, d *specout.Generator, r chi.Router) map[string]any {
 func docOf[Req, Res any](t *testing.T, method, pattern string, h specout.Handler[Req, Res]) map[string]any {
 	t.Helper()
 	d := newGen()
-	specout.Document(d, method, pattern, h)
+	d.Document(method, pattern, h)
 	return buildDoc(t, d)
 }
 

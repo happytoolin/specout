@@ -3,13 +3,12 @@
 This table lists every field of the
 [official OpenAPI 3.1 schema](https://spec.openapis.org/oas/3.1/schema/2025-09-15),
 grouped by the schema's own object names. `TestOpenAPICoverage` fails when a
-field is missing here, or when a field marked `Yes` or `Raw` does not appear in
-its test document.
+field is missing here, or when a field marked `Yes` does not appear in its test
+document.
 
 | Status | Meaning |
 |---|---|
 | `Yes` | specout has a typed field or generates the value. |
-| `Raw` | Write the JSON yourself with the nearest `Raw` field. |
 | `In place` | specout writes the object where it is used, so it needs no reusable entry. |
 | `No` | specout cannot write this field today. |
 
@@ -22,10 +21,10 @@ The `schema` object is JSON Schema 2020-12. specout builds it from Go types and
 |---|---|---|
 | `openapi` | Yes | Always `3.1.0`. |
 | `info` | Yes | `Config`. |
-| `jsonSchemaDialect` | Raw | `Config.Raw`. |
+| `jsonSchemaDialect` | Yes | `Config.JSONSchemaDialect`. |
 | `servers` | Yes | `Config.Servers`. |
 | `paths` | Yes | Route registration. |
-| `webhooks` | Raw | `Config.Raw`. |
+| `webhooks` | Yes | `Generator.Webhook`. |
 | `components` | Yes | Generated. |
 | `security` | Yes | `Config.Auth`. |
 | `tags` | Yes | `Config.Tags`. |
@@ -97,7 +96,7 @@ The `schema` object is JSON Schema 2020-12. specout builds it from Go types and
 | `$ref` | No | |
 | `summary` | No | Use `Handler.Summary` on each operation. |
 | `description` | No | Use `Handler.Description` on each operation. |
-| `servers` | No | Use `Handler.Raw` with `servers` on each operation. |
+| `servers` | No | Use `Handler.Servers` on each operation. |
 | `parameters` | In place | Written on each operation. |
 | `get` | Yes | Route registration. |
 | `put` | Yes | Route registration. |
@@ -120,10 +119,10 @@ The `schema` object is JSON Schema 2020-12. specout builds it from Go types and
 | `parameters` | Yes | The `Req` type. |
 | `requestBody` | Yes | The `Req` type. |
 | `responses` | Yes | The `Res` type and `Handler.Responses`. |
-| `callbacks` | Raw | `Handler.Raw`. |
+| `callbacks` | Yes | `Handler.Callbacks` and `NewCallback`. |
 | `deprecated` | Yes | `Handler.Deprecated`. |
 | `security` | Yes | `Handler.Security` or `Handler.Public`. |
-| `servers` | Raw | `Handler.Raw`. |
+| `servers` | Yes | `Handler.Servers`. |
 
 ## external-documentation
 
@@ -152,26 +151,26 @@ The `schema` object is JSON Schema 2020-12. specout builds it from Go types and
 
 | Field | Status | How |
 |---|---|---|
-| `description` | Yes | `Handler.RequestDescription`. |
-| `content` | Yes | The `Req` type and `Handler.RequestContentTypes`. |
-| `required` | Yes | Required unless `Handler.RequestOptional` is set. |
+| `description` | Yes | `Request.Description`. |
+| `content` | Yes | The `Req` type and `Request.ContentTypes`. |
+| `required` | Yes | Required unless `Request.Optional` is set. |
 
 ## media-type
 
 | Field | Status | How |
 |---|---|---|
 | `schema` | Yes | Generated from Go types. |
-| `encoding` | Raw | `Handler.Raw` with the whole `requestBody`. |
+| `encoding` | Yes | `Request.Encoding`. |
 
 ## encoding
 
 | Field | Status | How |
 |---|---|---|
-| `contentType` | Raw | `Handler.Raw` with the whole `requestBody`. |
-| `headers` | Raw | `Handler.Raw` with the whole `requestBody`. |
-| `style` | Raw | `Handler.Raw` with the whole `requestBody`. |
-| `explode` | Raw | `Handler.Raw` with the whole `requestBody`. |
-| `allowReserved` | Raw | `Handler.Raw` with the whole `requestBody`. |
+| `contentType` | Yes | `Encoding.ContentType`. |
+| `headers` | Yes | `Encoding.Headers`. |
+| `style` | Yes | `Encoding.Style`. |
+| `explode` | Yes | `Encoding.Explode`. |
+| `allowReserved` | Yes | `Encoding.AllowReserved`. |
 
 ## responses
 
@@ -185,8 +184,8 @@ The `schema` object is JSON Schema 2020-12. specout builds it from Go types and
 |---|---|---|
 | `description` | Yes | `Response.Description`, or the status text. |
 | `headers` | Yes | `Response.Headers`. |
-| `content` | Yes | `Response.Type`, `ContentType`, or `ContentTypes`. |
-| `links` | Raw | `Response.Raw`. |
+| `content` | Yes | `Response.Type` and `ContentTypes`. |
+| `links` | Yes | `Response.Links`. |
 
 ## example
 
@@ -201,19 +200,19 @@ The `schema` object is JSON Schema 2020-12. specout builds it from Go types and
 
 | Field | Status | How |
 |---|---|---|
-| `example` | Yes | `Response.Example` or `Handler.RequestExample`. |
-| `examples` | Yes | `Response.Examples` or `Handler.RequestExamples`. |
+| `example` | Yes | `Response.Example` or `Request.Example`. |
+| `examples` | Yes | `Response.Examples` or `Request.Examples`. |
 
 ## link
 
 | Field | Status | How |
 |---|---|---|
-| `operationRef` | Raw | `Response.Raw`. |
-| `operationId` | Raw | `Response.Raw`. |
-| `parameters` | Raw | `Response.Raw`. |
-| `requestBody` | Raw | `Response.Raw`. |
-| `description` | Raw | `Response.Raw`. |
-| `server` | Raw | `Response.Raw`. |
+| `operationRef` | Yes | `Link.OperationRef`. |
+| `operationId` | Yes | `Link.OperationID`. |
+| `parameters` | Yes | `Link.Parameters`. |
+| `requestBody` | Yes | `Link.RequestBody`. |
+| `description` | Yes | `Link.Description`. |
+| `server` | Yes | `Link.Server`. |
 
 ## header
 

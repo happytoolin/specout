@@ -51,7 +51,7 @@ func TestUnionBranchesPreserveEnvelopeFieldsAndFixups(t *testing.T) {
 	d := newGen()
 	d.Register[unionEmail]("email")
 	d.Register[unionSlack]("slack")
-	specout.Document(d, http.MethodPost, "/union", specout.Handler[unionEnvelope, specout.NoContent]{HandlerFunc: noop})
+	d.Document(http.MethodPost, "/union", specout.Handler[unionEnvelope, specout.NoContent]{HandlerFunc: noop})
 	doc := buildDoc(t, d)
 	components := schemas(t, doc)
 	root := components["unionEnvelope"].(map[string]any)
@@ -76,7 +76,7 @@ func closedUnionSchemas[Req any](t *testing.T, path string) map[string]any {
 	d := specout.New(specout.Config{Title: "t", Version: "1", ClosedSchemas: true})
 	d.Register[unionEmail]("email")
 	d.Register[unionSlack]("slack")
-	specout.Document(d, http.MethodPost, path, specout.Handler[Req, specout.NoContent]{HandlerFunc: noop})
+	d.Document(http.MethodPost, path, specout.Handler[Req, specout.NoContent]{HandlerFunc: noop})
 	return schemas(t, buildDoc(t, d))
 }
 
@@ -113,7 +113,7 @@ func TestNestedUnionsUseDistinctBranchNames(t *testing.T) {
 	d := newGen()
 	d.Register[unionEmail]("email")
 	d.Register[unionSlack]("slack")
-	specout.Document(d, http.MethodPost, "/nested-union", specout.Handler[unionNestedHolder, specout.NoContent]{HandlerFunc: noop})
+	d.Document(http.MethodPost, "/nested-union", specout.Handler[unionNestedHolder, specout.NoContent]{HandlerFunc: noop})
 	doc := buildDoc(t, d)
 	root := schemas(t, doc)["unionNestedHolder"].(map[string]any)
 	properties := root["properties"].(map[string]any)
@@ -137,11 +137,11 @@ func TestUnionUsedAsRootAndFieldHasOneSetOfBranches(t *testing.T) {
 		root := specout.Get[unionEnvelope]{HandlerFunc: noop}
 		holder := specout.Get[unionNamedHolder]{HandlerFunc: noop}
 		if rootFirst {
-			specout.Document(d, http.MethodGet, "/union", root)
+			d.Document(http.MethodGet, "/union", root)
 		}
-		specout.Document(d, http.MethodGet, "/holder", holder)
+		d.Document(http.MethodGet, "/holder", holder)
 		if !rootFirst {
-			specout.Document(d, http.MethodGet, "/union", root)
+			d.Document(http.MethodGet, "/union", root)
 		}
 		var branches []string
 		for name := range schemas(t, buildDoc(t, d)) {
@@ -160,7 +160,7 @@ func TestLaunchSingleVariantUnion(t *testing.T) {
 	}
 	d := newGen()
 	d.Register[unionEmail]("email")
-	specout.Document(d, http.MethodGet, "/x", specout.Get[envelope]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/x", specout.Get[envelope]{HandlerFunc: noop})
 	doc := buildDoc(t, d)
 	schema := launchResponseSchema(t, doc, "/x", "get")
 	exportLaunchSamples(t, doc,
@@ -182,8 +182,8 @@ func TestLaunchUnionPayloadKeepsItsOptionality(t *testing.T) {
 	d := newGen()
 	d.Register[unionEmail]("email")
 	d.Register[unionSlack]("slack")
-	specout.Document(d, http.MethodGet, "/optional", specout.Get[optional]{HandlerFunc: noop})
-	specout.Document(d, http.MethodGet, "/nullable", specout.Get[nullable]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/optional", specout.Get[optional]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/nullable", specout.Get[nullable]{HandlerFunc: noop})
 	doc := buildDoc(t, d)
 	var email any = unionEmail{Address: "ops@example.com"}
 	optionalSchema := launchResponseSchema(t, doc, "/optional", "get")
@@ -232,7 +232,7 @@ func TestUnknownSchemaTypesPanic(t *testing.T) {
 			d := newGen()
 			d.Register[unionEmail]("email")
 			d.Register[unionSlack]("slack")
-			specout.Document(d, http.MethodGet, "/x", okGet.WithResponse(specout.Response{Status: http.StatusOK, Type: value}))
+			d.Document(http.MethodGet, "/x", okGet.WithResponse(specout.Response{Status: http.StatusOK, Type: value}))
 			assert.PanicsWithValue(t, "specout: schema type "+want+" is not a JSON Schema type; "+
 				"a oneof_type union separates its variants with | and needs a Discriminator field", func() { _ = d.WriteJSON(io.Discard) })
 		})
@@ -261,10 +261,10 @@ func TestLaunchUnionPayloadInContainers(t *testing.T) {
 	d := newGen()
 	d.Register[unionEmail]("email")
 	d.Register[unionSlack]("slack")
-	specout.Document(d, http.MethodGet, "/listed", specout.Get[listed]{HandlerFunc: noop})
-	specout.Document(d, http.MethodGet, "/mapped", specout.Get[mapped]{HandlerFunc: noop})
-	specout.Document(d, http.MethodGet, "/pointers", specout.Get[pointers]{HandlerFunc: noop})
-	specout.Document(d, http.MethodGet, "/fixed", specout.Get[fixed]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/listed", specout.Get[listed]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/mapped", specout.Get[mapped]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/pointers", specout.Get[pointers]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/fixed", specout.Get[fixed]{HandlerFunc: noop})
 	doc := buildDoc(t, d)
 	var email any = unionEmail{Address: "ops@example.com"}
 	listedSchema := launchResponseSchema(t, doc, "/listed", "get")
@@ -304,8 +304,8 @@ func TestLaunchRawUnionPayloadIsTheVariant(t *testing.T) {
 	d := newGen()
 	d.Register[unionEmail]("email")
 	d.Register[unionSlack]("slack")
-	specout.Document(d, http.MethodGet, "/raw", specout.Get[raw]{HandlerFunc: noop})
-	specout.Document(d, http.MethodGet, "/nested", specout.Get[nested]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/raw", specout.Get[raw]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/nested", specout.Get[nested]{HandlerFunc: noop})
 	doc := buildDoc(t, d)
 	schema := launchResponseSchema(t, doc, "/raw", "get")
 	exportLaunchSamples(t, doc,

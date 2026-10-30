@@ -290,7 +290,7 @@ func applyKeywordTags(p *jsonschema.Schema, tag reflect.StructTag) {
 			p.ReadOnly = true
 		case "writeonly", "writeOnly=true":
 			p.WriteOnly = true
-		case "deprecated", "deprecated=true":
+		case keyDeprecated, "deprecated=true":
 			p.Deprecated = true
 		}
 	}

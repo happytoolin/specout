@@ -2,6 +2,7 @@ package specout
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -31,9 +32,10 @@ func (s *StdRouter) Handle[Req, Res any](pattern string, h Handler[Req, Res]) {
 	// one space, absolute path: "GET  /x" would document a path with a
 	// leading blank, and net/http panics on "GET x" with its own message.
 	if !ok || !strings.HasPrefix(path, "/") || strings.Contains(path, " ") {
-		panic("specout: std pattern must be METHOD /path, got " + pattern)
+		panic("specout: pattern " + strconv.Quote(pattern) + " is not valid; pass Handle \"METHOD /path\", " +
+			"and pass Get, Post and the other verb methods only /path")
 	}
-	checkMethod(method)
+	checkMethod(method, path)
 	rec := recOf(h)
 	rec.method, rec.pattern = method, path
 	rec.full = canonicalPath(path)

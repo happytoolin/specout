@@ -18,7 +18,9 @@ func desc(code int, description string) specout.Response {
 	return specout.Response{Status: code, Type: struct{}{}, Raw: map[string]any{"description": description}}
 }
 
-func def(description string) specout.Response { return desc(0, description) }
+func def(description string) specout.Response {
+	return specout.Response{Key: "default", Description: description}
+}
 
 var (
 	jsonOrXML   = []string{"application/json", "application/xml"}

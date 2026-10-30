@@ -16,7 +16,7 @@ import (
 func op[Req, Res any](id, summary, description string, tags []string, public bool, requestTypes []string, fn http.HandlerFunc, responses ...specout.Response) specout.Handler[Req, Res] {
 	return specout.Handler[Req, Res]{
 		OperationID: id, Summary: summary, Description: description, Tags: tags, Public: public,
-		RequestContentTypes: requestTypes, HandlerFunc: fn, Responses: append(responses, unexpected),
+		Request: specout.Request{ContentTypes: requestTypes}, HandlerFunc: fn, Responses: append(responses, unexpected),
 	}
 }
 

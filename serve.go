@@ -51,6 +51,14 @@ func chiOuter(r *http.Request) routeSource {
 	return chiWalkSource{rctx.Routes}
 }
 
+// Build builds and freezes the spec, and returns every problem it finds. Call it
+// at startup or in a test, so that a bad document fails there and not on the
+// first request. A panic in the build reaches the caller.
+func (d *Generator) Build() error {
+	_, _, err := d.bytes(nil, false)
+	return err
+}
+
 // WriteJSON writes the spec to w. Builds and freezes if not already.
 func (d *Generator) WriteJSON(w io.Writer) error {
 	b, _, err := d.bytes(nil, false)
@@ -132,7 +140,7 @@ func (d *Generator) encodeCaught() ([]byte, error) {
 
 // encode builds the spec and encodes it as indented JSON. Caller holds d.mu.
 func (d *Generator) encode() ([]byte, error) {
-	spec, err := d.build()
+	spec, err := d.buildDoc()
 	if err != nil {
 		return nil, err
 	}

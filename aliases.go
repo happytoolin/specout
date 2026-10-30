@@ -10,3 +10,8 @@ type Get[Res any] = Handler[struct{}, Res]
 
 // Delete is the 204-only shape: nothing in, nothing out.
 type Delete = Handler[struct{}, NoContent]
+
+// Event is the shape of a webhook or a callback whose receiver answers with no
+// body: Body is what your API sends, and the receiver answers 204. Add Responses
+// to document another answer, such as Key: "2XX".
+type Event[Body any] = Handler[Body, NoContent]

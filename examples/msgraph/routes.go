@@ -35,7 +35,7 @@ func routes(b *specout.GorillaRouter, s *store) {
 		"users.user.DeleteUser", "users.user", "user-delete", noContent(), s.deleteUser))
 	b.Get("/users/{user-id}/photo/$value", op[mediaReq, struct{}]("Get media content for the navigation property photo from users",
 		"The user's profile photo. Read-only.", "users.GetPhotoContent", "users.profilePhoto", "",
-		withErrs(specout.Response{Status: 200, Key: "2XX", ContentType: "application/octet-stream", Raw: map[string]any{"description": "Retrieved media content"}}), s.getPhoto))
+		withErrs(specout.Response{Status: 200, Key: "2XX", Type: specout.File{}, Raw: map[string]any{"description": "Retrieved media content"}}), s.getPhoto))
 	b.Post("/users/{user-id}/sendMail", op[sendMailReq, specout.NoContent]("Invoke action sendMail",
 		"Send the message specified in the request body using either JSON or MIME format.", "users.user.sendMail", "users.user.Actions", "user-sendmail", noContent(), s.sendMail))
 }

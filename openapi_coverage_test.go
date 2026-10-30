@@ -64,7 +64,7 @@ func collectProperties(object string, node any, fields map[string]bool) {
 
 var (
 	coverageHeading = regexp.MustCompile("^## ([a-z-]+)$")
-	coverageRow     = regexp.MustCompile("^\\| `([^`]+)` \\| (Yes|Raw|In place|No) \\|")
+	coverageRow     = regexp.MustCompile("^\\| `([^`]+)` \\| (Yes|In place|No) \\|")
 )
 
 // tableFields reads the coverage table into "object.field" -> status.
@@ -155,6 +155,10 @@ type coverageItem struct {
 	Name string `json:"name"`
 }
 
+type coverageUpload struct {
+	File specout.File `json:"file"`
+}
+
 const coverageFlowURL = "https://example.com/flow"
 
 // coverageFlows declares every OAuth 2.0 flow with every URL.
@@ -169,8 +173,8 @@ func coverageFlows() map[string]specout.OAuth2Flow {
 	return flows
 }
 
-// coverageGenerator builds a document that uses every Yes and Raw field of the
-// coverage table.
+// coverageGenerator builds a document that uses every Yes field of the coverage
+// table.
 func coverageGenerator() *specout.Generator {
 	d := specout.New(specout.Config{
 		Title: "Coverage", Version: "1.0.0", Summary: "Every field", Description: "All of them.",
@@ -190,60 +194,53 @@ func coverageGenerator() *specout.Generator {
 		ExternalDocs: &specout.ExternalDocs{URL: "https://example.com/guide"},
 		Auth: []specout.AuthScheme{
 			specout.Basic,
-			{Name: "jwt", Type: "httpBearer", BearerFormat: "JWT", Description: "A signed token"},
-			{Name: "mtls", Type: "mutualTLS"},
+			{Name: "jwt", Type: "http", Scheme: "bearer", BearerFormat: "JWT", Description: "A signed token"},
+			specout.MutualTLS("mtls"),
 			specout.APIKey("key", "X-API-Key", specout.InHeader),
-			{Name: "oidc", Type: "openIdConnect", URL: "https://example.com/.well-known/openid-configuration"},
+			specout.OpenIDConnect("oidc", "https://example.com/.well-known/openid-configuration"),
 			specout.OAuth2("oauth", coverageFlows()),
 		},
-		Raw: map[string]any{
-			"jsonSchemaDialect": "https://spec.openapis.org/oas/3.1/dialect/base",
-			"webhooks": map[string]any{"itemAdded": map[string]any{"post": map[string]any{
-				"responses": map[string]any{"200": map[string]any{"description": "OK"}},
-			}}},
-			"x-owner": "team",
-		},
+		JSONSchemaDialect: "https://spec.openapis.org/oas/3.1/dialect/base",
+		Raw:               map[string]any{"x-owner": "team"},
 	})
-	specout.Document(d, http.MethodPut, "/items/{id}", specout.Handler[coverageRequest, coverageItem]{
+	d.Webhook(http.MethodPost, "itemAdded", specout.Event[coverageItem]{Summary: "An item was added"})
+	d.Document(http.MethodPut, "/items/{id}", specout.Handler[coverageRequest, coverageItem]{
 		HandlerFunc: noop, Tags: []string{"items"}, Summary: "Update", Description: "Updates an item.",
 		OperationID: "updateItem", Deprecated: true,
-		ExternalDocs:       &specout.ExternalDocs{URL: "https://example.com/update"},
-		Security:           []specout.Security{{Scheme: "oauth", Scopes: []string{"read"}}, {Scheme: "key"}},
-		RequestDescription: "The new item", RequestOptional: true,
-		RequestExamples: map[string]specout.Example{
-			"short": {Summary: "Short", Description: "A short name", Value: coverageItem{Name: "a"}},
-			"file":  {ExternalValue: "https://example.com/item.json"},
+		ExternalDocs: &specout.ExternalDocs{URL: "https://example.com/update"},
+		Security:     []specout.Security{specout.OAuth2("oauth", coverageFlows()).Require("read"), specout.APIKey("key", "X-API-Key", specout.InHeader).Require()},
+		Request: specout.Request{
+			Description: "The new item", Optional: true,
+			Examples: map[string]specout.Example{
+				"short": {Summary: "Short", Description: "A short name", Value: coverageItem{Name: "a"}},
+				"file":  {ExternalValue: "https://example.com/item.json"},
+			},
 		},
 		Responses: []specout.Response{
 			{
 				Status: http.StatusOK, Description: "The item", Example: coverageItem{Name: "a"},
 				Headers: []specout.Header{{Name: "X-Old", Description: "Old", Required: true, Deprecated: true}},
-				Raw: map[string]any{"links": map[string]any{
-					"byID":  map[string]any{"operationId": "updateItem", "parameters": map[string]any{"id": "$response.body#/name"}, "requestBody": "$request.body", "description": "Again"},
-					"byRef": map[string]any{"operationRef": "#/paths/~1items~1{id}/put"},
-				}},
+				Links: map[string]specout.Link{
+					"byID":  {OperationID: "updateItem", Parameters: map[string]string{"id": "$response.body#/name"}, RequestBody: "$request.body", Description: "Again"},
+					"byRef": {OperationRef: "#/paths/~1items~1{id}/put"},
+				},
 			},
-			{Status: 0, Key: "default", Type: coverageItem{}},
+			{Key: "default", Type: coverageItem{}},
 		},
-		Raw: map[string]any{
-			"servers":   []any{map[string]any{"url": "https://example.com"}},
-			"callbacks": map[string]any{"done": map[string]any{"{$request.body#/url}": map[string]any{"post": map[string]any{"responses": map[string]any{"200": map[string]any{"description": "OK"}}}}}},
-		},
+		Servers:   []specout.Server{{URL: "https://example.com"}},
+		Callbacks: []specout.Callback{specout.NewCallback("done", http.MethodPost, "{$request.body#/url}", specout.Event[coverageItem]{})},
 	})
 	for _, method := range []string{http.MethodGet, http.MethodDelete, http.MethodOptions, http.MethodHead, http.MethodPatch, http.MethodTrace} {
-		specout.Document(d, method, "/items", specout.Get[coverageItem]{HandlerFunc: noop, Public: true})
+		d.Document(method, "/items", specout.Get[coverageItem]{HandlerFunc: noop, Public: true})
 	}
-	specout.Document(d, http.MethodPost, "/upload", specout.Handler[coverageItem, coverageItem]{
+	d.Document(http.MethodPost, "/upload", specout.Handler[coverageUpload, coverageItem]{
 		HandlerFunc: noop,
-		Raw: map[string]any{"requestBody": map[string]any{"content": map[string]any{"multipart/form-data": map[string]any{
-			"schema": map[string]any{"type": "object"},
-			"encoding": map[string]any{"file": map[string]any{
-				"contentType": "image/png", "headers": map[string]any{}, "style": "form", "explode": true, "allowReserved": true,
-			}},
-		}}}},
+		Request: specout.Request{Encoding: map[string]specout.Encoding{"file": {
+			ContentType: "image/png", Headers: []specout.Header{{Name: "X-Width"}}, Style: "form", Explode: new(true), AllowReserved: true,
+		}}},
 		Responses: []specout.Response{{Status: http.StatusOK, Examples: map[string]specout.Example{"one": {Value: coverageItem{Name: "a"}}}}},
 	})
-	specout.Document(d, http.MethodPost, "/once", specout.Handler[coverageItem, coverageItem]{HandlerFunc: noop, RequestExample: coverageItem{Name: "a"}})
+	d.Document(http.MethodPost, "/once", specout.Handler[coverageItem, coverageItem]{HandlerFunc: noop, Request: specout.Request{Example: coverageItem{Name: "a"}}})
 	return d
 }
 
@@ -253,11 +250,11 @@ func coverageGenerator() *specout.Generator {
 func linkServerDoc(t *testing.T) map[string]any {
 	t.Helper()
 	d := newGen()
-	specout.Document(d, http.MethodGet, "/x", specout.Handler[struct{}, coverageItem]{
+	d.Document(http.MethodGet, "/x", specout.Handler[struct{}, coverageItem]{
 		HandlerFunc: noop,
-		Responses: []specout.Response{{Status: http.StatusOK, Raw: map[string]any{"links": map[string]any{
-			"next": map[string]any{"operationId": "getX", "server": map[string]any{"url": "https://example.com"}},
-		}}}},
+		Responses: []specout.Response{{Status: http.StatusOK, Links: map[string]specout.Link{
+			"next": {OperationID: "getX", Server: &specout.Server{URL: "https://example.com"}},
+		}}},
 	})
 	var buf bytes.Buffer
 	require.NoError(t, d.WriteJSON(&buf))
@@ -281,8 +278,8 @@ func TestOpenAPICoverage(t *testing.T) {
 	seenFields("root", linkServerDoc(t), seen)
 	for _, field := range want {
 		status := table[field]
-		if status == "Yes" || status == "Raw" {
-			assert.True(t, seen[field], "%s is marked %s, but the test document does not have it", field, status)
+		if status == "Yes" {
+			assert.True(t, seen[field], "%s is marked Yes, but the test document does not have it", field)
 		}
 	}
 }
@@ -344,22 +341,22 @@ func TestBadCoverageDataPanics(t *testing.T) {
 		return func() {
 			h.HandlerFunc = noop
 			d := specout.New(specout.Config{Title: "t", Version: "1", Auth: []specout.AuthScheme{specout.Bearer}})
-			specout.Document(d, http.MethodPost, "/x", h)
+			d.Document(http.MethodPost, "/x", h)
 		}
 	}
 	for want, call := range map[string]func(){
-		"sets both URL and Identifier": config(specout.Config{License: &specout.License{Name: "a", URL: "u", Identifier: "i"}}),
-		"needs a Default":              config(specout.Config{Servers: []specout.Server{{URL: "u", Variables: map[string]specout.ServerVariable{"a": {}}}}}),
-		"Enum does not hold":           config(specout.Config{Servers: []specout.Server{{URL: "u", Variables: map[string]specout.ServerVariable{"a": {Default: "x", Enum: []string{"y"}}}}}}),
-		"has no Scheme":                config(specout.Config{Auth: []specout.AuthScheme{{Name: "a", Type: "http"}}}),
-		"sets BearerFormat":            config(specout.Config{Auth: []specout.AuthScheme{{Name: "a", Type: "http", Scheme: "basic", BearerFormat: "JWT"}}}),
-		`Raw key "paths"`:              config(specout.Config{Raw: map[string]any{"paths": 1}}),
-		"does not declare":             route(specout.Handler[coverageItem, coverageItem]{Security: []specout.Security{{Scheme: "other"}}}),
-		"both Public and Security":     route(specout.Handler[coverageItem, coverageItem]{Public: true, Security: []specout.Security{{Scheme: "bearerAuth"}}}),
-		"sets both Example":            route(specout.Handler[coverageItem, coverageItem]{RequestExample: 1, RequestExamples: map[string]specout.Example{"a": {}}}),
-		"both Value and ExternalValue": route(specout.Handler[coverageItem, coverageItem]{RequestExamples: map[string]specout.Example{"a": {Value: 1, ExternalValue: "u"}}}),
-		"cannot be encoded":            route(specout.Handler[coverageItem, coverageItem]{RequestExample: make(chan int)}),
-		"sets an example but has no body": route(specout.Handler[coverageItem, coverageItem]{
+		"sets both URL and Identifier":  config(specout.Config{License: &specout.License{Name: "a", URL: "u", Identifier: "i"}}),
+		"needs a Default":               config(specout.Config{Servers: []specout.Server{{URL: "u", Variables: map[string]specout.ServerVariable{"a": {}}}}}),
+		"Enum does not hold":            config(specout.Config{Servers: []specout.Server{{URL: "u", Variables: map[string]specout.ServerVariable{"a": {Default: "x", Enum: []string{"y"}}}}}}),
+		"http needs a Scheme":           config(specout.Config{Auth: []specout.AuthScheme{{Name: "a", Type: "http"}}}),
+		"BearerFormat needs the scheme": config(specout.Config{Auth: []specout.AuthScheme{{Name: "a", Type: "http", Scheme: "basic", BearerFormat: "JWT"}}}),
+		`Raw key "paths"`:               config(specout.Config{Raw: map[string]any{"paths": 1}}),
+		"does not declare":              route(specout.Handler[coverageItem, coverageItem]{Security: []specout.Security{{Scheme: "other"}}}),
+		"both Public and Security":      route(specout.Handler[coverageItem, coverageItem]{Public: true, Security: []specout.Security{{Scheme: "bearerAuth"}}}),
+		"sets both Example":             route(specout.Handler[coverageItem, coverageItem]{Request: specout.Request{Example: 1, Examples: map[string]specout.Example{"a": {}}}}),
+		"both Value and ExternalValue":  route(specout.Handler[coverageItem, coverageItem]{Request: specout.Request{Examples: map[string]specout.Example{"a": {Value: 1, ExternalValue: "u"}}}}),
+		"cannot be encoded":             route(specout.Handler[coverageItem, coverageItem]{Request: specout.Request{Example: make(chan int)}}),
+		"sets an example, but this response has no body": route(specout.Handler[coverageItem, coverageItem]{
 			Responses: []specout.Response{{Status: http.StatusNoContent, Example: 1}},
 		}),
 	} {
@@ -388,7 +385,7 @@ func TestParameterFlagsPanicOutsideQuery(t *testing.T) {
 	}
 	assert.Contains(t, panicMessage(t, func() {
 		docOf(t, http.MethodGet, "/x", specout.Handler[header, coverageItem]{HandlerFunc: noop})
-	}), "allowEmptyValue=true")
+	}), "allowEmptyValue works only on a query parameter")
 	assert.Contains(t, panicMessage(t, func() {
 		docOf(t, http.MethodGet, "/x", specout.Handler[word, coverageItem]{HandlerFunc: noop})
 	}), "allowReserved=maybe")

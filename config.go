@@ -1,9 +1,8 @@
 package specout
 
-// Config is the API-level configuration for a Generator. The zero value is a
-// valid, empty spec; Title and Version are required for a usable document.
-// New panics on a Config that would make the document invalid, such as a
-// status with no body (1xx, 204, 205, 304) in DefaultErrors.
+// Config is the API-level configuration for a Generator. Title and Version are
+// required. New panics on a Config that would make the document invalid, such as
+// a status with no body (1xx, 204, 205, 304) in DefaultErrors.
 type Config struct {
 	Title          string
 	Version        string
@@ -16,11 +15,16 @@ type Config struct {
 	Auth           []AuthScheme
 	ExternalDocs   *ExternalDocs
 	Tags           []Tag
-	ErrorType      any
-	DefaultErrors  []int
-	ClosedSchemas  bool
-	// Raw splices keys into the document root: x- extensions, webhooks, or
-	// jsonSchemaDialect. Any other key panics in New.
+	// ErrorType and DefaultErrors add one error body to each operation, at
+	// each status of DefaultErrors. DefaultErrors needs ErrorType.
+	ErrorType     any
+	DefaultErrors []int
+	ClosedSchemas bool
+	// JSONSchemaDialect is the default $schema of the document's schemas. Leave
+	// it empty for the OpenAPI 3.1 dialect, which is what specout writes.
+	JSONSchemaDialect string
+	// Raw splices x- extensions into the document root. Any other key panics
+	// in New.
 	Raw map[string]any
 }
 
@@ -73,8 +77,8 @@ type ExternalDocs struct {
 // scheme (any one satisfies). Handlers opt out per route with Public.
 type AuthScheme struct {
 	Name         string                // scheme name in securitySchemes (e.g. "bearerAuth")
-	Type         string                // httpBearer, http, apiKey, oauth2, openIdConnect, mutualTLS
-	Scheme       string                // http: the authorization scheme, such as "basic" or "digest"
+	Type         string                // http, apiKey, oauth2, openIdConnect, mutualTLS
+	Scheme       string                // http: the authorization scheme, such as "bearer" or "basic"
 	BearerFormat string                // bearer: a hint for the token format, such as "JWT"
 	Description  string                // what the reader needs to know to authenticate
 	Key          string                // apiKey parameter name
@@ -93,20 +97,45 @@ type OAuth2Flow struct {
 	Scopes           map[string]string
 }
 
+// The values of AuthScheme.Type.
+const (
+	authHTTP          = "http"
+	authAPIKey        = "apiKey"
+	authOAuth2        = "oauth2"
+	authOpenIDConnect = "openIdConnect"
+	authMutualTLS     = "mutualTLS"
+)
+
 // Bearer is the standard Authorization: Bearer scheme, ready for Config.Auth.
-var Bearer = AuthScheme{Name: "bearerAuth", Type: typeHTTPBearer}
+var Bearer = AuthScheme{Name: "bearerAuth", Type: authHTTP, Scheme: "bearer"}
 
 // Basic is the standard HTTP Basic scheme, ready for Config.Auth.
-var Basic = AuthScheme{Name: "basicAuth", Type: "http", Scheme: "basic"}
+var Basic = AuthScheme{Name: "basicAuth", Type: authHTTP, Scheme: "basic"}
 
 // OAuth2 declares an oauth2 scheme with the publisher's flows and scopes.
 func OAuth2(scheme string, flows map[string]OAuth2Flow) AuthScheme {
-	return AuthScheme{Name: scheme, Type: "oauth2", Flows: flows}
+	return AuthScheme{Name: scheme, Type: authOAuth2, Flows: flows}
 }
 
 // APIKey declares an API-key auth in a header, query param, or cookie.
 func APIKey(scheme, key, in string) AuthScheme {
-	return AuthScheme{Name: scheme, Type: "apiKey", Key: key, In: in}
+	return AuthScheme{Name: scheme, Type: authAPIKey, Key: key, In: in}
+}
+
+// OpenIDConnect declares an OpenID Connect scheme with its discovery URL.
+func OpenIDConnect(scheme, url string) AuthScheme {
+	return AuthScheme{Name: scheme, Type: authOpenIDConnect, URL: url}
+}
+
+// MutualTLS declares a scheme that authenticates the client with a certificate.
+func MutualTLS(scheme string) AuthScheme {
+	return AuthScheme{Name: scheme, Type: authMutualTLS}
+}
+
+// Require returns the requirement of this scheme, for Handler.Security. Scopes
+// lists the OAuth 2.0 scopes or the roles that the operation needs.
+func (a AuthScheme) Require(scopes ...string) Security {
+	return Security{Scheme: a.Name, Scopes: scopes}
 }
 
 // APIKey.In values: where the key travels.

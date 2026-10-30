@@ -5,6 +5,7 @@ import (
 	"maps"
 	"reflect"
 	"slices"
+	"strconv"
 
 	"github.com/invopop/jsonschema"
 )
@@ -15,13 +16,13 @@ import (
 func requestBodyObj(rec *routeRecord, body reflect.Type, sr *schemaRegistry) *obj {
 	ct, base := requestBodyFor(body, sr)
 	content := newObj()
-	types := rec.reqContentTypes
+	types := rec.body.ContentTypes
 	if len(types) == 0 {
 		types = []string{ct}
 	}
 	for _, c := range types {
 		schema := *base
-		if c == "multipart/form-data" || c == "application/x-www-form-urlencoded" {
+		if c == mediaMultipart || c == mediaForm {
 			schema = sr.formSchema(body, base)
 		}
 		if rec.req.Kind() == reflect.Pointer {
@@ -29,26 +30,32 @@ func requestBodyObj(rec *routeRecord, body reflect.Type, sr *schemaRegistry) *ob
 		}
 		sr.inline = append(sr.inline, &schema)
 		media := newObj().set("schema", &schema)
-		setExamples(media, "RequestExample", rec.reqExample, rec.reqExamples)
+		setExamples(media, rec.label(), rec.body.Example, rec.body.Examples)
+		if takesEncoding(c) && len(rec.body.Encoding) > 0 {
+			media.set("encoding", encodingObjs(rec.body.Encoding, sr))
+		}
 		content.set(c, media)
 	}
-	return newObj().setIf("description", rec.reqDescription).
-		set("required", !rec.reqOptional).set("content", content)
+	return newObj().setIf("description", rec.body.Description).
+		set("required", !rec.body.Optional).set("content", content)
 }
 
 // checkRequestBody checks that Req carries a body for the route's request
-// fields to describe, that each RequestContentTypes entry names a media type,
-// and that the examples can be written.
+// fields to describe, that each Request.ContentTypes entry names a media type,
+// that the examples can be written, and that the encodings fit the body.
 func checkRequestBody(rec *routeRecord) {
 	if !rec.describesRequestBody() {
 		return
 	}
-	if body, _ := requestBody(rec.req); body == nil {
-		panic("specout: " + rec.method + " " + rec.pattern + " describes a request body, but Req has no request body")
+	body, _ := requestBody(rec.req)
+	if body == nil {
+		panic("specout: " + rec.label() + ": Handler.Request describes a body, but Req has no body; " +
+			"add a field with no path, query, header or cookie tag, or remove Handler.Request")
 	}
-	checkExamples("RequestExample", rec.reqExample, rec.reqExamples)
-	for _, c := range rec.reqContentTypes {
-		mediaType(c, "RequestContentTypes")
+	checkEncoding(rec, body)
+	checkExamples(rec.label()+": Request", rec.body.Example, rec.body.Examples)
+	for _, c := range rec.body.ContentTypes {
+		mediaType(rec.label()+": Request", c)
 	}
 }
 
@@ -93,7 +100,7 @@ func renamedSchema(source *jsonschema.Schema, renames map[string]string) jsonsch
 		}
 		wireName := cmp.Or(renames[name], name)
 		if _, duplicate := form.Properties.Get(wireName); duplicate {
-			panic("specout: duplicate form field " + wireName)
+			panic("specout: two fields have the form name " + strconv.Quote(wireName) + "; change one form tag")
 		}
 		form.Properties.Set(wireName, source.Properties.Value(name))
 	}
@@ -108,14 +115,23 @@ func renamedSchema(source *jsonschema.Schema, renames map[string]string) jsonsch
 // is an octet-stream payload, a struct with a binary field is
 // multipart/form-data, anything else is JSON.
 func requestBodyFor(body reflect.Type, sr *schemaRegistry) (string, *jsonschema.Schema) {
+	ct := requestContentType(body)
 	if body == reflect.TypeFor[File]() {
-		return "application/octet-stream", binarySchema()
+		return ct, binarySchema()
 	}
-	schema := &jsonschema.Schema{Ref: sr.refFor(body)}
-	if hasBinaryField(body) {
-		return "multipart/form-data", schema
+	return ct, &jsonschema.Schema{Ref: sr.refFor(body)}
+}
+
+// requestContentType is the media type that a body type implies.
+func requestContentType(body reflect.Type) string {
+	switch {
+	case body == reflect.TypeFor[File]():
+		return "application/octet-stream"
+	case hasBinaryField(body):
+		return mediaMultipart
+	default:
+		return "application/json"
 	}
-	return "application/json", schema
 }
 
 // binarySchema is the schema of a raw byte payload.

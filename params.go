@@ -91,7 +91,7 @@ func (sr *schemaRegistry) taggedParams(req reflect.Type) []any {
 			key = strings.ToLower(key)
 		}
 		if name == "" || seen[key] {
-			panic("specout: empty or duplicate " + loc + " parameter " + name)
+			panic("specout: field " + f.Name + ": " + loc + " parameter name " + strconv.Quote(name) + " is empty or repeated")
 		}
 		seen[key] = true
 		params = append(params, sr.parameter(name, loc, f))
@@ -134,14 +134,15 @@ func applyParamStyle(p *obj, f reflect.StructField, loc string) {
 	tag := f.Tag.Get("jsonschema")
 	if st := tagValue(tag, "style"); st != "" {
 		if !slices.Contains(parameterStyles[loc], st) {
-			panic("specout: field " + f.Name + " has invalid " + loc + " parameter style=" + st)
+			panic("specout: field " + f.Name + ": style " + strconv.Quote(st) + " is not valid on a " + loc +
+				" parameter; use " + strings.Join(parameterStyles[loc], ", "))
 		}
 		p.set("style", st)
 	}
 	if ex := tagValue(tag, "explode"); ex != "" {
 		b, err := strconv.ParseBool(ex)
 		if err != nil {
-			panic("specout: field " + f.Name + " has explode=" + ex + ", must be true or false")
+			panic("specout: field " + f.Name + ": explode=" + ex + " is not valid; use true or false")
 		}
 		p.set("explode", b)
 	}
@@ -163,8 +164,12 @@ func applyParamFlags(p *obj, f reflect.StructField, loc string, schema *jsonsche
 			continue
 		}
 		on, err := strconv.ParseBool(value)
-		if err != nil || loc != InQuery {
-			panic("specout: field " + f.Name + " has " + key + "=" + value + ", which needs true or false on a query parameter")
+		if err != nil {
+			panic("specout: field " + f.Name + ": " + key + "=" + value + " is not valid; use true or false")
+		}
+		if loc != InQuery {
+			panic("specout: field " + f.Name + ": " + key + " works only on a query parameter, and this is a " +
+				loc + " parameter")
 		}
 		p.set(key, on)
 	}
@@ -219,13 +224,14 @@ func (sr *schemaRegistry) pathParamObjs(pattern string, req reflect.Type) []any 
 
 // Parameters have their own wire names; json:"-" only hides a body property.
 func (sr *schemaRegistry) reflectParam(f reflect.StructField) *jsonschema.Schema {
+	checkSchemaTag("field "+f.Name, f.Tag.Get("jsonschema"))
 	var tag strings.Builder
 	for _, key := range []string{"jsonschema", "jsonschema_description", "jsonschema_extras"} {
 		tag.WriteString(key + ":" + strconv.Quote(f.Tag.Get(key)) + " ")
 	}
 	s := sr.propSchema(f.Type, reflect.StructTag(tag.String()))
 	if s == nil {
-		panic("specout: field " + f.Name + " has no parameter schema")
+		panic("specout: field " + f.Name + `: this parameter has no schema; remove jsonschema:"-"`)
 	}
 	return s
 }
