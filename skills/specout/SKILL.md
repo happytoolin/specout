@@ -34,7 +34,9 @@ release supports the Go version in `go.mod`.
 - Read [routers and verification](references/routers-and-verification.md) before
   wiring chi, gorilla/mux, http.ServeMux, Echo, Gin, Fiber, another router, or
   contract tests.
-- For a complete new integration, read all three references.
+- Read [OpenAPI coverage](references/openapi-coverage.md) to find how to set a
+  specific OpenAPI field, or whether specout can write it.
+- For a complete new integration, read the first three references.
 
 ## Integration shape
 

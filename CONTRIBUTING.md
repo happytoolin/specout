@@ -68,6 +68,11 @@ and example code, and fails on any nil flow that can panic. Fix the code so the
 flow is guarded. NilAway has no suppression comment. It skips test
 files, because it cannot see that a testify `require` call stops the test.
 
+`skills/specout/references/openapi-coverage.md` lists every field of the
+official OpenAPI 3.1 schema in `testdata/openapi-3.1-schema.json`.
+`TestOpenAPICoverage` fails when the table and the code disagree, so update the
+table when you add a field.
+
 Keep regression tests when simplifying code. Check the emitted document as well
 as the Go values: JSON field names, nullability, required fields, and response
 status ranges are part of the contract. Examples remain ordinary HTTP handlers;

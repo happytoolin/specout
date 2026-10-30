@@ -1,6 +1,13 @@
 package specout
 
-import "strconv"
+import (
+	"slices"
+	"strconv"
+	"strings"
+)
+
+// typeHTTPBearer is the AuthScheme.Type of http with the bearer scheme.
+const typeHTTPBearer = "httpBearer"
 
 // securitySchemeObj builds the named scheme entry from the doc-only
 // AuthScheme declaration. A typo in Type, Key, In or URL would emit a
@@ -13,9 +20,16 @@ func securitySchemeObj(a AuthScheme) *obj {
 		panic("specout: AuthScheme.Name " + strconv.Quote(a.Name) +
 			" must contain only ASCII letters, digits, dots, hyphens or underscores")
 	}
+	return schemeOfType(a).setIf("description", a.Description)
+}
+
+// schemeOfType builds the fields that a scheme's Type selects.
+func schemeOfType(a AuthScheme) *obj {
 	switch a.Type {
-	case "httpBearer":
-		return newObj().set("type", "http").set("scheme", "bearer")
+	case typeHTTPBearer, "http":
+		return httpScheme(a)
+	case "mutualTLS":
+		return newObj().set("type", "mutualTLS")
 	case "apiKey":
 		return apiKeyScheme(a)
 	case "oauth2":
@@ -30,8 +44,53 @@ func securitySchemeObj(a AuthScheme) *obj {
 		return newObj().set("type", "openIdConnect").set("openIdConnectUrl", a.URL)
 	default:
 		panic("specout: AuthScheme " + a.Name + " has type " + a.Type +
-			", must be httpBearer, apiKey, oauth2 or openIdConnect")
+			", must be httpBearer, http, apiKey, oauth2, openIdConnect or mutualTLS")
 	}
+}
+
+// httpScheme builds an http scheme. httpBearer is http with the bearer scheme.
+func httpScheme(a AuthScheme) *obj {
+	scheme := a.Scheme
+	if a.Type == typeHTTPBearer {
+		scheme = "bearer"
+	}
+	if scheme == "" {
+		panic("specout: AuthScheme " + a.Name + " is http but has no Scheme")
+	}
+	if a.BearerFormat != "" && !strings.EqualFold(scheme, "bearer") {
+		panic("specout: AuthScheme " + a.Name + " sets BearerFormat, but its scheme is " + scheme)
+	}
+	return newObj().set("type", "http").set("scheme", scheme).setIf("bearerFormat", a.BearerFormat)
+}
+
+// checkSecurity panics when a route's Security names a scheme that Config.Auth
+// does not declare, or when a Public route also sets it.
+func (d *Generator) checkSecurity(rec *routeRecord) {
+	if rec.public && len(rec.security) > 0 {
+		panic("specout: " + rec.method + " " + rec.pattern + " sets both Public and Security; set one")
+	}
+	for _, sec := range rec.security {
+		if !slices.ContainsFunc(d.cfg.Auth, func(a AuthScheme) bool { return a.Name == sec.Scheme }) {
+			panic("specout: " + rec.method + " " + rec.pattern + " names security scheme " +
+				strconv.Quote(sec.Scheme) + ", which Config.Auth does not declare")
+		}
+	}
+}
+
+// routeSecurity is the operation's security field, or nil when the operation
+// follows the document's. Each entry is one alternative.
+func (d *Generator) routeSecurity(rec *routeRecord) []any {
+	if rec.public && len(d.cfg.Auth) > 0 {
+		return []any{}
+	}
+	if len(rec.security) == 0 {
+		return nil
+	}
+	alts := make([]any, 0, len(rec.security))
+	for _, sec := range rec.security {
+		alts = append(alts, newObj().set(sec.Scheme, append([]string{}, sec.Scopes...)))
+	}
+	return alts
 }
 
 // apiKeyScheme builds an apiKey scheme. It needs the parameter name, and a

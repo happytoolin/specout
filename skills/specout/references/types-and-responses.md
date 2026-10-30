@@ -51,6 +51,15 @@ Parameter `style` and `explode` use the `jsonschema` tag:
 Filter map[string]string `query:"filter" jsonschema:"style=deepObject,explode=true"`
 ```
 
+The same tag sets the other parameter keywords. `allowEmptyValue` and
+`allowReserved` work on query parameters only:
+
+```go
+Old    string `query:"old,omitempty" jsonschema:"deprecated"`
+Search string `query:"q,omitempty" jsonschema:"allowEmptyValue=true"`
+Target string `query:"target,omitempty" jsonschema:"allowReserved=true"`
+```
+
 ## Required, optional, and nullable values
 
 - A path parameter is always required.
@@ -177,6 +186,31 @@ Use `Header.Type` when a response header is not a string:
 ```go
 specout.Header{Name: "X-RateLimit-Remaining", Type: int64(0)}
 ```
+
+## Examples
+
+Add one example with `Example`, or several named examples with `Examples`. Set
+one of them. specout encodes the values with `encoding/json`. A response needs a
+body to show an example, and a HEAD response drops its examples:
+
+```go
+h := specout.Handler[createRequest, item]{
+	HandlerFunc:        createItem,
+	RequestDescription: "The item to create.",
+	RequestExample:     createRequest{Name: "Lamp"},
+	Responses: []specout.Response{{
+		Status:      http.StatusOK,
+		Description: "The new item.",
+		Examples: map[string]specout.Example{
+			"lamp": {Summary: "A lamp", Value: item{ID: 1, Name: "Lamp"}},
+			"file": {ExternalValue: "https://example.com/item.json"},
+		},
+	}},
+}
+```
+
+An `Example` sets `Value` or `ExternalValue`, not both. For a parameter, use the
+schema example: `jsonschema:"example=42"`.
 
 ## Binary and multiple response media types
 

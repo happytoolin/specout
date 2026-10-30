@@ -208,8 +208,8 @@ Choose Huma or Fuego if you want the framework to decode and validate requests.
 | Request bodies | JSON, binary files, multipart uploads, and custom media types. |
 | Responses | Status codes, headers, media types, shared errors, and responses without a body. |
 | Schemas | Nested and recursive types, collections, optional fields, nullable values, enums, formats, value limits, and discriminated unions. |
-| Authentication | Bearer tokens, API keys, OAuth 2.0, and OpenID Connect. Your middleware checks the credentials. |
-| Route details | Summaries, descriptions, tags, operation IDs, and deprecation. |
+| Authentication | Bearer tokens, HTTP Basic, API keys, OAuth 2.0, OpenID Connect, and mutual TLS. Your middleware checks the credentials. |
+| Route details | Summaries, descriptions, tags, operation IDs, deprecation, examples, and security for each route. |
 | Checks | Find routes without documentation, and compare response statuses with your HTTP tests. |
 
 ## Describe your API
@@ -442,6 +442,7 @@ that wrote no status.
 - [Types and responses](skills/specout/references/types-and-responses.md)
 - [Routers and checks](skills/specout/references/routers-and-verification.md)
 - [Configuration and authentication](skills/specout/references/configuration.md)
+- [OpenAPI 3.1 field coverage](skills/specout/references/openapi-coverage.md)
 
 Coding agents can use the optional [specout skill](skills/specout/SKILL.md):
 

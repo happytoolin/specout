@@ -10,12 +10,18 @@ package specout
 // Headers declares response headers for this code; Raw splices arbitrary
 // OpenAPI fragments into the response object.
 type Response struct {
-	Status      int
-	Type        any
+	Status int
+	Type   any
+	// Description replaces the status text, such as "Not Found".
+	Description string
 	ContentType string
 	Headers     []Header
-	Raw         map[string]any
-	Omit        bool
+	// Example is one example of the body. Use Examples for several named
+	// examples. Set one of them. Both need a body.
+	Example  any
+	Examples map[string]Example
+	Raw      map[string]any
+	Omit     bool
 	// ContentTypes emits this response body under more than one media type
 	// with the one schema (["application/json", "application/xml"]). Use
 	// ContentType for a single binary body instead.
@@ -31,8 +37,11 @@ type Response struct {
 // specout.Header{Name: "Location"} is a plain string; pass any struct or
 // scalar type to give it a real schema (registered as a component).
 type Header struct {
-	Name string
-	Type any
+	Name        string
+	Type        any
+	Description string
+	Required    bool
+	Deprecated  bool
 }
 
 // File as a request field marks a file upload: the request body becomes

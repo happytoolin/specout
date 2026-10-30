@@ -7,6 +7,7 @@ package specout
 type Config struct {
 	Title          string
 	Version        string
+	Summary        string
 	Description    string
 	TermsOfService string
 	Contact        *Contact
@@ -18,6 +19,9 @@ type Config struct {
 	ErrorType      any
 	DefaultErrors  []int
 	ClosedSchemas  bool
+	// Raw splices keys into the document root: x- extensions, webhooks, or
+	// jsonSchemaDialect. Any other key panics in New.
+	Raw map[string]any
 }
 
 // Contact is the info.contact object: who owns the API.
@@ -28,15 +32,26 @@ type Contact struct {
 }
 
 // License is the info.license object. OpenAPI 3.1 takes either a URL or an
-// SPDX identifier; URL is the common case and the only one here.
+// SPDX Identifier such as "Apache-2.0", not both.
 type License struct {
-	Name string
-	URL  string
+	Name       string
+	URL        string
+	Identifier string
 }
 
 // Server is an OpenAPI server entry.
 type Server struct {
 	URL         string
+	Description string
+	// Variables fills the {name} placeholders of URL.
+	Variables map[string]ServerVariable
+}
+
+// ServerVariable is one {name} placeholder of a server URL. Default is
+// required. When Enum is set, it must hold Default.
+type ServerVariable struct {
+	Default     string
+	Enum        []string
 	Description string
 }
 
@@ -57,12 +72,15 @@ type ExternalDocs struct {
 // securitySchemes component and one top-level security alternative per
 // scheme (any one satisfies). Handlers opt out per route with Public.
 type AuthScheme struct {
-	Name  string                // scheme name in securitySchemes (e.g. "bearerAuth")
-	Type  string                // httpBearer, apiKey, oauth2, openIdConnect
-	Key   string                // apiKey parameter name
-	In    string                // apiKey parameter location: header, query, cookie
-	URL   string                // openIdConnect well-known URL
-	Flows map[string]OAuth2Flow // oauth2 flows, keyed by flow name
+	Name         string                // scheme name in securitySchemes (e.g. "bearerAuth")
+	Type         string                // httpBearer, http, apiKey, oauth2, openIdConnect, mutualTLS
+	Scheme       string                // http: the authorization scheme, such as "basic" or "digest"
+	BearerFormat string                // bearer: a hint for the token format, such as "JWT"
+	Description  string                // what the reader needs to know to authenticate
+	Key          string                // apiKey parameter name
+	In           string                // apiKey parameter location: header, query, cookie
+	URL          string                // openIdConnect well-known URL
+	Flows        map[string]OAuth2Flow // oauth2 flows, keyed by flow name
 }
 
 // OAuth2Flow is one entry of an oauth2 scheme's flows object. The flow name
@@ -76,7 +94,10 @@ type OAuth2Flow struct {
 }
 
 // Bearer is the standard Authorization: Bearer scheme, ready for Config.Auth.
-var Bearer = AuthScheme{Name: "bearerAuth", Type: "httpBearer"}
+var Bearer = AuthScheme{Name: "bearerAuth", Type: typeHTTPBearer}
+
+// Basic is the standard HTTP Basic scheme, ready for Config.Auth.
+var Basic = AuthScheme{Name: "basicAuth", Type: "http", Scheme: "basic"}
 
 // OAuth2 declares an oauth2 scheme with the publisher's flows and scopes.
 func OAuth2(scheme string, flows map[string]OAuth2Flow) AuthScheme {
