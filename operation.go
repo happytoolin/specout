@@ -15,13 +15,9 @@ func (d *Generator) operationFor(rec *routeRecord, sr *schemaRegistry) *obj {
 	op := newObj()
 	op.setIf("summary", rec.summary)
 	op.setIf("description", rec.description)
-	opID := rec.operationID
-	if opID == "" {
-		opID = operationID(rec.method, docPath(rec.full))
-	}
 	// a malformed segment ({}) derives no id: omit the field rather than
 	// emit an empty, unusable operationId
-	op.setIf("operationId", opID)
+	op.setIf("operationId", emittedOperationID(rec))
 	if rec.deprecated {
 		op.set("deprecated", true)
 	}

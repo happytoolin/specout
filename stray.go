@@ -13,7 +13,6 @@ type strayScan struct {
 	d       *Generator
 	skips   []SkipRule
 	unknown []string
-	seen    map[string]bool
 }
 
 // collect takes one router entry. methods is the joined method list, or "" when
@@ -31,37 +30,25 @@ func (s *strayScan) collect(pattern, methods string, h http.Handler) {
 		return
 	}
 	if methods == "" {
-		s.report("? " + pattern + " (no method constraint)")
+		s.unknown = append(s.unknown, "? "+pattern+" (no method constraint)")
 		return
 	}
 	for method := range strings.SplitSeq(methods, ",") {
 		if !s.d.lookup(method, pattern, h) {
-			s.report(method + " " + pattern)
+			s.unknown = append(s.unknown, method+" "+pattern)
 		}
 	}
 }
 
-// report names one stray once: a router table can list one route twice, and
-// a repeated name only hides the next one.
-func (s *strayScan) report(route string) {
-	if s.seen[route] {
-		return
-	}
-	if s.seen == nil {
-		s.seen = make(map[string]bool)
-	}
-	s.seen[route] = true
-	s.unknown = append(s.unknown, route)
-}
-
-// err sorts the strays: chi.Walk and some router tables list the methods of
-// one path in map order, and one router must give one error text.
+// err sorts the strays and names each one once: chi.Walk and some router
+// tables list the methods of one path in map order, a table can list one
+// route twice, and one router must give one error text.
 func (s *strayScan) err() error {
 	if len(s.unknown) == 0 {
 		return nil
 	}
 	slices.Sort(s.unknown)
-	return &StrayError{Routes: s.unknown}
+	return &StrayError{Routes: slices.Compact(s.unknown)}
 }
 
 // StrayError names routes registered without specout metadata, in sorted
