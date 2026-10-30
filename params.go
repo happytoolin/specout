@@ -32,7 +32,7 @@ func pathParams(pattern string) []string {
 // paramTag returns the parameter location and tag value of a Req field:
 // query, header, cookie or path.
 func paramTag(f reflect.StructField) (string, string) {
-	for _, l := range []string{"query", "header", "cookie", pathLocation} {
+	for _, l := range []string{InQuery, InHeader, InCookie, pathLocation} {
 		if t := f.Tag.Get(l); t != "" {
 			return l, t
 		}
@@ -112,6 +112,7 @@ func (sr *schemaRegistry) parameter(name, loc string, f reflect.StructField) *ob
 	p := newObj().set("name", name).set("in", loc).
 		set("required", loc == pathLocation || requiredParam(f)).set("schema", schema)
 	applyParamStyle(p, f, loc)
+	applyParamFlags(p, f, loc, schema)
 	if desc := tagValue(f.Tag.Get("jsonschema"), "description"); desc != "" {
 		schema.Description = ""
 		p.set("description", desc)
@@ -121,9 +122,9 @@ func (sr *schemaRegistry) parameter(name, loc string, f reflect.StructField) *ob
 
 var parameterStyles = map[string][]string{
 	pathLocation: {"matrix", "label", "simple"},
-	"header":     {"simple"},
-	"cookie":     {"form"},
-	"query":      {"form", "spaceDelimited", "pipeDelimited", "deepObject"},
+	InHeader:     {"simple"},
+	InCookie:     {"form"},
+	InQuery:      {"form", "spaceDelimited", "pipeDelimited", "deepObject"},
 }
 
 // applyParamStyle copies style= and explode= onto the parameter object. They
@@ -143,6 +144,29 @@ func applyParamStyle(p *obj, f reflect.StructField, loc string) {
 			panic("specout: field " + f.Name + " has explode=" + ex + ", must be true or false")
 		}
 		p.set("explode", b)
+	}
+}
+
+// applyParamFlags copies the parameter keywords of the jsonschema tag onto the
+// parameter object. deprecated is a keyword of the parameter, so it moves there
+// from the schema. allowEmptyValue and allowReserved exist on query parameters
+// only.
+func applyParamFlags(p *obj, f reflect.StructField, loc string, schema *jsonschema.Schema) {
+	tag := f.Tag.Get("jsonschema")
+	if slices.Contains(strings.Split(tag, ","), "deprecated") || tagValue(tag, "deprecated") == "true" {
+		schema.Deprecated = false
+		p.set("deprecated", true)
+	}
+	for _, key := range []string{"allowEmptyValue", "allowReserved"} {
+		value := tagValue(tag, key)
+		if value == "" {
+			continue
+		}
+		on, err := strconv.ParseBool(value)
+		if err != nil || loc != InQuery {
+			panic("specout: field " + f.Name + " has " + key + "=" + value + ", which needs true or false on a query parameter")
+		}
+		p.set(key, on)
 	}
 }
 

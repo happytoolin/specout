@@ -25,11 +25,31 @@ type Handler[Req, Res any] struct {
 	// comes from Req; form media types use its form field names, while other
 	// media types use its JSON field names. A Req with no body panics.
 	RequestContentTypes []string
+	// RequestDescription describes the request body.
+	RequestDescription string
+	// RequestOptional marks the request body as optional. It is required by
+	// default.
+	RequestOptional bool
+	// RequestExample is one example of the request body. Use RequestExamples
+	// for several named examples. Set one of them.
+	RequestExample  any
+	RequestExamples map[string]Example
+	// Security replaces the document's auth requirement for this operation.
+	// Each entry names a scheme from Config.Auth, and any one of them
+	// satisfies the requirement.
+	Security []Security
 	// Raw splices arbitrary keys into this operation object: x- extensions,
 	// or any other OpenAPI operation field specout does not model.
 	Raw        map[string]any
 	Deprecated bool
 	Public     bool // exclude this operation from the global auth requirement
+}
+
+// Security names one scheme of Config.Auth that an operation accepts. Scopes
+// lists the OAuth 2.0 scopes or the roles that the operation needs.
+type Security struct {
+	Scheme string
+	Scopes []string
 }
 
 // Types reifies the type parameters, making them visible to reflection at
@@ -81,6 +101,36 @@ func (h Handler[Req, Res]) WithResponses(rs ...Response) Handler[Req, Res] {
 // WithRequestContentTypes appends request body media types.
 func (h Handler[Req, Res]) WithRequestContentTypes(cts ...string) Handler[Req, Res] {
 	h.RequestContentTypes = append(slices.Clone(h.RequestContentTypes), cts...)
+	return h
+}
+
+// WithRequestDescription describes the request body.
+func (h Handler[Req, Res]) WithRequestDescription(desc string) Handler[Req, Res] {
+	h.RequestDescription = desc
+	return h
+}
+
+// WithRequestOptional marks the request body as optional.
+func (h Handler[Req, Res]) WithRequestOptional() Handler[Req, Res] {
+	h.RequestOptional = true
+	return h
+}
+
+// WithRequestExample sets one example of the request body.
+func (h Handler[Req, Res]) WithRequestExample(example any) Handler[Req, Res] {
+	h.RequestExample = example
+	return h
+}
+
+// WithRequestExamples sets named examples of the request body.
+func (h Handler[Req, Res]) WithRequestExamples(examples map[string]Example) Handler[Req, Res] {
+	h.RequestExamples = examples
+	return h
+}
+
+// WithSecurity appends schemes that this operation accepts.
+func (h Handler[Req, Res]) WithSecurity(security ...Security) Handler[Req, Res] {
+	h.Security = append(slices.Clone(h.Security), security...)
 	return h
 }
 

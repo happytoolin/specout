@@ -53,17 +53,19 @@ doc := specout.New(specout.Config{
 | Field | Effect |
 |---|---|
 | `Title`, `Version` | Populate the required OpenAPI `info` fields. |
+| `Summary` | Adds a short summary of the API. |
 | `Description` | Adds the API description. |
 | `TermsOfService` | Adds the terms URL. |
 | `Contact` | Adds contact name, URL, and email when set. |
-| `License` | Adds license name and URL. |
-| `Servers` | Publishes the ordered server list. |
+| `License` | Adds license name, and a URL or an SPDX `Identifier`. |
+| `Servers` | Publishes the ordered server list. `Variables` fills `{name}` placeholders in a URL. |
 | `Tags` | Declares top-level tags and optional tag documentation. |
 | `ExternalDocs` | Links the whole API to external documentation. Its URL is required. |
 | `ErrorType` | Sets the schema used by shared error responses. |
 | `DefaultErrors` | Adds shared status codes to each operation when `ErrorType` is set. |
 | `ClosedSchemas` | Emits `additionalProperties: false` for object schemas while preserving map values. |
 | `Auth` | Publishes documentation-only security schemes and top-level requirements. |
+| `Raw` | Adds `x-` extensions, `webhooks`, or `jsonSchemaDialect` to the document root. |
 
 `ErrorType` and `DefaultErrors` form one feature. A list of default codes without
 an error type emits no shared responses. Default errors are allowed by recorder
@@ -77,10 +79,21 @@ enable it only for style because it changes the published contract.
 Authentication settings only document security. They do not install middleware
 or enforce credentials.
 
-Bearer authentication uses the built-in declaration:
+Bearer and Basic authentication use built-in declarations:
 
 ```go
-Auth: []specout.AuthScheme{specout.Bearer}
+Auth: []specout.AuthScheme{specout.Bearer, specout.Basic}
+```
+
+Add details with a direct `AuthScheme` value. Use `Type: "http"` with `Scheme`
+for another HTTP scheme, and `Type: "mutualTLS"` for client certificates:
+
+```go
+Auth: []specout.AuthScheme{
+	{Name: "jwt", Type: "httpBearer", BearerFormat: "JWT", Description: "A signed token."},
+	{Name: "digest", Type: "http", Scheme: "digest"},
+	{Name: "mtls", Type: "mutualTLS"},
+}
 ```
 
 API keys can use a header, query parameter, or cookie:
@@ -134,6 +147,16 @@ Mark a route that does not inherit global authentication as public:
 h := specout.Get[health]{HandlerFunc: healthcheck}.WithPublic()
 ```
 
+Give one route its own requirement with `Security`. It replaces the global
+requirement. Each entry names a scheme from `Auth`, and any one entry satisfies
+the requirement. A route cannot set both `Public` and `Security`:
+
+```go
+h := specout.Get[report]{HandlerFunc: getReport}.WithSecurity(
+	specout.Security{Scheme: "oauth", Scopes: []string{"reports:read"}},
+)
+```
+
 ## Operation metadata
 
 `Handler` fields and their `With*` methods are equivalent. Use the form that is
@@ -156,7 +179,10 @@ Available operation metadata is:
 - `Summary`, `Description`, `OperationID`, `Tags`, and `ExternalDocs`.
 - `Deprecated` for an obsolete operation.
 - `Public` to emit `security: []` when global auth exists.
+- `Security` for an authentication requirement on this route.
 - `RequestContentTypes` for one body schema under custom media types.
+- `RequestDescription` and `RequestOptional` for the request body.
+- `RequestExample` or `RequestExamples` for examples of the request body.
 - `Responses` for status-specific contracts.
 - `Raw` for unsupported OpenAPI fields and `x-` extensions.
 

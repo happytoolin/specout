@@ -24,8 +24,8 @@ func (d *Generator) operationFor(rec *routeRecord, sr *schemaRegistry) *obj {
 	if rec.externalDocs != nil {
 		op.set("externalDocs", externalDocsObj(rec.externalDocs))
 	}
-	if rec.public && len(d.cfg.Auth) > 0 {
-		op.set("security", []any{})
+	if security := d.routeSecurity(rec); security != nil {
+		op.set("security", security)
 	}
 	if len(rec.tags) > 0 {
 		op.set("tags", rec.tags)
@@ -53,7 +53,8 @@ func (d *Generator) operationFor(rec *routeRecord, sr *schemaRegistry) *obj {
 // routes run at build.
 func (d *Generator) checkRoute(rec *routeRecord) {
 	checkRawKeys(rec.raw, operationFields)
-	checkRequestContentTypes(rec)
+	checkRequestBody(rec)
+	d.checkSecurity(rec)
 	d.checkResponses(rec)
 }
 

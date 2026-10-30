@@ -121,12 +121,12 @@ func TestGapRequestContentTypesNeedABody(t *testing.T) {
 	type onlyParams struct {
 		ID string `path:"id"`
 	}
-	assert.PanicsWithValue(t, "specout: POST /x sets RequestContentTypes, but Req has no request body", func() {
+	assert.PanicsWithValue(t, "specout: POST /x describes a request body, but Req has no request body", func() {
 		specout.Document(newGen(), http.MethodPost, "/x", specout.Handler[struct{}, gapRes]{
 			HandlerFunc: noop, RequestContentTypes: []string{"application/json"},
 		})
 	})
-	assert.PanicsWithValue(t, "specout: POST /x/{id} sets RequestContentTypes, but Req has no request body", func() {
+	assert.PanicsWithValue(t, "specout: POST /x/{id} describes a request body, but Req has no request body", func() {
 		specout.Document(newGen(), http.MethodPost, "/x/{id}", specout.Handler[onlyParams, gapRes]{
 			HandlerFunc: noop, RequestContentTypes: []string{"application/json"},
 		})

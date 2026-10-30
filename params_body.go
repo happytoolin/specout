@@ -9,8 +9,9 @@ import (
 	"github.com/invopop/jsonschema"
 )
 
-// requestBodyObj builds one operation's requestBody: always required, with the
-// media types the route declared or the single type the body schema prefers.
+// requestBodyObj builds one operation's requestBody, with the media types the
+// route declared or the single type the body schema prefers. It is required
+// unless the route says otherwise.
 func requestBodyObj(rec *routeRecord, body reflect.Type, sr *schemaRegistry) *obj {
 	ct, base := requestBodyFor(body, sr)
 	content := newObj()
@@ -27,20 +28,25 @@ func requestBodyObj(rec *routeRecord, body reflect.Type, sr *schemaRegistry) *ob
 			nullable(&schema)
 		}
 		sr.inline = append(sr.inline, &schema)
-		content.set(c, newObj().set("schema", &schema))
+		media := newObj().set("schema", &schema)
+		setExamples(media, "RequestExample", rec.reqExample, rec.reqExamples)
+		content.set(c, media)
 	}
-	return newObj().set("required", true).set("content", content)
+	return newObj().setIf("description", rec.reqDescription).
+		set("required", !rec.reqOptional).set("content", content)
 }
 
-// checkRequestContentTypes checks that each RequestContentTypes entry names a
-// media type, and that Req carries a body for them to describe.
-func checkRequestContentTypes(rec *routeRecord) {
-	if len(rec.reqContentTypes) == 0 {
+// checkRequestBody checks that Req carries a body for the route's request
+// fields to describe, that each RequestContentTypes entry names a media type,
+// and that the examples can be written.
+func checkRequestBody(rec *routeRecord) {
+	if !rec.describesRequestBody() {
 		return
 	}
 	if body, _ := requestBody(rec.req); body == nil {
-		panic("specout: " + rec.method + " " + rec.pattern + " sets RequestContentTypes, but Req has no request body")
+		panic("specout: " + rec.method + " " + rec.pattern + " describes a request body, but Req has no request body")
 	}
+	checkExamples("RequestExample", rec.reqExample, rec.reqExamples)
 	for _, c := range rec.reqContentTypes {
 		mediaType(c, "RequestContentTypes")
 	}

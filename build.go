@@ -1,6 +1,7 @@
 package specout
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -46,14 +47,16 @@ func (d *Generator) build() (*obj, error) {
 	if d.cfg.ExternalDocs != nil {
 		spec.set("externalDocs", externalDocsObj(d.cfg.ExternalDocs))
 	}
-	return spec, nil
+	return mergeRaw(spec, d.cfg.Raw), nil
 }
 
 // checkConfig builds the parts of the document that come from Config alone
 // and drops them, so a Config that would break the document panics in New.
 func (d *Generator) checkConfig() {
 	d.infoObj()
+	d.serverObjs()
 	d.tagObjs()
+	checkRawKeys(d.cfg.Raw, rootFields)
 	d.securityObjs()
 	if d.cfg.ExternalDocs != nil {
 		externalDocsObj(d.cfg.ExternalDocs)
@@ -99,6 +102,7 @@ func (d *Generator) reflectRoutes(reserved map[string]bool) (*obj, *obj, bool) {
 // infoObj is the document's info object.
 func (d *Generator) infoObj() *obj {
 	info := newObj().set("title", d.cfg.Title).set("version", d.cfg.Version)
+	info.setIf("summary", d.cfg.Summary)
 	info.setIf("description", d.cfg.Description)
 	info.setIf("termsOfService", d.cfg.TermsOfService)
 	if c := d.cfg.Contact; c != nil {
@@ -109,7 +113,10 @@ func (d *Generator) infoObj() *obj {
 		if l.Name == "" {
 			panic("specout: License needs a Name")
 		}
-		info.set("license", newObj().set("name", l.Name).setIf("url", l.URL))
+		if l.URL != "" && l.Identifier != "" {
+			panic("specout: License sets both URL and Identifier; set one")
+		}
+		info.set("license", newObj().set("name", l.Name).setIf("identifier", l.Identifier).setIf("url", l.URL))
 	}
 	return info
 }
@@ -118,9 +125,34 @@ func (d *Generator) infoObj() *obj {
 func (d *Generator) serverObjs() []any {
 	servers := make([]any, 0, len(d.cfg.Servers))
 	for _, s := range d.cfg.Servers {
-		servers = append(servers, newObj().set("url", s.URL).setIf("description", s.Description))
+		server := newObj().set("url", s.URL).setIf("description", s.Description)
+		if len(s.Variables) > 0 {
+			server.set("variables", serverVariableObjs(s))
+		}
+		servers = append(servers, server)
 	}
 	return servers
+}
+
+// serverVariableObjs is the variables object of one server. A Go map has no
+// order, so the names are sorted.
+func serverVariableObjs(s Server) *obj {
+	vars := newObj()
+	for _, name := range sortedKeys(s.Variables) {
+		v := s.Variables[name]
+		if v.Default == "" {
+			panic("specout: server " + s.URL + " variable " + name + " needs a Default")
+		}
+		o := newObj().set("default", v.Default)
+		if len(v.Enum) > 0 {
+			if !slices.Contains(v.Enum, v.Default) {
+				panic("specout: server " + s.URL + " variable " + name + " has a Default that Enum does not hold")
+			}
+			o.set("enum", v.Enum)
+		}
+		vars.set(name, o.setIf("description", v.Description))
+	}
+	return vars
 }
 
 // tagObjs is the declared tag list. OpenAPI requires each tag name, and

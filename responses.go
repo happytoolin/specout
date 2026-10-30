@@ -235,6 +235,7 @@ func withoutBody(e respEntry) respEntry {
 	if e.resp != nil {
 		resp := *e.resp
 		resp.ContentType, resp.ContentTypes = "", nil
+		resp.Example, resp.Examples = nil, nil
 		e.resp = &resp
 	}
 	return e
@@ -271,8 +272,22 @@ func checkResponse(e respEntry) {
 	for _, ct := range resp.ContentTypes {
 		mediaType(ct, "Response.ContentTypes")
 	}
+	checkResponseExamples(e)
 	checkHeaders(resp.Headers)
 	checkRawKeys(resp.Raw, responseFields)
+}
+
+// checkResponseExamples checks that examples can be written, and that the
+// response has a body for them to show.
+func checkResponseExamples(e respEntry) {
+	resp := e.resp
+	if resp.Example == nil && len(resp.Examples) == 0 {
+		return
+	}
+	if resp.ContentType == "" && !hasBody(e.typ) {
+		panic("specout: response " + e.key + " sets an example but has no body")
+	}
+	checkExamples("Response "+e.key, resp.Example, resp.Examples)
 }
 
 // checkHeaders checks the headers of one Response. HTTP header names ignore
@@ -310,7 +325,9 @@ func responseBody(e respEntry, sr *schemaRegistry) *obj {
 		// placeholder beats an empty string.
 		body.set("description", resp.Key+" response")
 	}
+	body.setIf("description", resp.Description)
 	setDeclaredContent(body, e, sr)
+	setResponseExamples(body, resp)
 	if len(resp.Headers) > 0 {
 		body.set("headers", responseHeaders(resp.Headers, sr))
 	}
@@ -325,6 +342,19 @@ func setDeclaredContent(body *obj, e respEntry, sr *schemaRegistry) {
 		body.set("content", binaryContent(resp.ContentType))
 	case len(resp.ContentTypes) > 0:
 		body.set("content", sharedContent(e.typ, resp.ContentTypes, sr))
+	}
+}
+
+// setResponseExamples writes the examples of resp on each of its media types.
+func setResponseExamples(body *obj, resp *Response) {
+	content, ok := body.get("content").(*obj)
+	if !ok {
+		return
+	}
+	for _, ct := range content.keys {
+		if media, isObj := content.get(ct).(*obj); isObj {
+			setExamples(media, "Response", resp.Example, resp.Examples)
+		}
 	}
 }
 
@@ -423,6 +453,8 @@ var (
 		"requestBody", "responses", "callbacks", "deprecated", "security", "servers",
 	}
 	responseFields = []string{"description", "headers", "content", "links"}
+	// rootFields are the root fields that specout does not write itself.
+	rootFields = []string{"jsonSchemaDialect", "webhooks"}
 )
 
 // mergeRaw splices arbitrary OpenAPI fragments into an operation or response
@@ -466,10 +498,17 @@ func statusText(code int) string {
 // headerObj builds one OpenAPI header object: bare Name = string schema;
 // Type set = the type schema (components dedupe applies).
 func headerObj(hd Header, sr *schemaRegistry) *obj {
-	if hd.Type == nil {
-		return newObj().set("schema", newObj().set("type", typeString))
+	o := newObj().setIf("description", hd.Description)
+	if hd.Required {
+		o.set("required", true)
 	}
-	return newObj().set("schema", schemaFor(valueType(hd.Type), sr))
+	if hd.Deprecated {
+		o.set("deprecated", true)
+	}
+	if hd.Type == nil {
+		return o.set("schema", newObj().set("type", typeString))
+	}
+	return o.set("schema", schemaFor(valueType(hd.Type), sr))
 }
 
 // valueType is the type of the value in a Type field. A reflect.Type there is

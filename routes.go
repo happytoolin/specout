@@ -38,6 +38,11 @@ type routeRecord struct {
 	description     string
 	externalDocs    *ExternalDocs
 	reqContentTypes []string
+	reqDescription  string
+	reqOptional     bool
+	reqExample      any
+	reqExamples     map[string]Example
+	security        []Security
 	raw             map[string]any
 	deprecated      bool
 	public          bool
@@ -118,9 +123,17 @@ func recOf[Req, Res any](h Handler[Req, Res]) routeRecord {
 		responses: h.Responses, tags: h.Tags, summary: h.Summary,
 		operationID: h.OperationID, description: h.Description,
 		externalDocs: h.ExternalDocs, reqContentTypes: h.RequestContentTypes,
-		raw:        h.Raw,
+		reqDescription: h.RequestDescription, reqOptional: h.RequestOptional,
+		reqExample: h.RequestExample, reqExamples: h.RequestExamples,
+		security: h.Security, raw: h.Raw,
 		deprecated: h.Deprecated, public: h.Public, fn: h.HandlerFunc,
 	}
+}
+
+// describesRequestBody reports whether the route sets any request body field.
+func (rec *routeRecord) describesRequestBody() bool {
+	return len(rec.reqContentTypes) > 0 || rec.reqDescription != "" || rec.reqOptional ||
+		rec.reqExample != nil || len(rec.reqExamples) > 0
 }
 
 // resolveLocked assigns every record a full path, then checks the result.
