@@ -1,8 +1,12 @@
 package specout_test
 
 import (
+	"errors"
+	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -182,4 +186,352 @@ func TestRegistrationFailureDoesNotMutateRouter(t *testing.T) {
 			})
 		}
 	}
+}
+
+// panicValue runs fn and returns what it panicked with, or nil.
+func panicValue(fn func()) any {
+	var v any
+	func() {
+		defer func() { v = recover() }()
+		fn()
+	}()
+	return v
+}
+
+func TestChiRootMountInsideGroupIsDocumented(t *testing.T) {
+	d, root := newGen(), chi.NewRouter()
+	root.Route("/v1", func(r chi.Router) {
+		api := chi.NewRouter()
+		specout.Chi(d, api).Get("/x", okGet)
+		r.Mount("/", api)
+	})
+	adopt(t, specout.Chi(d, root))
+	assert.Contains(t, docPaths(t, d), "/v1/x")
+}
+
+func TestReplacedChiRouteNamesTheCause(t *testing.T) {
+	d, r := newGen(), chi.NewRouter()
+	b := specout.Chi(d, r)
+	b.Get("/x", okGet)
+	b.Get("/x", okGet)
+	adopt(t, b)
+	wantBuildErr(t, d, "is not served by any adopted router")
+}
+
+func TestGorillaBadTemplatePanicsWithGorillaReason(t *testing.T) {
+	// "" gives an empty template on a router without a path prefix, and an
+	// empty template matches no request.
+	for _, pattern := range []string{"/items/{id", "items", ""} {
+		t.Run(pattern, func(t *testing.T) {
+			d := newGen()
+			msg := fmt.Sprint(panicValue(func() { specout.Gorilla(d, mux.NewRouter()).Get(pattern, okGet) }))
+			assert.Contains(t, msg, "specout: gorilla route GET "+pattern)
+			assert.NotContains(t, docPaths(t, d), pattern)
+		})
+	}
+}
+
+// gorilla never matches a bad template, and it cleans the request path, so a
+// route with an empty or dot segment never runs. Both fail before gorilla
+// gets the route.
+func TestGorillaBadPathNeverReachesTheRouter(t *testing.T) {
+	for _, pattern := range []string{"/items/{id", "items", "/a//b", "/a/./b", "/a/../b"} {
+		t.Run(pattern, func(t *testing.T) {
+			r := mux.NewRouter()
+			msg := fmt.Sprint(panicValue(func() { specout.Gorilla(newGen(), r).Get(pattern, okGet) }))
+			assert.Contains(t, msg, "specout: gorilla route GET "+pattern)
+			routes := 0
+			require.NoError(t, r.Walk(func(*mux.Route, *mux.Router, []*mux.Route) error {
+				routes++
+				return nil
+			}))
+			assert.Zero(t, routes, "gorilla got the route")
+		})
+	}
+	// Only gorilla knows the subrouter prefix, so its segments fail after
+	// gorilla has the route.
+	sub := mux.NewRouter().PathPrefix("/a//b").Subrouter()
+	msg := fmt.Sprint(panicValue(func() { specout.Gorilla(newGen(), sub).Get("/c", okGet) }))
+	assert.Equal(t, "specout: gorilla route GET /c: the path has an empty segment (//)", msg)
+}
+
+func TestGorillaPathlessRouteIsSkippable(t *testing.T) {
+	d, r := newGen(), mux.NewRouter()
+	specout.Gorilla(d, r).Get("/x", okGet)
+	r.Methods(http.MethodOptions).HandlerFunc(okBody)
+	var stray *specout.StrayError
+	require.ErrorAs(t, specout.Gorilla(d, r).Adopt(), &stray)
+	assert.Equal(t, []string{"OPTIONS *"}, stray.Routes)
+	require.NoError(t, specout.Gorilla(d, r).Adopt(specout.Skip("*")))
+}
+
+func TestGorillaMountedRouterIsNotAStray(t *testing.T) {
+	d, root, api := newGen(), mux.NewRouter(), mux.NewRouter()
+	specout.Gorilla(d, api).Get("/api/x", okGet)
+	root.PathPrefix("/api").Handler(api)
+	require.NoError(t, specout.Gorilla(d, root).Adopt())
+}
+
+func TestGorillaSlashRegexIsCatchAll(t *testing.T) {
+	d, r := newGen(), mux.NewRouter()
+	b := specout.Gorilla(d, r)
+	b.Get("/files/{path:.*}", okGet)
+	b.Get("/blobs/{key:[a-z0-9/]+}", okGet)
+	b.Get("/items/{id:[0-9]+}", okGet)
+	b.Get("/names/{name:[^/]+}", okGet)
+	paths := docPaths(t, d)
+	assert.ElementsMatch(t, []string{"/items/{id}", "/names/{name}"}, keys(paths))
+	require.NoError(t, b.Adopt())
+}
+
+func TestDocumentRejectsNonOpenAPIPaths(t *testing.T) {
+	for pattern, want := range map[string]string{
+		"/items/:id": "uses router syntax :id; write the parameter as {id}",
+		"/items/{id": "{ without a matching }",
+		"/items/id}": "} without a matching {",
+		"/a//b":      "drop {$}, empty segments and dot segments",
+		"/c/{$}":     "drop {$}, empty segments and dot segments",
+		"/d/./e":     "drop {$}, empty segments and dot segments",
+		"items/{id}": "must start with /",
+	} {
+		t.Run(pattern, func(t *testing.T) {
+			msg := fmt.Sprint(panicValue(func() { specout.Document(newGen(), http.MethodGet, pattern, okGet) }))
+			assert.Contains(t, msg, want)
+		})
+	}
+	// a colon inside a segment is a literal, as in AIP custom methods
+	assert.Contains(t, docOf(t, http.MethodPost, "/items/{id}:cancel", okGet)["paths"], "/items/{id}:cancel")
+}
+
+// chi matches /a//b and /a/./b only as written, and Fiber never matches
+// them, but clients clean them, so the document would name another path. The
+// chi binder rejects them before chi changes, and Bind before it records.
+func TestEmptyAndDotSegmentsPanic(t *testing.T) {
+	for _, p := range []string{"/a//b", "/a/./b", "/a/../b", "/a/..", "//a"} {
+		t.Run(p, func(t *testing.T) {
+			r, d := chi.NewRouter(), newGen()
+			msg := fmt.Sprint(panicValue(func() { specout.Chi(d, r).Get(p, okGet) }))
+			assert.Contains(t, msg, "specout: chi route GET "+p+": the path has")
+			assert.Empty(t, r.Routes(), "the rejected route reached chi")
+			msg = fmt.Sprint(panicValue(func() {
+				specout.Bind(d, http.MethodGet, p, okGet, func(http.Handler) string { return p })
+			}))
+			assert.Contains(t, msg, "mounted at "+p+": the path has")
+			assert.Empty(t, docPaths(t, d))
+		})
+	}
+	// a parameter regex may hold slashes and dots
+	d, r := newGen(), chi.NewRouter()
+	specout.Chi(d, r).Get("/", okGet)
+	specout.Chi(d, r).Get("/v/{n:[0-9]+\\.[0-9]+}", okGet)
+	specout.Bind(d, http.MethodGet, "/files/", okGet, func(http.Handler) string { return "/files/" })
+	require.NoError(t, specout.Chi(d, r).Adopt())
+	assert.Equal(t, []string{"/", "/files/", "/v/{n}"}, keys(docPaths(t, d)))
+}
+
+// chi reads {x*} as one segment named x*, but specout read the * as a
+// wildcard and left the route out of the document.
+func TestStarInParameterNameFails(t *testing.T) {
+	d, r := newGen(), chi.NewRouter()
+	specout.Chi(d, r).Get("/a/{x*}", okGet)
+	require.NoError(t, specout.Chi(d, r).Adopt())
+	wantBuildErr(t, d, `has a * in the path parameter name "x*"`)
+}
+
+// chi ends a parameter at the next pattern character and lets the regex
+// decide what comes before it, so /a/{x:.+}.json serves /a/b/c.json: a
+// catch-all. Before a slash or at the end, the parameter stays one segment.
+func TestChiRegexAcrossSegmentsIsACatchAll(t *testing.T) {
+	d, r := newGen(), chi.NewRouter()
+	b := specout.Chi(d, r)
+	b.Get("/a/{x:.+}.json", okGet)
+	b.Get("/b/{x:[a-z/]+}-v", okGet)
+	b.Get("/c/{x:.+}", okGet)
+	b.Get("/d/{x:.+}/e", okGet)
+	b.Get("/f/{x:[^/]+}.json", okGet)
+	require.NoError(t, b.Adopt())
+	assert.Equal(t, []string{"/c/{x}", "/d/{x}/e", "/f/{x}.json"}, keys(docPaths(t, d)))
+}
+
+func TestBindRecordsOnlyAfterTheRouterAccepts(t *testing.T) {
+	d := newGen()
+	require.Panics(t, func() {
+		specout.Bind(d, http.MethodGet, "/boom", okGet, func(http.Handler) string { panic("router said no") })
+	})
+	msg := fmt.Sprint(panicValue(func() {
+		specout.Bind(d, http.MethodGet, "items", okGet, func(http.Handler) string { return "items" })
+	}))
+	assert.Contains(t, msg, "mounted at items: the path must start with /")
+	specout.Bind(d, http.MethodGet, "/ok/:id", okGet, func(next http.Handler) string {
+		require.NotNil(t, next)
+		return "/ok/{id}"
+	})
+	assert.Equal(t, []string{"/ok/{id}"}, keys(docPaths(t, d)))
+
+	called := false
+	require.Panics(t, func() {
+		specout.Bind(d, http.MethodGet, "/late", okGet, func(http.Handler) string { called = true; return "/late" })
+	})
+	assert.False(t, called, "a frozen generator must not touch the router")
+}
+
+// A router panic names no route, so Bind raises it again with the method and
+// pattern in front. An error stays reachable, and a panic from a specout
+// adapter, which names the route itself, passes through as it is.
+func TestBindNamesTheRouteInRouterPanics(t *testing.T) {
+	errRouter := errors.New("router said no")
+	for name, tc := range map[string]struct {
+		value any
+		want  string
+	}{
+		"string":  {"wildcards must be named", "specout: GET /a*b: wildcards must be named"},
+		"error":   {errRouter, "specout: GET /a*b: router said no"},
+		"other":   {42, "specout: GET /a*b: 42"},
+		"adapter": {"specoutgin: GET /a*b: bad", "specoutgin: GET /a*b: bad"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := newGen()
+			v := panicValue(func() {
+				specout.Bind(d, http.MethodGet, "/a*b", okGet, func(http.Handler) string { panic(tc.value) })
+			})
+			assert.Equal(t, tc.want, fmt.Sprint(v))
+			if err, ok := tc.value.(error); ok {
+				require.ErrorIs(t, v.(error), err)
+			}
+			assert.Empty(t, docPaths(t, d), "the panicked route left a record")
+		})
+	}
+}
+
+func TestBindRejectsADuplicateRoute(t *testing.T) {
+	d := newGen()
+	mounts := 0
+	mount := func(http.Handler) string { mounts++; return "/items/{id}" }
+	specout.Bind(d, http.MethodGet, "/items/:id", okGet, mount)
+	specout.Bind(d, http.MethodPost, "/items/:id", okGet, mount)
+	msg := fmt.Sprint(panicValue(func() { specout.Bind(d, http.MethodGet, "/items/:key", okGet, mount) }))
+	assert.Contains(t, msg, `specout: duplicate route GET /items/{id} (registered as "/items/:id" and "/items/:key")`)
+	assert.Equal(t, 3, mounts)
+	assert.Len(t, docPaths(t, d)["/items/{id}"], 2, "the duplicate left a record")
+}
+
+func TestCheckRoutesMatchesBindByMethodAndPath(t *testing.T) {
+	d := newGen()
+	specout.Bind(d, http.MethodGet, "/items/:id", okGet, func(http.Handler) string { return "/items/{id}" })
+	specout.Document(d, http.MethodPost, "/items", okGet)
+	err := d.CheckRoutes([]specout.RouteKey{
+		{Method: http.MethodGet, Path: "/items/{id}"},
+		{Method: http.MethodPost, Path: "/items"},
+		{Method: http.MethodDelete, Path: "/items/{id}"},
+		{Method: http.MethodDelete, Path: "/items/{id}"},
+		{Method: "", Path: "/any"},
+		{Method: http.MethodGet, Path: "/openapi.json"},
+	}, specout.Skip("/openapi.json"))
+	var stray *specout.StrayError
+	require.ErrorAs(t, err, &stray)
+	assert.Equal(t, []string{"? /any (no method constraint)", "DELETE /items/{id}"}, stray.Routes)
+	require.NoError(t, d.CheckRoutes(nil))
+}
+
+// chi.Walk reports the methods of one path in map order, so the stray list is
+// sorted: one router gives one error text.
+func TestStrayRoutesAreSorted(t *testing.T) {
+	for range 20 {
+		d, r := newGen(), chi.NewRouter()
+		for _, method := range []string{http.MethodPut, http.MethodGet, http.MethodPost, http.MethodDelete} {
+			r.Method(method, "/x", okGet)
+			r.Method(method, "/a", okGet)
+		}
+		var stray *specout.StrayError
+		require.ErrorAs(t, specout.Chi(d, r).Adopt(), &stray)
+		require.Equal(t, []string{
+			"DELETE /a", "DELETE /x", "GET /a", "GET /x", "POST /a", "POST /x", "PUT /a", "PUT /x",
+		}, stray.Routes)
+	}
+}
+
+func TestBindersRejectNilArguments(t *testing.T) {
+	for name, fn := range map[string]func(){
+		"chi generator":     func() { specout.Chi(nil, chi.NewRouter()) },
+		"chi router":        func() { specout.Chi(newGen(), nil) },
+		"chi typed nil":     func() { specout.Chi(newGen(), (*chi.Mux)(nil)) },
+		"gorilla generator": func() { specout.Gorilla(nil, mux.NewRouter()) },
+		"gorilla router":    func() { specout.Gorilla(newGen(), nil) },
+		"std generator":     func() { specout.Std(nil, http.NewServeMux()) },
+		"std mux":           func() { specout.Std(newGen(), nil) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Contains(t, fmt.Sprint(panicValue(fn)), "needs a generator and")
+		})
+	}
+}
+
+func TestBindAndDocumentRejectANilGenerator(t *testing.T) {
+	assert.PanicsWithValue(t, "specout: Bind needs a generator", func() {
+		specout.Bind(nil, http.MethodGet, "/x", okGet, func(http.Handler) string { return "/x" })
+	})
+	assert.PanicsWithValue(t, "specout: Document needs a generator", func() {
+		specout.Document(nil, http.MethodGet, "/x", okGet)
+	})
+}
+
+// An Adopt on a mounted chi router documents /x where clients call /api/x. A
+// spec request through the outer router shows the mount and fails the build,
+// unless a server URL declares the prefix.
+func TestChiInnerAdoptFailsUnderUndeclaredMount(t *testing.T) {
+	for _, tc := range []struct {
+		servers []specout.Server
+		want    int
+	}{
+		{nil, http.StatusInternalServerError},
+		{[]specout.Server{{URL: "https://example.com/api/"}}, http.StatusOK},
+		{[]specout.Server{{URL: "/v1"}}, http.StatusInternalServerError},
+		{[]specout.Server{{URL: "{scheme}://example.com"}}, http.StatusOK},
+	} {
+		captureLog(t)
+		d := specout.New(specout.Config{Title: "t", Version: "1", Servers: tc.servers})
+		root, api := chi.NewRouter(), chi.NewRouter()
+		b := specout.Chi(d, api)
+		b.Get("/x", okGet)
+		require.NoError(t, b.Adopt())
+		root.Mount("/api", api)
+		root.Handle("/openapi.json", d)
+
+		w := httptest.NewRecorder()
+		root.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/openapi.json", http.NoBody))
+		assert.Equal(t, tc.want, w.Code, "servers %v", tc.servers)
+		if tc.want != http.StatusOK {
+			wantBuildErr(t, d, "GET /x is served at /api/x, under a router mounted at /api")
+		}
+	}
+}
+
+// The outermost router passes the mount check, and so does a spec served on
+// the adopted router itself.
+func TestChiOuterAdoptPassesMountCheck(t *testing.T) {
+	d := newGen()
+	root := chi.NewRouter()
+	root.Route("/api", func(r chi.Router) {
+		specout.Chi(d, r).Get("/x", okGet)
+	})
+	root.Handle("/openapi.json", d)
+	require.NoError(t, specout.Chi(d, root).Adopt(specout.Skip("/openapi.json")))
+	w := httptest.NewRecorder()
+	root.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/openapi.json", http.NoBody))
+	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), `"/api/x"`)
+}
+
+// A std path that ends in / matches the whole subtree, as {path...} does, so
+// both stay out of the paths object. {$} keeps the exact path.
+func TestStdSubtreeIsACatchAll(t *testing.T) {
+	d, sm := newGen(), http.NewServeMux()
+	std := specout.Std(d, sm)
+	std.Get("/files/", okGet)
+	std.Get("/blobs/{path...}", okGet)
+	std.Get("/dir/{$}", okGet)
+	std.Get("/{$}", okGet)
+	assert.ElementsMatch(t, []string{"/dir/", "/"}, slices.Collect(maps.Keys(docPaths(t, d))))
+	declared := declaredStatuses(t, d)
+	assert.Contains(t, declared, specout.RouteKey{Method: http.MethodGet, Path: "/files/"}, "the subtree keeps its drift entry")
 }

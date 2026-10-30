@@ -2,6 +2,7 @@ package specout_test
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/happytoolin/specout"
@@ -125,6 +126,64 @@ func TestLaunchRawStatusRangesAndDefaults(t *testing.T) {
 		assert.NotContains(t, allowed, 200)
 		assert.NotContains(t, allowed, 500)
 	}
+}
+
+func TestLaunchRawResponseMustBeAnObject(t *testing.T) {
+	d := newGen()
+	raw := map[string]any{"200": "ok"}
+	assert.PanicsWithValue(t, "specout: Raw.responses 200 must be a Response object", func() {
+		specout.Document(d, http.MethodGet, "/x", specout.Get[string]{HandlerFunc: noop, Raw: map[string]any{"responses": raw}})
+	})
+}
+
+func TestLaunchOperationsThatBreakTheDocument(t *testing.T) {
+	get := specout.Get[string]{HandlerFunc: noop}
+	for _, tc := range []struct {
+		name, want string
+		h          specout.Get[string]
+	}{
+		{
+			"every response omitted", "specout: GET /x omits every response; declare at least one",
+			get.WithResponse(specout.Response{Status: http.StatusOK, Omit: true}),
+		},
+		{
+			"unknown operation Raw key", `specout: Raw key "securitySchemes" is not an OpenAPI field or an x- extension`,
+			get.WithRaw(map[string]any{"securitySchemes": []any{}}),
+		},
+		{
+			"unknown response Raw key", `specout: Raw key "foo" is not an OpenAPI field or an x- extension`,
+			get.WithResponse(specout.Response{Status: http.StatusOK, Raw: map[string]any{"foo": 1}}),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.PanicsWithValue(t, tc.want, func() { specout.Document(newGen(), http.MethodGet, "/x", tc.h) })
+		})
+	}
+}
+
+// Route data that would break the document fails at registration, before the
+// route reaches the router: the stack names the route, and neither the router
+// nor the document holds it.
+func TestBadRouteDataFailsAtRegistration(t *testing.T) {
+	d, mux := newGen(), http.NewServeMux()
+	bad := specout.Get[string]{HandlerFunc: noop}.WithResponse(specout.Response{
+		Status: http.StatusOK, Headers: []specout.Header{{Name: "X-Id"}, {Name: "x-id"}},
+	})
+	assert.PanicsWithValue(t, `specout: empty or duplicate response header "x-id"`, func() {
+		specout.Std(d, mux).Get("/x", bad)
+	})
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/x", nil))
+	assert.Equal(t, http.StatusNotFound, rr.Code)
+	paths, _ := buildDoc(t, d)["paths"].(map[string]any)
+	assert.NotContains(t, paths, "/x")
+}
+
+func TestLaunchRawOperationIDMustBeUnique(t *testing.T) {
+	d := newGen()
+	specout.Document(d, http.MethodGet, "/a", specout.Get[string]{HandlerFunc: noop, Raw: map[string]any{"operationId": "getB"}})
+	specout.Document(d, http.MethodGet, "/b", specout.Get[string]{HandlerFunc: noop})
+	wantBuildErr(t, d, "specout: duplicate operationId getB (GET /a and GET /b)")
 }
 
 func TestLaunchUnionNameCollisionWithNestedComponent(t *testing.T) {

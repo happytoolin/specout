@@ -55,8 +55,8 @@ func TestSpecMatchesPublishedDocument(t *testing.T) {
 		assert.Len(t, item, len(methods), "%s operations", p)
 		// the 19 published operationIds, no more, no fewer, on the right route
 		for m, wantID := range methods {
-			op, ok := item[m].(map[string]any)
-			if !assert.True(t, ok, "missing %s %s", m, p) {
+			op, hasOp := item[m].(map[string]any)
+			if !assert.True(t, hasOp, "missing %s %s", m, p) {
 				continue
 			}
 			assert.Equal(t, wantID, op["operationId"], "%s %s operationId", m, p)

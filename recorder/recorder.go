@@ -7,6 +7,8 @@ import (
 	"cmp"
 	"context"
 	"net/http"
+	"net/url"
+	pathpkg "path"
 	"slices"
 	"strings"
 	"sync"
@@ -15,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/gorilla/mux"
 	"github.com/happytoolin/specout"
+	"github.com/happytoolin/specout/internal/hijack"
 )
 
 // Recorder wraps a router and observes status codes per route, keyed by the
@@ -25,32 +28,91 @@ type Recorder struct {
 
 	mu    sync.Mutex
 	codes map[specout.RouteKey]map[int]bool
+	// unmatched counts requests ServeHTTP served without finding a route,
+	// so Verify can tell a wrapped router from untested routes.
+	unmatched int
 }
 
 // New wraps next (the app router) for observation: a route matching a skip is
 // served but not recorded. Pattern capture covers chi, gorilla/mux and
-// net/http.ServeMux; a router specout reaches only through Document[Req,Res]
-// (echo, fiber, gin) exposes no pattern, so Verify reports its routes as never
-// produced.
+// net/http.ServeMux. Echo, Gin and Fiber report through router middleware
+// instead (specoutecho.Record, specoutgin.Record, specoutfiber.Record): pass
+// a nil next for them. A router specout reaches only through Document exposes
+// no pattern, so Verify reports its routes as never produced.
 func New(next http.Handler, skips ...specout.SkipRule) *Recorder {
 	return &Recorder{next: next, skips: skips, codes: map[specout.RouteKey]map[int]bool{}}
 }
 
-func (rec *Recorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	pattern := rec.match(r)
-	rctx := chi.RouteContext(r.Context())
-	if routes, ok := rec.next.(chi.Routes); ok && rctx == nil {
-		// Own the context so chi does not return it to its pool before we
-		// read the final method and pattern chosen by routing middleware.
-		rctx = chi.NewRouteContext()
-		rctx.Routes = routes
-		r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+// Observe records status for one matched route. path uses OpenAPI syntax, as
+// the document spells it. Router middleware that knows the matched route calls
+// it; ServeHTTP calls it for the routers it wraps. A path that matches a skip
+// rule records nothing, and status 0 counts as 200.
+func (rec *Recorder) Observe(method, path string, status int) {
+	if path == "" || slices.ContainsFunc(rec.skips, func(s specout.SkipRule) bool { return s.Matches(path) }) {
+		return
 	}
-	rw := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	key := specout.NewRouteKey(method, path)
+	if rec.codes[key] == nil {
+		rec.codes[key] = map[int]bool{}
+	}
+	rec.codes[key][cmp.Or(status, http.StatusOK)] = true
+}
+
+// ServeHTTP serves r through the wrapped router and records the status of the
+// route that ran. A handler that hijacks the connection writes the response
+// itself: a WebSocket handshake that wrote no status records 101, and any
+// other hijack without a status records nothing.
+func (rec *Recorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if rec.next == nil {
+		panic("recorder: ServeHTTP on a Recorder without a router; route requests through the router, " +
+			"whose middleware reports to Observe")
+	}
+	fallback := rec.match(r)
+	r, rctx := rec.withRouteContext(r)
+	hw, watch := hijack.Wrap(w)
+	rw := middleware.NewWrapResponseWriter(hw, r.ProtoMajor)
 	rec.next.ServeHTTP(rw, r)
 
-	// std populates r.Pattern during dispatch, so read it only after.
-	method := r.Method
+	method, pattern := servedRoute(r, rctx, fallback)
+	// a redirect the router made ran no route
+	if routerRedirect(r, rw) {
+		return
+	}
+	// unmatched, or a skipped route: no key, no drift entry
+	if pattern == "" {
+		rec.mu.Lock()
+		rec.unmatched++
+		rec.mu.Unlock()
+		return
+	}
+	// a handler that hijacked the connection wrote its own status
+	if status, ok := hijack.Status(r.Header, rw.Status(), rw.Status() != 0, watch.Hijacked()); ok {
+		rec.Observe(method, pattern, status)
+	}
+}
+
+// withRouteContext gives a chi router a route context the recorder owns, so
+// chi does not return it to its pool before ServeHTTP reads the final method
+// and pattern chosen by routing middleware. The context is nil when next is
+// not a chi router and r carries none.
+func (rec *Recorder) withRouteContext(r *http.Request) (*http.Request, *chi.Context) {
+	rctx := chi.RouteContext(r.Context())
+	routes, ok := rec.next.(chi.Routes)
+	if !ok || rctx != nil {
+		return r, rctx
+	}
+	rctx = chi.NewRouteContext()
+	rctx.Routes = routes
+	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx)), rctx
+}
+
+// servedRoute returns the method and pattern of the handler that ran. fallback
+// is the pattern that match found before dispatch. std populates r.Pattern
+// during dispatch, so call servedRoute only after it.
+func servedRoute(r *http.Request, rctx *chi.Context, fallback string) (string, string) {
+	method, pattern := r.Method, fallback
 	if rctx != nil && len(rctx.RoutePatterns) > 0 {
 		if actual := chiPattern(rctx); actual != "" {
 			pattern = actual
@@ -65,18 +127,41 @@ func (rec *Recorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			method = http.MethodGet
 		}
 	}
-	// unmatched, or a skipped route: no key, no drift entry
-	if pattern == "" || slices.ContainsFunc(rec.skips, func(s specout.SkipRule) bool { return s.Matches(pattern) }) {
-		return
-	}
+	return method, pattern
+}
 
-	rec.mu.Lock()
-	defer rec.mu.Unlock()
-	key := specout.NewRouteKey(method, pattern)
-	if rec.codes[key] == nil {
-		rec.codes[key] = map[int]bool{}
+// routerRedirect reports a redirect that a router writes in place of the route:
+// http.ServeMux and gorilla/mux redirect to the cleaned path, and ServeMux and
+// gorilla StrictSlash add or drop a trailing slash. A route that redirects to
+// its own path with the slash toggled reads the same, and is not recorded.
+func routerRedirect(r *http.Request, rw middleware.WrapResponseWriter) bool {
+	switch rw.Status() {
+	case http.StatusMovedPermanently, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+	default:
+		return false
 	}
-	rec.codes[key][cmp.Or(rw.Status(), http.StatusOK)] = true
+	loc, err := url.Parse(rw.Header().Get("Location"))
+	if err != nil || loc.Path == "" {
+		return false
+	}
+	p := r.URL.Path
+	return loc.Path != p && (loc.Path == cleanPath(p) || loc.Path == p+"/" || loc.Path+"/" == p)
+}
+
+// cleanPath is the path ServeMux and gorilla/mux redirect to: path.Clean, with
+// the trailing slash kept.
+func cleanPath(p string) string {
+	if p == "" {
+		return "/"
+	}
+	if p[0] != '/' {
+		p = "/" + p
+	}
+	np := pathpkg.Clean(p)
+	if p[len(p)-1] == '/' && np != "/" {
+		np += "/"
+	}
+	return np
 }
 
 // A pattern stack ending at a subrouter is an unmatched request or a
@@ -84,23 +169,66 @@ func (rec *Recorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // endpoints; chi.Context.RoutePattern trims them.
 func chiPattern(ctx *chi.Context) string {
 	routes := ctx.Routes
-	for _, pattern := range ctx.RoutePatterns {
+	patterns := slices.Clone(ctx.RoutePatterns)
+	for i, pattern := range patterns {
 		if routes == nil {
 			return ""
 		}
 		var next chi.Routes
+		found := false
 		for _, route := range routes.Routes() {
 			if route.Pattern == pattern {
-				next = route.SubRoutes
+				next, found = route.SubRoutes, true
 				break
 			}
+		}
+		// A request for /users itself runs through a mount stub that Routes
+		// does not list; the subrouter behind /users/* serves it.
+		if mount, ok := mountOf(routes, pattern); !found && ok {
+			patterns[i], next = mount.Pattern, mount.SubRoutes
 		}
 		routes = next
 	}
 	if routes != nil {
 		return ""
 	}
-	pattern := strings.Join(ctx.RoutePatterns, "")
+	return joinChi(patterns...)
+}
+
+// mountOf returns the mount that a chi stub pattern belongs to. Mounting at
+// /users registers /users, /users/ and /users/*, and lists only /users/*.
+func mountOf(routes chi.Routes, pattern string) (chi.Route, bool) {
+	if pattern == "" || strings.HasSuffix(pattern, "*") {
+		return chi.Route{}, false
+	}
+	want := strings.TrimSuffix(pattern, "/") + "/*"
+	for _, route := range routes.Routes() {
+		if route.Pattern == want && route.SubRoutes != nil {
+			return route, true
+		}
+	}
+	return chi.Route{}, false
+}
+
+// chiFind is routes.Find with mount stubs resolved. Find stops at the stub
+// for /users, so the route that serves it is the subrouter's own / route,
+// and a subrouter without one leaves the request unmatched.
+func chiFind(routes chi.Routes, method, path string) string {
+	pattern := routes.Find(chi.NewRouteContext(), method, path)
+	mount, ok := mountOf(routes, pattern)
+	if !ok {
+		return pattern
+	}
+	sub := chiFind(mount.SubRoutes, method, "/")
+	if sub == "" {
+		return ""
+	}
+	return joinChi(mount.Pattern, sub)
+}
+
+// joinChi joins a chi pattern stack, dropping the /* each mount leaves.
+func joinChi(patterns ...string) string {
+	pattern := strings.Join(patterns, "")
 	for strings.Contains(pattern, "/*/") {
 		pattern = strings.ReplaceAll(pattern, "/*/", "/")
 	}
@@ -117,7 +245,7 @@ func (rec *Recorder) match(r *http.Request) string {
 	if routes != nil {
 		// Find preserves trailing slashes; RoutePattern trims them. Match the
 		// escaped path like chi does, so encoded slashes stay in one segment.
-		return routes.Find(chi.NewRouteContext(), r.Method, cmp.Or(r.URL.RawPath, r.URL.Path))
+		return chiFind(routes, r.Method, cmp.Or(r.URL.RawPath, r.URL.Path))
 	}
 	if mr, ok := rec.next.(*mux.Router); ok {
 		var match mux.RouteMatch
@@ -132,7 +260,8 @@ func (rec *Recorder) match(r *http.Request) string {
 
 // stdPattern extracts the operation path from an http.ServeMux pattern.
 // Method-less subtree patterns can be outer mounts, so ignore them. A
-// method-qualified subtree is a documented operation, including its slash.
+// method-qualified subtree is a specout catch-all: it is not in the paths
+// object, but its declared statuses still count.
 func stdPattern(p string) string {
 	if _, path, ok := strings.Cut(p, " "); ok {
 		return path

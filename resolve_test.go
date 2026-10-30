@@ -132,6 +132,38 @@ func TestGorillaAdapter(t *testing.T) {
 }
 
 // Gorilla Adopt: a plain gorilla route is a stray; a skip suppresses it.
+// gorilla keeps route variables in mux.Vars only. The binder copies them into
+// r.PathValue, so a handler reads them as on every other router.
+func TestGorillaHandlerSeesPathValues(t *testing.T) {
+	r := gmux.NewRouter()
+	var id, name string
+	specout.Gorilla(newGen(), r).Get("/items/{id:[0-9]+}/{name}", noBody{
+		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
+			id, name = r.PathValue("id"), r.PathValue("name")
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/items/42/a%40b", nil))
+	assert.Equal(t, "42", id)
+	assert.Equal(t, "a@b", name)
+}
+
+// With UseEncodedPath, gorilla matches the encoded path and keeps the encoded
+// values in mux.Vars. gorilla does not report the setting, so r.PathValue
+// gets the same encoded value.
+func TestGorillaEncodedPathKeepsValuesEncoded(t *testing.T) {
+	r := gmux.NewRouter().UseEncodedPath()
+	var name string
+	specout.Gorilla(newGen(), r).Get("/items/{name}", noBody{
+		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
+			name = r.PathValue("name")
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/items/a%40b", nil))
+	assert.Equal(t, "a%40b", name)
+}
+
 func TestGorillaAdoptStrayAndSkip(t *testing.T) {
 	d, g := newGen(), gmux.NewRouter()
 	specout.Gorilla(d, g).Get("/ok", okGet)
@@ -335,16 +367,6 @@ func TestNonOpenAPIMethodPanics(t *testing.T) {
 	require.Panics(t, func() { specout.Std(newGen(), http.NewServeMux()).Handle("CONNECT /x", okGet) })
 }
 
-// A repeated path param name (/x/{id}/y/{id}) is one OpenAPI parameter:
-// OpenAPI forbids two entry names in one operation.
-func TestDuplicatePathParamEmittedOnce(t *testing.T) {
-	d := newGen()
-	specout.Document(d, http.MethodGet, "/x/{id}/y/{id}", okGet)
-	params, _ := opOf(t, buildDoc(t, d), "/x/{id}/y/{id}", "get")["parameters"].([]any)
-	require.Len(t, params, 1, "want 1 path param")
-	assert.Equal(t, "id", params[0].(map[string]any)["name"])
-}
-
 // A path:"name" tag with no {name} in the pattern is a typo: the field leaves
 // the body and the placeholder stays a plain string, so the document would be
 // quietly wrong. The mismatched name is the case a build must reject.
@@ -356,6 +378,61 @@ func TestStrayPathFieldFails(t *testing.T) {
 	d := newGen()
 	specout.Document(d, http.MethodGet, "/x/{id}", specout.Handler[strayPathReq, specout.NoContent]{HandlerFunc: okBody})
 	wantBuildErr(t, d, `path:"Id"`)
+}
+
+// Braces balance in /x/{{id}}, but no OpenAPI path template has a brace inside
+// a parameter name. Every router path reaches the same check.
+func TestBraceInParameterNameFails(t *testing.T) {
+	for name, register := range map[string]func(d *specout.Generator){
+		"document": func(d *specout.Generator) { specout.Document(d, http.MethodGet, "/x/{{id}}", okGet) },
+		"chi": func(d *specout.Generator) {
+			r := chi.NewRouter()
+			specout.Chi(d, r).Get("/x/{a{b}}", okGet)
+			require.NoError(t, specout.Chi(d, r).Adopt())
+		},
+		"gorilla": func(d *specout.Generator) { specout.Gorilla(d, gmux.NewRouter()).Get("/x/{a{b}}", okGet) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := newGen()
+			register(d)
+			wantBuildErr(t, d, "has a brace inside a path parameter name")
+		})
+	}
+}
+
+// chi and gorilla read net/http's {$} as a parameter named $, so /a/{$}
+// serves /a/xyz and not /a/, the path the document would name.
+func TestEndAnchorOutsideStdPanics(t *testing.T) {
+	assert.PanicsWithValue(t, "specout: chi route GET /a/{$}: {$} is net/http syntax; chi reads it as a "+
+		"parameter named $, so the route serves /a/xyz and not /a/. Register the path without {$}",
+		func() { specout.Chi(newGen(), chi.NewRouter()).Get("/a/{$}", okGet) })
+	assert.PanicsWithValue(t, "specout: gorilla route GET /a/{$}: {$} is net/http syntax; gorilla reads it "+
+		"as a parameter named $, so the route serves /a/xyz and not /a/. Register the path without {$}",
+		func() { specout.Gorilla(newGen(), gmux.NewRouter()).Get("/a/{$}", okGet) })
+}
+
+// One name for two path segments (/x/{id}/y/{id}) gives the handler one
+// value, so the build fails. chi rejects it inside one pattern, but not
+// across a Mount, and a group prefix can repeat a route's name.
+func TestRepeatedPathParameterFails(t *testing.T) {
+	for name, register := range map[string]func(d *specout.Generator){
+		"document": func(d *specout.Generator) { specout.Document(d, http.MethodGet, "/a/{id}/b/{id}", okGet) },
+		"bind": func(d *specout.Generator) {
+			specout.Bind(d, http.MethodGet, "/a/:id/b/:id", okGet, func(http.Handler) string { return "/a/{id}/b/{id}" })
+		},
+		"chi mount": func(d *specout.Generator) {
+			r, sub := chi.NewRouter(), chi.NewRouter()
+			specout.Chi(d, sub).Get("/b/{id}", okGet)
+			r.Mount("/a/{id}", sub)
+			require.NoError(t, specout.Chi(d, r).Adopt())
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := newGen()
+			register(d)
+			wantBuildErr(t, d, `names the path parameter "id" twice`)
+		})
+	}
 }
 
 // The same tag on the matching pattern builds, and a path:"-" opt-out is not

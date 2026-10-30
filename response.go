@@ -2,8 +2,10 @@ package specout
 
 // Response declares one HTTP status code for an operation.
 //
-// Type omitted = inherit the handler Res type at this code; 204 and 304 are
-// the exception, since HTTP forbids a body there. ContentType set
+// Type omitted = inherit the handler Res type at this code; 1xx, 204, 205 and
+// 304 are the exception, since HTTP forbids a body there, and a Type with
+// fields, ContentType or ContentTypes on them panics. A HEAD operation
+// documents no content at all. ContentType set
 // = a binary/raw body (schema format binary), e.g. "application/pdf".
 // Headers declares response headers for this code; Raw splices arbitrary
 // OpenAPI fragments into the response object.

@@ -1,6 +1,7 @@
 package specout
 
 import (
+	"cmp"
 	"maps"
 	"reflect"
 	"slices"
@@ -31,6 +32,20 @@ func requestBodyObj(rec *routeRecord, body reflect.Type, sr *schemaRegistry) *ob
 	return newObj().set("required", true).set("content", content)
 }
 
+// checkRequestContentTypes checks that each RequestContentTypes entry names a
+// media type, and that Req carries a body for them to describe.
+func checkRequestContentTypes(rec *routeRecord) {
+	if len(rec.reqContentTypes) == 0 {
+		return
+	}
+	if body, _ := requestBody(rec.req); body == nil {
+		panic("specout: " + rec.method + " " + rec.pattern + " sets RequestContentTypes, but Req has no request body")
+	}
+	for _, c := range rec.reqContentTypes {
+		mediaType(c, "RequestContentTypes")
+	}
+}
+
 // formSchema copies the JSON component only when form tags change its names.
 // Rename together so swapped names cannot overwrite fields before they are read.
 func (sr *schemaRegistry) formSchema(body reflect.Type, base *jsonschema.Schema) jsonschema.Schema {
@@ -38,34 +53,47 @@ func (sr *schemaRegistry) formSchema(body reflect.Type, base *jsonschema.Schema)
 	if source == nil || source.Properties == nil {
 		return *base
 	}
-	renames := make(map[string]string)
-	for _, f := range jsonFields(body, false) {
-		name, form := fieldName(f), parts0(f.Tag.Get("form"))
-		if form != "" && form != "-" && form != name {
-			renames[name] = form
-		}
-	}
+	renames := formRenames(body)
 	if len(renames) == 0 {
 		return *base
 	}
+	return renamedSchema(source, renames)
+}
+
+// formRenames maps the JSON name of each body field to its form tag name,
+// for the fields where the two differ. No form name is empty. A form:"-"
+// field maps to "-": form binders skip it, so the form schema drops it.
+func formRenames(body reflect.Type) map[string]string {
+	renames := make(map[string]string)
+	for _, f := range jsonFields(body, false) {
+		name, form := fieldName(f), parts0(f.Tag.Get("form"))
+		if form != "" && form != name {
+			renames[name] = form
+		}
+	}
+	return renames
+}
+
+// renamedSchema copies source with its property and required names renamed,
+// and without the properties that renames drops.
+func renamedSchema(source *jsonschema.Schema, renames map[string]string) jsonschema.Schema {
+	dropped := func(name string) bool { return renames[name] == "-" }
 	form := *source
 	form.Extras = maps.Clone(source.Extras)
 	form.Properties = jsonschema.NewProperties()
 	for name := range source.Properties.KeysFromOldest() {
-		wireName := name
-		if renamed, ok := renames[name]; ok {
-			wireName = renamed
+		if dropped(name) {
+			continue
 		}
+		wireName := cmp.Or(renames[name], name)
 		if _, duplicate := form.Properties.Get(wireName); duplicate {
 			panic("specout: duplicate form field " + wireName)
 		}
 		form.Properties.Set(wireName, source.Properties.Value(name))
 	}
-	form.Required = slices.Clone(source.Required)
+	form.Required = slices.DeleteFunc(slices.Clone(source.Required), dropped)
 	for i, name := range form.Required {
-		if renamed, ok := renames[name]; ok {
-			form.Required[i] = renamed
-		}
+		form.Required[i] = cmp.Or(renames[name], name)
 	}
 	return form
 }
@@ -86,7 +114,7 @@ func requestBodyFor(body reflect.Type, sr *schemaRegistry) (string, *jsonschema.
 
 // binarySchema is the schema of a raw byte payload.
 func binarySchema() *jsonschema.Schema {
-	return &jsonschema.Schema{Type: "string", Format: "binary"}
+	return &jsonschema.Schema{Type: typeString, Format: formatBinary}
 }
 
 // hasBinaryField reports whether any field is a File marker or tagged format=binary.
@@ -107,7 +135,7 @@ func hasBinaryField(t reflect.Type) bool {
 		if ft == fileT || (ft.Kind() == reflect.Slice && deref(ft.Elem()) == fileT) {
 			return true
 		}
-		if tagValue(field.Tag.Get("jsonschema"), "format") == "binary" {
+		if tagValue(field.Tag.Get("jsonschema"), "format") == formatBinary {
 			return true
 		}
 	}

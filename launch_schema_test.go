@@ -182,23 +182,30 @@ func TestLaunchExcludedEmbeddedSchema(t *testing.T) {
 	assert.NotContains(t, componentsSchema(t, doc, "response")["required"], "name")
 }
 
+// documentPointerCycle runs in the child process of
+// TestLaunchRecursivePointerTerminates. Unsupported types may fail explicitly,
+// but must not loop forever.
+func documentPointerCycle(t *testing.T, mode string) {
+	t.Helper()
+	defer func() {
+		if caught := recover(); caught != nil {
+			assert.True(t, strings.HasPrefix(fmt.Sprint(caught), "specout:"), "unexpected panic: %v", caught)
+		}
+	}()
+	d := newGen()
+	if mode == "request" {
+		specout.Document(d, http.MethodPost, "/x", specout.Handler[launchPointerCycle, string]{HandlerFunc: noop})
+	} else {
+		specout.Document(d, http.MethodGet, "/x", specout.Get[launchPointerCycle]{HandlerFunc: noop})
+	}
+	if err := d.WriteJSON(io.Discard); err != nil {
+		t.Logf("recursive type rejected: %v", err)
+	}
+}
+
 func TestLaunchRecursivePointerTerminates(t *testing.T) {
 	if mode := os.Getenv("SPECOUT_LAUNCH_POINTER_CYCLE"); mode != "" {
-		// Unsupported types may fail explicitly, but must not loop forever.
-		defer func() {
-			if caught := recover(); caught != nil {
-				assert.True(t, strings.HasPrefix(fmt.Sprint(caught), "specout:"), "unexpected panic: %v", caught)
-			}
-		}()
-		d := newGen()
-		if mode == "request" {
-			specout.Document(d, http.MethodPost, "/x", specout.Handler[launchPointerCycle, string]{HandlerFunc: noop})
-		} else {
-			specout.Document(d, http.MethodGet, "/x", specout.Get[launchPointerCycle]{HandlerFunc: noop})
-		}
-		if err := d.WriteJSON(io.Discard); err != nil {
-			t.Logf("recursive type rejected: %v", err)
-		}
+		documentPointerCycle(t, mode)
 		return
 	}
 	executable, err := os.Executable()

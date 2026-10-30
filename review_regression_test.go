@@ -1,8 +1,11 @@
 package specout_test
 
 import (
+	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -255,6 +258,43 @@ func TestInvalidResponseKeyStatusCombinationsFail(t *testing.T) {
 	}
 }
 
+func TestMisusedResponseFieldsFail(t *testing.T) {
+	type errBody struct {
+		Message string `json:"message"`
+	}
+	post := specout.Handler[errBody, specout.NoContent]{HandlerFunc: noop}
+	for _, tc := range []struct {
+		name, want string
+		h          specout.Handler[errBody, specout.NoContent]
+	}{
+		{
+			"both content type fields", "specout: Response sets both ContentType and ContentTypes; set one",
+			post.WithResponse(specout.Response{Status: 200, Type: errBody{}, ContentType: "application/pdf", ContentTypes: []string{"application/xml"}}),
+		},
+		{
+			"empty response media type", "specout: Response.ContentTypes has an empty media type",
+			post.WithResponse(specout.Response{Status: 200, Type: errBody{}, ContentTypes: []string{""}}),
+		},
+		{"empty request media type", "specout: RequestContentTypes has an empty media type", post.WithRequestContentTypes("")},
+		{
+			"empty header name", `specout: empty or duplicate response header ""`,
+			post.WithResponse(specout.Response{Status: 204, Headers: []specout.Header{{}}}),
+		},
+		{
+			"duplicate header name", `specout: empty or duplicate response header "x-id"`,
+			post.WithResponse(specout.Response{Status: 204, Headers: []specout.Header{{Name: "X-Id"}, {Name: "x-id"}}}),
+		},
+		{
+			"reflect.Type as a Type", "specout: a Type field takes a value such as Error{}, not a reflect.Type",
+			post.WithResponse(specout.Response{Status: 404, Type: reflect.TypeFor[errBody]()}),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.PanicsWithValue(t, tc.want, func() { docOf(t, http.MethodPost, "/x", tc.h) })
+		})
+	}
+}
+
 type nullableUnionHolder struct {
 	Event *struct {
 		Kind string `json:"kind" jsonschema:"enum=email|slack,description=Discriminator"`
@@ -375,6 +415,21 @@ func TestDuplicateFormNamesFail(t *testing.T) {
 	})
 }
 
+// Form binders skip a form:"-" field, so the form schema must not list it.
+func TestFormDashFieldLeavesTheFormSchema(t *testing.T) {
+	type request struct {
+		Name   string `form:"name" json:"name"`
+		Secret string `form:"-"    json:"secret"`
+	}
+	doc := docOf(t, http.MethodPost, "/x", specout.Handler[request, specout.NoContent]{HandlerFunc: noop}.
+		WithRequestContentTypes("application/json", "application/x-www-form-urlencoded"))
+	content := opOf(t, doc, "/x", "post")["requestBody"].(map[string]any)["content"].(map[string]any)
+	form := content["application/x-www-form-urlencoded"].(map[string]any)["schema"].(map[string]any)
+	assert.Equal(t, []string{"name"}, keys(form["properties"].(map[string]any)))
+	assert.Equal(t, []any{"name"}, form["required"])
+	assert.Contains(t, props(t, doc, "request"), "secret", "the JSON body keeps the field")
+}
+
 func TestParameterNamesAreNotOptionalTagOptions(t *testing.T) {
 	type request struct {
 		EmptyName string `query:"omitempty"`
@@ -422,4 +477,100 @@ func TestSchemaNamePointerOverridesAreDeterministic(t *testing.T) {
 		assert.Contains(t, schemas(t, doc), "Current")
 		assert.NotContains(t, schemas(t, doc), "Previous")
 	}
+}
+
+// A broken spec builds once, not once per request, and its 500 names no route.
+// Adopt changes the build input, so the next request builds again.
+func TestServeKeepsBuildErrorAndHidesIt(t *testing.T) {
+	logs := captureLog(t)
+	d, r := newGen(), chi.NewRouter()
+	r.Route("/api", func(r chi.Router) {
+		specout.Chi(d, r).Get("/secret", okGet)
+	})
+	serve := func() *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		d.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/openapi.json", http.NoBody))
+		return w
+	}
+	for range 3 {
+		w := serve()
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.NotContains(t, w.Body.String(), "secret")
+	}
+	assert.Equal(t, 1, strings.Count(logs.String(), "never resolved"), "one build, one log line: %s", logs.String())
+	wantBuildErr(t, d, "never resolved")
+
+	require.NoError(t, specout.Chi(d, r).Adopt())
+	w := serve()
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), "/api/secret")
+}
+
+// A panic in a build that ServeHTTP runs counts as a failed build: each
+// request gets a 500 without the panic text, the log gets it once with its
+// stack, and the build does not run again. WriteJSON still panics.
+func TestServeKeepsBuildPanic(t *testing.T) {
+	const want = "specout: union variant a is not registered"
+	logs := captureLog(t)
+	d := newGen()
+	specout.Document(d, http.MethodPost, "/u", specout.Handler[UnregisteredUnionReq, struct{}]{HandlerFunc: noop})
+	for range 3 {
+		w := httptest.NewRecorder()
+		require.NotPanics(t, func() {
+			d.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/openapi.json", http.NoBody))
+		})
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.NotContains(t, w.Body.String(), "union")
+	}
+	assert.Equal(t, 1, strings.Count(logs.String(), "specout: spec build panicked: "+want), logs.String())
+	assert.Contains(t, logs.String(), "goroutine", "the log names where the build panicked")
+	assert.PanicsWithValue(t, want, func() { _ = d.WriteJSON(io.Discard) })
+}
+
+// uncomparableRoutes is a chi.Routes that Go cannot compare with ==.
+type uncomparableRoutes struct {
+	*chi.Mux
+
+	_ []int
+}
+
+// wrappedRouter has a type that Go can compare, but == panics when its field
+// holds a value that Go cannot compare.
+type wrappedRouter struct{ chi.Router }
+
+func TestServeIgnoresUncomparableChiRoutes(t *testing.T) {
+	for name, routes := range map[string]chi.Routes{
+		"uncomparable type":  uncomparableRoutes{Mux: chi.NewRouter()},
+		"uncomparable field": wrappedRouter{Router: uncomparableRoutes{Mux: chi.NewRouter()}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			captureLog(t)
+			d := newGen()
+			specout.Chi(d, chi.NewRouter()).Get("/never", okGet)
+			rctx := chi.NewRouteContext()
+			rctx.Routes = routes
+			for range 2 {
+				req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/openapi.json", http.NoBody)
+				req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+				w := httptest.NewRecorder()
+				require.NotPanics(t, func() { d.ServeHTTP(w, req) })
+				assert.Equal(t, http.StatusInternalServerError, w.Code)
+			}
+		})
+	}
+}
+
+// Adopt remembers the router it walks. A router value that Go cannot compare
+// must not make a second Adopt panic.
+func TestAdoptAcceptsUncomparableChiRouter(t *testing.T) {
+	d, r := newGen(), uncomparableRoutes{Mux: chi.NewRouter()}
+	specout.Chi(d, r).Get("/x", okGet)
+	other := uncomparableRoutes{Mux: chi.NewRouter()}
+	specout.Chi(d, other).Post("/y", okGet)
+	require.NotPanics(t, func() {
+		require.NoError(t, specout.Chi(d, r).Adopt())
+		require.NoError(t, specout.Chi(d, r).Adopt())
+		require.NoError(t, specout.Chi(d, other).Adopt())
+	})
+	assert.ElementsMatch(t, []string{"/x", "/y"}, keys(docPaths(t, d)))
 }

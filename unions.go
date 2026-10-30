@@ -2,6 +2,7 @@ package specout
 
 import (
 	"maps"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -14,47 +15,87 @@ import (
 func (sr *schemaRegistry) normalizeUnions() {
 	// Reflect all reachable variants before choosing generated names. A Go
 	// type used by a later route or variant must keep its component name.
-	register := func(s *jsonschema.Schema) {
-		walkSchema(s, func(x *jsonschema.Schema) {
-			if findVariantProperty(x) == "" {
-				return
-			}
-			_, data := unionDataProperty(x)
-			if data == nil {
-				return
-			}
-			for _, name := range unionVariantNames(data.OneOf) {
-				t, ok := sr.variants[name]
-				if !ok {
-					panic("specout: union variant " + name + " is not registered")
-				}
-				sr.refFor(t)
-			}
-		})
+	sr.reflectAllVariants()
+	sr.eachSchema(func(owner string, s *jsonschema.Schema) { normalizeOneOf(s, sr, owner) })
+	sr.eachSchema(func(_ string, s *jsonschema.Schema) { checkTypes(s) })
+}
+
+// eachSchema calls fn with each schema that the document can hold and the
+// name of its owner: the typed components, then the hoisted definitions, then
+// the inline schemas. It skips a definition with the name of a typed
+// component, which replaces it, and the schemas that fn adds.
+func (sr *schemaRegistry) eachSchema(fn func(owner string, s *jsonschema.Schema)) {
+	for _, e := range sr.order {
+		fn(e.name, e.s)
 	}
+	for _, name := range sr.nameOrder {
+		if sr.byType[sr.owners[name]] == nil {
+			fn(name, sr.byName[name])
+		}
+	}
+	for _, s := range sr.inline {
+		fn("Inline", s)
+	}
+}
+
+// reflectAllVariants reflects the variants of every union in the registry. A
+// reflected variant can add schemas, and the loop visits those too.
+func (sr *schemaRegistry) reflectAllVariants() {
 	for i, j, k := 0, 0, 0; i < len(sr.order) || j < len(sr.nameOrder) || k < len(sr.inline); {
 		switch {
 		case i < len(sr.order):
-			register(sr.byType[sr.order[i]].s)
+			sr.reflectVariants(sr.order[i].s)
 			i++
 		case j < len(sr.nameOrder):
-			register(sr.byName[sr.nameOrder[j]])
+			sr.reflectVariants(sr.byName[sr.nameOrder[j]])
 			j++
 		default:
-			register(sr.inline[k])
+			sr.reflectVariants(sr.inline[k])
 			k++
 		}
 	}
-	for _, t := range sr.order {
-		e := sr.byType[t]
-		normalizeOneOf(e.s, sr, e.name)
+}
+
+// reflectVariants reflects the variants of each union in s.
+func (sr *schemaRegistry) reflectVariants(s *jsonschema.Schema) {
+	walkSchema(s, func(x *jsonschema.Schema) {
+		if u, ok := declaredUnion(x); ok {
+			for _, name := range u.names {
+				sr.refFor(sr.variantType(name))
+			}
+		}
+	})
+}
+
+// variantType is the Go type registered for a union variant name.
+func (sr *schemaRegistry) variantType(name string) reflect.Type {
+	t, ok := sr.variants[name]
+	if !ok {
+		panic("specout: union variant " + name + " is not registered")
 	}
-	for _, name := range sr.nameOrder {
-		normalizeOneOf(sr.byName[name], sr, name)
+	return t
+}
+
+// unionDecl is a union that an envelope struct declares: the discriminator
+// property, the payload property, and the variant names.
+type unionDecl struct {
+	disc, dataName string
+	names          []string
+}
+
+// declaredUnion reads the union that s declares. It reports false when s
+// declares none.
+func declaredUnion(s *jsonschema.Schema) (unionDecl, bool) {
+	disc := findVariantProperty(s)
+	if disc == "" {
+		return unionDecl{}, false
 	}
-	for _, s := range sr.inline {
-		normalizeOneOf(s, sr, "Inline")
+	dataName, data := unionDataProperty(s)
+	if data == nil {
+		return unionDecl{}, false
 	}
+	names := unionVariantNames(data.OneOf)
+	return unionDecl{disc: disc, dataName: dataName, names: names}, len(names) > 0
 }
 
 // normalizeOneOf turns discriminator and payload declarations into complete
@@ -71,36 +112,48 @@ func makeUnionEnvelope(s *jsonschema.Schema, sr *schemaRegistry, owner string) {
 	if s.Properties == nil || len(s.OneOf) != 0 {
 		return
 	}
-	disc := findVariantProperty(s)
-	if disc == "" {
-		return
-	}
-	dataName, data := unionDataProperty(s)
-	if data == nil {
-		return
-	}
-	names := unionVariantNames(data.OneOf)
-	if len(names) == 0 {
+	u, ok := declaredUnion(s)
+	if !ok {
 		return
 	}
 	allowNull := hasSchemaType(s, nullType)
 	// nullable stores a type array in Extras. Branches are object schemas;
 	// leaving that array in their copies would emit two type members.
 	delete(s.Extras, "type")
+	refs, mapping := sr.addUnionBranches(s, owner, u)
+	clearObjectKeywords(s)
+	s.OneOf = refs
+	if allowNull {
+		nullable(s)
+	}
+	if s.Extras == nil {
+		s.Extras = map[string]any{}
+	}
+	s.Extras["discriminator"] = map[string]any{"propertyName": u.disc, "mapping": mapping}
+}
+
+// addUnionBranches adds one branch component for each variant of u. It
+// returns the oneOf refs to the branches and the discriminator mapping.
+func (sr *schemaRegistry) addUnionBranches(
+	s *jsonschema.Schema, owner string, u unionDecl,
+) ([]*jsonschema.Schema, *obj) {
 	mapping := newObj()
-	refs := make([]*jsonschema.Schema, 0, len(names))
-	for i, name := range names {
-		t, ok := sr.variants[name]
-		if !ok {
-			panic("specout: union variant " + name + " is not registered")
-		}
-		variantRef := sr.refFor(t)
-		branchName := sr.unionBranchName(owner, i+1)
-		branchRef := "#/components/schemas/" + branchName
-		sr.addUnionBranch(branchName, s, disc, name, dataName, variantRef)
+	refs := make([]*jsonschema.Schema, 0, len(u.names))
+	for i, name := range u.names {
+		// refFor can claim names, so it runs before the branch name is chosen
+		dataRef := sr.refFor(sr.variantType(name))
+		branch := unionBranch{name: sr.unionBranchName(owner, i+1), value: name, dataRef: dataRef}
+		sr.addUnionBranch(s, u, branch)
+		branchRef := componentRef + branch.name
 		refs = append(refs, &jsonschema.Schema{Ref: branchRef})
 		mapping.set(name, branchRef)
 	}
+	return refs, mapping
+}
+
+// clearObjectKeywords removes the object keywords of a union envelope. Its
+// branches carry them now.
+func clearObjectKeywords(s *jsonschema.Schema) {
 	s.Type = ""
 	s.Properties = nil
 	s.AdditionalProperties = nil
@@ -109,14 +162,6 @@ func makeUnionEnvelope(s *jsonschema.Schema, sr *schemaRegistry, owner string) {
 	s.MinProperties = nil
 	s.MaxProperties = nil
 	s.Required = nil
-	s.OneOf = refs
-	if allowNull {
-		nullable(s)
-	}
-	if s.Extras == nil {
-		s.Extras = map[string]any{}
-	}
-	s.Extras["discriminator"] = map[string]any{"propertyName": disc, "mapping": mapping}
 }
 
 func unionDataProperty(s *jsonschema.Schema) (string, *jsonschema.Schema) {
@@ -129,9 +174,13 @@ func unionDataProperty(s *jsonschema.Schema) (string, *jsonschema.Schema) {
 	return "", nil
 }
 
+// unionVariantNames reads the variant names of a oneof_type tag. The names
+// are in the type of one oneOf arm, separated by pipes. A union with one
+// variant has one arm, and its type is no JSON Schema type.
 func unionVariantNames(oneOf []*jsonschema.Schema) []string {
-	for _, sub := range oneOf {
-		if sub != nil && strings.Contains(sub.Type, "|") {
+	arms := slices.Collect(nonNullArms(oneOf))
+	for _, sub := range arms {
+		if strings.Contains(sub.Type, "|") || len(arms) == 1 && sub.Type != "" && !jsonSchemaTypes[sub.Type] {
 			var names []string
 			seen := make(map[string]bool)
 			for name := range strings.SplitSeq(sub.Type, "|") {
@@ -146,11 +195,15 @@ func unionVariantNames(oneOf []*jsonschema.Schema) []string {
 	return nil
 }
 
-func (sr *schemaRegistry) addUnionBranch(
-	name string, source *jsonschema.Schema, discriminator, value, dataName, dataRef string,
-) {
-	if sr.byName[name] != nil || sr.owners[name] != nil {
-		panic("specout: duplicate component name " + name)
+// unionBranch is one generated branch of a union envelope: its component
+// name, its discriminator value, and the $ref of its payload.
+type unionBranch struct {
+	name, value, dataRef string
+}
+
+func (sr *schemaRegistry) addUnionBranch(source *jsonschema.Schema, u unionDecl, b unionBranch) {
+	if sr.byName[b.name] != nil || sr.owners[b.name] != nil {
+		panic("specout: duplicate component name " + b.name)
 	}
 	branch := *source
 	branch.OneOf = nil
@@ -161,29 +214,87 @@ func (sr *schemaRegistry) addUnionBranch(
 			properties.Set(key, source.Properties.Value(key))
 		}
 	}
-	if disc, ok := properties.Get(discriminator); ok {
+	if disc, ok := properties.Get(u.disc); ok {
 		discriminatorSchema := *disc
 		discriminatorSchema.Enum = nil
-		discriminatorSchema.Const = value
-		properties.Set(discriminator, &discriminatorSchema)
+		discriminatorSchema.Const = b.value
+		properties.Set(u.disc, &discriminatorSchema)
 	} else {
-		properties.Set(discriminator, &jsonschema.Schema{Type: "string", Const: value})
+		properties.Set(u.disc, &jsonschema.Schema{Type: typeString, Const: b.value})
 	}
-	properties.Set(dataName, &jsonschema.Schema{Ref: dataRef})
-	branch.Type = "object"
+	// The payload keeps the optionality and nullability of its field: Go
+	// omits it with omitempty and writes a nil pointer as null.
+	payload, _ := properties.Get(u.dataName)
+	data := sr.payloadSchema(payload, b.dataRef)
+	if admitsNull(payload) {
+		nullable(data)
+	}
+	properties.Set(u.dataName, data)
+	branch.Type = typeObject
 	branch.Properties = properties
 	branch.Required = slices.Clone(source.Required)
-	if !slices.Contains(branch.Required, discriminator) {
-		branch.Required = append(branch.Required, discriminator)
-	}
-	if !slices.Contains(branch.Required, dataName) {
-		branch.Required = append(branch.Required, dataName)
+	if !slices.Contains(branch.Required, u.disc) {
+		branch.Required = append(branch.Required, u.disc)
 	}
 	if sr.closed {
 		branch.AdditionalProperties = jsonschema.FalseSchema
 	}
-	sr.byName[name] = &branch
-	sr.nameOrder = append(sr.nameOrder, name)
+	sr.byName[b.name] = &branch
+	sr.nameOrder = append(sr.nameOrder, b.name)
+}
+
+// payloadSchema is the payload of one union branch: the variant ref where the
+// payload field holds any, inside the field's lists and maps. A []any payload
+// is a list of variants.
+func (sr *schemaRegistry) payloadSchema(payload *jsonschema.Schema, ref string) *jsonschema.Schema {
+	t, ok := sr.payloads[payload]
+	if !ok || payload == nil {
+		return &jsonschema.Schema{Ref: ref}
+	}
+	s := variantShape(deref(t), ref)
+	if s.Type == typeArray {
+		// the reflector bounds a fixed-size array
+		s.MinItems, s.MaxItems = payload.MinItems, payload.MaxItems
+	}
+	return s
+}
+
+// variantShape is the schema of t with the variant ref in place of its any.
+// A payload that holds no any, such as json.RawMessage, is the variant.
+func variantShape(t reflect.Type, ref string) *jsonschema.Schema {
+	if !holdsVariants(t) {
+		return &jsonschema.Schema{Ref: ref}
+	}
+	switch t.Kind() {
+	case reflect.Slice, reflect.Array:
+		return &jsonschema.Schema{Type: typeArray, Items: variantElem(t.Elem(), ref)}
+	case reflect.Map:
+		return &jsonschema.Schema{Type: typeObject, AdditionalProperties: variantElem(t.Elem(), ref)}
+	default:
+		return &jsonschema.Schema{Ref: ref}
+	}
+}
+
+// holdsVariants reports whether t is a list or map whose elements are an
+// interface, directly or in nested lists and maps.
+func holdsVariants(t reflect.Type) bool {
+	switch t.Kind() {
+	case reflect.Slice, reflect.Array, reflect.Map:
+		elem := deref(t.Elem())
+		return elem.Kind() == reflect.Interface || holdsVariants(elem)
+	default:
+		return false
+	}
+}
+
+// variantElem is the schema of a list or map element of type t. Go writes a
+// nil pointer element as null.
+func variantElem(t reflect.Type, ref string) *jsonschema.Schema {
+	s := variantShape(deref(t), ref)
+	if t.Kind() == reflect.Pointer {
+		nullable(s)
+	}
+	return s
 }
 
 func (sr *schemaRegistry) unionBranchName(owner string, index int) string {

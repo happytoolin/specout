@@ -25,11 +25,30 @@ func docPath(p string) string {
 }
 
 // isCatchAll reports patterns OpenAPI cannot express: trailing wildcards,
-// both the chi form (/files/*) and the std multi-segment form
-// (/files/{path...}).
+// the chi form (/files/*), the std multi-segment form (/files/{path...}), a
+// gorilla parameter whose regex matches a slash (/files/{path:.*}) and a
+// chi one that can match a slash before more text in its segment.
 func (rec *routeRecord) isCatchAll() bool {
 	p := docPath(rec.full)
-	return (!rec.literalStars && strings.Contains(p, "*")) || strings.Contains(p, "...}")
+	return rec.catchAll || (!rec.literalStars && strings.Contains(p, "*")) || strings.Contains(p, "...}") ||
+		(!rec.absolute && chiSpansSegments(rec.full))
+}
+
+// chiSpansSegments reports a chi parameter that can match across segments.
+// chi ends a parameter at the next character of the pattern, a slash when
+// none follows, and lets the regex decide what comes before it. So
+// /a/{x:.+}.json matches /a/b/c.json, but /a/{x:.+} matches one segment.
+func chiSpansSegments(p string) bool {
+	for _, m := range pathParamRe.FindAllStringSubmatchIndex(p, -1) {
+		end := m[1]
+		if m[4] < 0 || end == len(p) || p[end] == '/' {
+			continue
+		}
+		if matchesSlash(p[m[4]+1 : m[5]]) {
+			return true
+		}
+	}
+	return false
 }
 
 // openAPIMethods is the path-item key set (finding 17): a token like CONNECT
@@ -44,4 +63,14 @@ func checkMethod(method string) {
 	if !slices.Contains(openAPIMethods, method) {
 		panic("specout: method must be one of GET/HEAD/POST/PUT/PATCH/DELETE/OPTIONS/TRACE, got " + method)
 	}
+}
+
+// endAnchor is net/http's end-of-path anchor, as in /a/{$}.
+const endAnchor = "{$}"
+
+// endAnchorMsg explains why router, chi or gorilla, cannot take endAnchor:
+// it reads {$} as a parameter named $, so /a/{$} serves /a/xyz and not /a/.
+func endAnchorMsg(router string) string {
+	return "{$} is net/http syntax; " + router + " reads it as a parameter named $, so the route " +
+		"serves /a/xyz and not /a/. Register the path without {$}"
 }

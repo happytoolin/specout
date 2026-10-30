@@ -1,10 +1,17 @@
 package specout_test
 
 import (
+	jsonv1 "encoding/json"
+	"errors"
+	"io"
+	"math/big"
 	"net/http"
+	"net/netip"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/happytoolin/specout"
@@ -134,6 +141,52 @@ func TestClosedSchemasPreserveTypedAndFreeMaps(t *testing.T) {
 	assert.NotEqual(t, false, p["free"].(map[string]any)["additionalProperties"])
 }
 
+// schemaHiddenEmbed is embedded by a test type with a hidden field.
+type schemaHiddenEmbed struct {
+	Secret string `json:"secret" jsonschema:"-"`
+}
+
+// jsonschema:"-" hides a field that JSON still writes, so a closed schema
+// would reject every real payload. json:"-" hides it from both.
+func TestClosedSchemasRejectHiddenFields(t *testing.T) {
+	type direct struct {
+		Name   string `json:"name"`
+		Secret string `json:"secret" jsonschema:"-"`
+	}
+	type embedded struct {
+		schemaHiddenEmbed
+
+		Name string `json:"name"`
+	}
+	type hiddenEmbed struct {
+		schemaHiddenEmbed `jsonschema:"-"`
+
+		Name string `json:"name"`
+	}
+	type ignored struct {
+		Name   string `json:"name"`
+		Secret string `json:"-"    jsonschema:"-"`
+	}
+	for want, body := range map[string]any{
+		"direct field Secret":                 direct{},
+		"embedded field Secret":               embedded{},
+		"hiddenEmbed field schemaHiddenEmbed": hiddenEmbed{},
+	} {
+		t.Run(want, func(t *testing.T) {
+			d := specout.New(specout.Config{Title: "t", Version: "1", ClosedSchemas: true})
+			specout.Document(d, http.MethodGet, "/x", okGet.WithResponse(specout.Response{Status: http.StatusOK, Type: body}))
+			assert.PanicsWithValue(t, "specout: specout_test."+want+` has jsonschema:"-", but JSON still writes it, `+
+				`and ClosedSchemas rejects it; tag it json:"-", or drop ClosedSchemas`, func() { _ = d.WriteJSON(io.Discard) })
+		})
+	}
+	d := specout.New(specout.Config{Title: "t", Version: "1", ClosedSchemas: true})
+	specout.Document(d, http.MethodGet, "/x", okGet.WithResponse(specout.Response{Status: http.StatusOK, Type: ignored{}}))
+	assert.NotContains(t, props(t, buildDoc(t, d), "ignored"), "secret")
+	open := newGen()
+	specout.Document(open, http.MethodGet, "/x", okGet.WithResponse(specout.Response{Status: http.StatusOK, Type: direct{}}))
+	assert.NotContains(t, props(t, buildDoc(t, open), "direct"), "secret", "an open schema keeps the hidden field out")
+}
+
 func TestRequestBodyViewDoesNotReplaceTheFullResponseSchema(t *testing.T) {
 	type request struct {
 		ID   string `path:"id"`
@@ -177,6 +230,35 @@ func TestBooleanEnumTagIsPreserved(t *testing.T) {
 	assert.Equal(t, []any{true}, props(t, doc, "response")["success"].(map[string]any)["enum"])
 	parameter := paramsOf(t, opOf(t, doc, "/bool", "get"))["enabled"]
 	assert.Equal(t, []any{false}, parameter["schema"].(map[string]any)["enum"])
+}
+
+func TestLaunchNumberEnumTagsSplitOnPipes(t *testing.T) {
+	type response struct {
+		Code  int      `json:"code"  jsonschema:"enum=1|2"`
+		Mixed int      `json:"mixed" jsonschema:"enum=1|2,enum=3"`
+		Ratio float64  `json:"ratio" jsonschema:"enum=0.5|1.5"`
+		Ptr   *uint    `json:"ptr"   jsonschema:"enum=4|5"`
+		List  []int    `json:"list"  jsonschema:"enum=6|7"`
+		Null  *float32 `json:"null"  jsonschema:"nullable,enum=8|9"`
+	}
+	type request struct {
+		Level int `jsonschema:"enum=1|2" query:"level"`
+	}
+	doc := docOf(t, http.MethodGet, "/x", specout.Handler[request, response]{HandlerFunc: noop})
+	schema := launchResponseSchema(t, doc, "/x", "get")
+	exportLaunchSamples(t, doc,
+		launchSample{"listed numbers", schema, response{Code: 2, Mixed: 1, Ratio: 1.5, List: []int{7}}, true},
+		launchSample{"unlisted number", schema, response{Code: 3, Mixed: 3, Ratio: 0.5}, false},
+	)
+	p := props(t, doc, "response")
+	assert.Equal(t, []any{1.0, 2.0}, p["code"].(map[string]any)["enum"])
+	assert.Equal(t, []any{1.0, 2.0, 3.0}, p["mixed"].(map[string]any)["enum"])
+	assert.Equal(t, []any{0.5, 1.5}, p["ratio"].(map[string]any)["enum"])
+	assert.Equal(t, []any{4.0, 5.0, nil}, p["ptr"].(map[string]any)["enum"])
+	assert.Equal(t, []any{6.0, 7.0}, p["list"].(map[string]any)["items"].(map[string]any)["enum"])
+	assert.Equal(t, []any{8.0, 9.0}, p["null"].(map[string]any)["oneOf"].([]any)[0].(map[string]any)["enum"])
+	parameter := paramsOf(t, opOf(t, doc, "/x", "get"))["level"]
+	assert.Equal(t, []any{1.0, 2.0}, parameter["schema"].(map[string]any)["enum"])
 }
 
 func TestUnionConstrainsTheCompleteEnvelope(t *testing.T) {
@@ -243,6 +325,325 @@ func assertNoEmptySchemaTypes(t *testing.T, v any) {
 	}
 }
 
+// schemaTextID has no exported fields: the JSON encoders write it only
+// through MarshalText.
+type schemaTextID struct{ hi, lo uint64 }
+
+func (id schemaTextID) MarshalText() ([]byte, error) {
+	if id == (schemaTextID{}) {
+		return nil, errors.New("empty ID")
+	}
+	return []byte(strconv.FormatUint(id.hi, 16) + "-" + strconv.FormatUint(id.lo, 16)), nil
+}
+
+// schemaTextKey is an integer that the encoders write through MarshalText,
+// also as a map key.
+type schemaTextKey int
+
+func (k schemaTextKey) MarshalText() ([]byte, error) {
+	if k < 0 {
+		return nil, errors.New("negative key")
+	}
+	return []byte("key-" + strconv.Itoa(int(k))), nil
+}
+
+func TestLaunchTextMarshalersAreStrings(t *testing.T) {
+	type response struct {
+		ID   schemaTextID          `json:"id"`
+		Ptr  *schemaTextID         `json:"ptr"`
+		Addr netip.Addr            `json:"addr"`
+		Keys map[schemaTextKey]int `json:"keys"`
+	}
+	d := newGen()
+	specout.Document(d, http.MethodGet, "/x", specout.Get[response]{HandlerFunc: noop})
+	specout.Document(d, http.MethodGet, "/id", specout.Get[schemaTextID]{HandlerFunc: noop})
+	doc := buildDoc(t, d)
+	value := response{ID: schemaTextID{1, 2}, Addr: netip.MustParseAddr("::1"), Keys: map[schemaTextKey]int{5: 1}}
+	exportLaunchSamples(t, doc,
+		launchSample{"text values", launchResponseSchema(t, doc, "/x", "get"), value, true},
+		launchSample{"text root", launchResponseSchema(t, doc, "/id", "get"), schemaTextID{3, 4}, true},
+		launchSample{"object for a text value", launchResponseSchema(t, doc, "/id", "get"), map[string]any{}, false},
+	)
+	p := props(t, doc, "response")
+	assert.Equal(t, "string", p["id"].(map[string]any)["type"])
+	assert.Equal(t, []any{"string", "null"}, p["ptr"].(map[string]any)["type"])
+	assert.Equal(t, "string", p["addr"].(map[string]any)["type"])
+	assert.NotContains(t, p["keys"], "patternProperties", "MarshalText writes the keys, not the integers")
+	assert.Equal(t, "string", componentsSchema(t, doc, "schemaTextID")["type"])
+}
+
+func TestLaunchUintptrIsAnInteger(t *testing.T) {
+	type response struct {
+		Address uintptr `json:"address"`
+	}
+	d := newGen()
+	specout.Document(d, http.MethodGet, "/x", specout.Get[response]{HandlerFunc: noop})
+	specout.Document(d, http.MethodGet, "/root", specout.Get[uintptr]{HandlerFunc: noop})
+	doc := buildDoc(t, d)
+	exportLaunchSamples(t, doc,
+		launchSample{"uintptr field", launchResponseSchema(t, doc, "/x", "get"), response{Address: 42}, true},
+		launchSample{"uintptr root", launchResponseSchema(t, doc, "/root", "get"), uintptr(7), true},
+		launchSample{"string for uintptr", launchResponseSchema(t, doc, "/root", "get"), "7", false},
+	)
+	assert.Equal(t, "integer", props(t, doc, "response")["address"].(map[string]any)["type"])
+	assert.Equal(t, map[string]any{"type": "integer"}, launchResponseSchema(t, doc, "/root", "get"))
+}
+
+// schemaStamp gets MarshalJSON from its embedded time.Time, so the encoders
+// write the whole struct as a time string, without the note.
+type schemaStamp struct {
+	time.Time
+
+	Note string `json:"note"`
+}
+
+// schemaOwnStamp declares its own MarshalJSON, which wins over the promoted
+// one.
+type schemaOwnStamp struct {
+	time.Time
+
+	Note string `json:"note"`
+}
+
+func (s schemaOwnStamp) MarshalJSON() ([]byte, error) {
+	if s.Note == "" {
+		return nil, errors.New("empty note")
+	}
+	return []byte(strconv.Quote(s.Note)), nil
+}
+
+func TestLaunchPromotedEncoderSetsTheSchema(t *testing.T) {
+	type response struct {
+		At   schemaStamp   `json:"at"`
+		Ptr  *schemaStamp  `json:"ptr"`
+		List []schemaStamp `json:"list"`
+	}
+	d := newGen()
+	specout.Document(d, http.MethodGet, "/x", specout.Get[response]{HandlerFunc: noop})
+	specout.Document(d, http.MethodGet, "/stamp", specout.Get[schemaStamp]{HandlerFunc: noop})
+	specout.Document(d, http.MethodGet, "/own", specout.Get[schemaOwnStamp]{HandlerFunc: noop})
+	doc := buildDoc(t, d)
+	stamp := schemaStamp{Time: time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC), Note: "dropped"}
+	wire, err := jsonv1.Marshal(stamp)
+	require.NoError(t, err)
+	require.JSONEq(t, `"2026-10-29T12:00:00Z"`, string(wire), "encoding/json writes the embedded time")
+	value := response{At: stamp, List: []schemaStamp{stamp}}
+	exportLaunchSamples(t, doc,
+		launchSample{"promoted encoder", launchResponseSchema(t, doc, "/x", "get"), value, true},
+		launchSample{"promoted root", launchResponseSchema(t, doc, "/stamp", "get"), stamp, true},
+		launchSample{
+			"fields for a promoted encoder", launchResponseSchema(t, doc, "/stamp", "get"),
+			map[string]any{"note": "x"},
+			false,
+		},
+	)
+	timeSchema := map[string]any{"type": "string", "format": "date-time"}
+	p := props(t, doc, "response")
+	assert.Equal(t, timeSchema, p["at"])
+	assert.Equal(t, timeSchema, p["list"].(map[string]any)["items"])
+	assert.Equal(t, []any{"string", "null"}, p["ptr"].(map[string]any)["type"])
+	assert.Equal(t, timeSchema, componentsSchema(t, doc, "schemaStamp"))
+	assert.Contains(t, props(t, doc, "schemaOwnStamp"), "note", "a declared MarshalJSON keeps the reflected fields")
+}
+
+// schemaInnerStamp gets MarshalJSON from its time.Time.
+type schemaInnerStamp struct{ time.Time }
+
+// schemaOuterStamp gets MarshalJSON from its own time.Time, which is
+// shallower than the time.Time in schemaInnerStamp.
+type schemaOuterStamp struct {
+	time.Time
+	schemaInnerStamp
+}
+
+func TestLaunchShallowestPromotedEncoderSetsTheSchema(t *testing.T) {
+	d := newGen()
+	specout.Document(d, http.MethodGet, "/x", specout.Get[schemaOuterStamp]{HandlerFunc: noop})
+	doc := buildDoc(t, d)
+	value := schemaOuterStamp{Time: time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)}
+	wire, err := jsonv1.Marshal(value)
+	require.NoError(t, err)
+	require.JSONEq(t, `"2026-10-29T12:00:00Z"`, string(wire), "encoding/json writes the shallowest time")
+	exportLaunchSamples(t, doc,
+		launchSample{"shallowest promoted encoder", launchResponseSchema(t, doc, "/x", "get"), value, true},
+		launchSample{"object for a promoted encoder", launchResponseSchema(t, doc, "/x", "get"), map[string]any{}, false},
+	)
+	assert.Equal(t, map[string]any{"type": "string", "format": "date-time"}, componentsSchema(t, doc, "schemaOuterStamp"))
+}
+
+// regexp.Regexp writes text through a pointer method, so the reflector would
+// read its Go fields.
+func TestLaunchPointerTextMarshalerIsAString(t *testing.T) {
+	type response struct {
+		Pattern  *regexp.Regexp  `json:"pattern"`
+		Patterns []regexp.Regexp `json:"patterns"`
+	}
+	d := newGen()
+	specout.Document(d, http.MethodGet, "/x", specout.Get[response]{HandlerFunc: noop})
+	doc := buildDoc(t, d)
+	value := response{Pattern: regexp.MustCompile(`^a+$`), Patterns: []regexp.Regexp{*regexp.MustCompile(`b`)}}
+	wire, err := jsonv1.Marshal(value)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"pattern":"^a+$","patterns":["b"]}`, string(wire))
+	exportLaunchSamples(t, doc,
+		launchSample{"pointer text values", launchResponseSchema(t, doc, "/x", "get"), value, true},
+		launchSample{"null pointer text value", launchResponseSchema(t, doc, "/x", "get"), response{}, true},
+		launchSample{
+			"object for a pointer text value", launchResponseSchema(t, doc, "/x", "get"),
+			map[string]any{"pattern": map[string]any{}, "patterns": []any{}},
+			false,
+		},
+	)
+	p := props(t, doc, "response")
+	assert.Equal(t, []any{"string", "null"}, p["pattern"].(map[string]any)["type"])
+	assert.Equal(t, map[string]any{"type": "string"}, p["patterns"].(map[string]any)["items"])
+}
+
+// The math/big types write a number or text through pointer methods, so the
+// reflector would read their Go fields.
+func TestLaunchBigNumbers(t *testing.T) {
+	type response struct {
+		Int   *big.Int   `json:"int"`
+		Float *big.Float `json:"float"`
+		Rat   *big.Rat   `json:"rat"`
+	}
+	d := newGen()
+	specout.Document(d, http.MethodGet, "/x", specout.Get[response]{HandlerFunc: noop})
+	specout.Document(d, http.MethodGet, "/int", specout.Get[*big.Int]{HandlerFunc: noop})
+	doc := buildDoc(t, d)
+	huge, ok := new(big.Int).SetString("123456789012345678901234567890", 10)
+	require.True(t, ok)
+	value := response{Int: huge, Float: big.NewFloat(1.5), Rat: big.NewRat(1, 3)}
+	wire, err := jsonv1.Marshal(value)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"int":123456789012345678901234567890,"float":"1.5","rat":"1/3"}`, string(wire))
+	exportLaunchSamples(t, doc,
+		launchSample{"big values", launchResponseSchema(t, doc, "/x", "get"), value, true},
+		launchSample{"null big values", launchResponseSchema(t, doc, "/x", "get"), response{}, true},
+		launchSample{
+			"string for big.Int", launchResponseSchema(t, doc, "/x", "get"),
+			map[string]any{"int": "1", "float": "1", "rat": "1"},
+			false,
+		},
+	)
+	p := props(t, doc, "response")
+	assert.Equal(t, []any{"integer", "null"}, p["int"].(map[string]any)["type"])
+	assert.Equal(t, []any{"string", "null"}, p["float"].(map[string]any)["type"])
+	assert.Equal(t, []any{"string", "null"}, p["rat"].(map[string]any)["type"])
+	root := opOf(t, doc, "/int", "get")["responses"].(map[string]any)["200"].(map[string]any)
+	assert.Equal(t, map[string]any{"anyOf": []any{map[string]any{"type": "integer"}, map[string]any{"type": "null"}}},
+		root["content"].(map[string]any)["application/json"].(map[string]any)["schema"])
+}
+
+// json.Number is a Go string that the encoders write as a JSON number.
+func TestLaunchJSONNumber(t *testing.T) {
+	type response struct {
+		Amount jsonv1.Number `json:"amount"`
+	}
+	d := newGen()
+	specout.Document(d, http.MethodGet, "/x", specout.Get[response]{HandlerFunc: noop})
+	doc := buildDoc(t, d)
+	value := response{Amount: "12.5"}
+	wire, err := jsonv1.Marshal(value)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"amount":12.5}`, string(wire))
+	exportLaunchSamples(t, doc,
+		launchSample{"json.Number", launchResponseSchema(t, doc, "/x", "get"), value, true},
+		launchSample{
+			"string for json.Number", launchResponseSchema(t, doc, "/x", "get"),
+			map[string]any{"amount": "12.5"},
+			false,
+		},
+	)
+	assert.Equal(t, "number", props(t, doc, "response")["amount"].(map[string]any)["type"])
+}
+
+func TestUnencodableTypesPanicClearly(t *testing.T) {
+	for want, value := range map[string]any{
+		"complex64": struct {
+			C complex64 `json:"c"`
+		}{},
+		"func()": struct {
+			F func() `json:"f"`
+		}{},
+		"chan int": struct {
+			L []chan int `json:"l"`
+		}{},
+	} {
+		t.Run(want, func(t *testing.T) {
+			assert.PanicsWithValue(t, "specout: JSON cannot encode "+want+`; tag its field json:"-"`, func() {
+				docOf(t, http.MethodGet, "/x", okGet.WithResponse(specout.Response{Status: http.StatusOK, Type: value}))
+			})
+		})
+	}
+	type skipped struct {
+		F func() `json:"-"`
+		A int    `json:"a"`
+	}
+	assert.NotPanics(t, func() { docOf(t, http.MethodGet, "/x", specout.Get[skipped]{HandlerFunc: noop}) })
+}
+
+// schemaJob declares its schema and writes its own JSON, so the encoders
+// never read its func field.
+type schemaJob struct {
+	Name string
+	Run  func()
+}
+
+func (j schemaJob) MarshalJSON() ([]byte, error) {
+	if j.Name == "" {
+		return nil, errors.New("empty job")
+	}
+	return []byte(strconv.Quote(j.Name)), nil
+}
+
+func (schemaJob) JSONSchema() *jsonschema.Schema { return &jsonschema.Schema{Type: "string"} }
+
+// schemaTextJob writes its JSON through MarshalText.
+type schemaTextJob struct {
+	Name string
+	Run  chan int
+}
+
+func (j schemaTextJob) MarshalText() ([]byte, error) {
+	if j.Name == "" {
+		return nil, errors.New("empty job")
+	}
+	return []byte(j.Name), nil
+}
+
+// schemaStampJob writes its JSON through the MarshalJSON of its time.Time.
+type schemaStampJob struct {
+	time.Time
+
+	Run func()
+}
+
+func TestLaunchOwnEncoderHidesUnencodableFields(t *testing.T) {
+	type response struct {
+		Job   schemaJob      `json:"job"`
+		Jobs  []schemaJob    `json:"jobs"`
+		Text  schemaTextJob  `json:"text"`
+		Stamp schemaStampJob `json:"stamp"`
+	}
+	var doc map[string]any
+	require.NotPanics(t, func() { doc = docOf(t, http.MethodGet, "/x", specout.Get[response]{HandlerFunc: noop}) })
+	value := response{
+		Job: schemaJob{Name: "a"}, Jobs: []schemaJob{{Name: "b"}}, Text: schemaTextJob{Name: "c"},
+		Stamp: schemaStampJob{Time: time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)},
+	}
+	wire, err := jsonv1.Marshal(value)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"job":"a","jobs":["b"],"text":"c","stamp":"2026-10-29T12:00:00Z"}`, string(wire))
+	exportLaunchSamples(t, doc,
+		launchSample{"own encoders", launchResponseSchema(t, doc, "/x", "get"), value, true},
+		launchSample{"fields for a text job", launchResponseSchema(t, doc, "/x", "get"), map[string]any{"text": map[string]any{}}, false},
+	)
+	p := props(t, doc, "response")
+	assert.Equal(t, "string", p["text"].(map[string]any)["type"])
+	assert.Equal(t, map[string]any{"type": "string", "format": "date-time"}, p["stamp"])
+}
+
 type (
 	dupA struct{ A string }
 	dupB struct{ B int }
@@ -265,7 +666,8 @@ func TestDuplicateComponentNamePanics(t *testing.T) {
 	r := chi.NewRouter()
 	specout.Chi(d, r).Get("/a", specout.Handler[struct{}, dupA]{HandlerFunc: noop})
 	specout.Chi(d, r).Get("/b", specout.Handler[struct{}, dupB]{HandlerFunc: noop})
-	require.Panics(t, func() { serveDoc(t, d, r) }, "expected duplicate-name panic")
+	adopt(t, specout.Chi(d, r))
+	require.Panics(t, func() { buildDoc(t, d) }, "expected duplicate-name panic")
 }
 
 // Regression: two distinct types with one name, reached only through a nested
@@ -274,7 +676,8 @@ func TestDuplicateComponentNamePanics(t *testing.T) {
 func TestSameNamedNestedTypesPanic(t *testing.T) {
 	d, r := newGen(), chi.NewRouter()
 	specout.Chi(d, r).Get("/x", specout.Handler[struct{}, nestedDup]{HandlerFunc: noop})
-	require.Panics(t, func() { serveDoc(t, d, r) }, "expected a duplicate-name panic")
+	adopt(t, specout.Chi(d, r))
+	require.Panics(t, func() { buildDoc(t, d) }, "expected a duplicate-name panic")
 }
 
 // SchemaName must reach a type that is only ever nested: both components are
@@ -294,4 +697,31 @@ func TestNestedOnlyOverrideApplies(t *testing.T) {
 	np := props(t, doc, "nestedDup")
 	assert.Equal(t, "#/components/schemas/LocalContact", np["local"].(map[string]any)["$ref"], "local ref")
 	assert.Equal(t, "#/components/schemas/Contact", np["lib"].(map[string]any)["$ref"], "lib ref")
+}
+
+// Anonymous1 is a user type with the name that the first anonymous struct
+// would get.
+type Anonymous1 struct {
+	ID string `json:"id"`
+}
+
+// An anonymous struct takes the next AnonymousN name that no named type uses,
+// so the user type keeps Anonymous1 whichever route the build reaches first.
+func TestAnonymousNameSkipsUserTypeName(t *testing.T) {
+	type anonymous = struct {
+		Name string `json:"name"`
+	}
+	for _, userFirst := range []bool{true, false} {
+		d := newGen()
+		userPath, anonPath := "/a", "/b"
+		if !userFirst {
+			userPath, anonPath = anonPath, userPath
+		}
+		specout.Document(d, http.MethodGet, userPath, specout.Get[Anonymous1]{HandlerFunc: noop})
+		specout.Document(d, http.MethodGet, anonPath, specout.Get[anonymous]{HandlerFunc: noop})
+		doc := buildDoc(t, d)
+		assert.Contains(t, props(t, doc, "Anonymous1"), "id", "userFirst=%t", userFirst)
+		assert.Contains(t, props(t, doc, "Anonymous2"), "name", "userFirst=%t", userFirst)
+		assert.Equal(t, "#/components/schemas/Anonymous2", launchResponseSchema(t, doc, anonPath, "get")["$ref"])
+	}
 }

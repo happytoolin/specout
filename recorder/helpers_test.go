@@ -18,7 +18,7 @@ import (
 // them. It is the TestingT that recorder.Verify writes to.
 type failT struct{ errs []string }
 
-func (f *failT) Helper()                    {}
+func (*failT) Helper()                      {}
 func (f *failT) Errorf(fm string, a ...any) { f.errs = append(f.errs, fmt.Sprintf(fm, a...)) }
 
 func hit204(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }

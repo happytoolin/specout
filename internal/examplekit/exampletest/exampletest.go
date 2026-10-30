@@ -1,5 +1,6 @@
-// Package exampletest is the test plumbing the specout examples share. It is
-// internal to this repo and is never part of the library.
+// Package exampletest is the test plumbing the specout examples share. The
+// router adapter tests use its CaptureT too. It is internal to this repo and is
+// never part of the library.
 package exampletest
 
 import (
@@ -15,7 +16,7 @@ import (
 // without the other failing it.
 type CaptureT struct{ Errs []string }
 
-func (c *CaptureT) Helper()                   {}
+func (*CaptureT) Helper()                     {}
 func (c *CaptureT) Errorf(f string, a ...any) { c.Errs = append(c.Errs, fmt.Sprintf(f, a...)) }
 func (c *CaptureT) Fatalf(f string, a ...any) { c.Errs = append(c.Errs, fmt.Sprintf(f, a...)) }
 
@@ -52,5 +53,10 @@ func Dig(tb testing.TB, v any, keys ...string) any {
 // Obj is Dig ending on a JSON object.
 func Obj(tb testing.TB, v any, keys ...string) map[string]any {
 	tb.Helper()
-	return Dig(tb, v, keys...).(map[string]any)
+	got := Dig(tb, v, keys...)
+	m, ok := got.(map[string]any)
+	if !ok {
+		tb.Fatalf("%v is not a JSON object", got)
+	}
+	return m
 }

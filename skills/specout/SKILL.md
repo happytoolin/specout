@@ -32,7 +32,8 @@ release supports the Go version in `go.mod`.
 - Read [configuration](references/configuration.md) when setting API metadata,
   shared errors, authentication schemes, operation metadata, or closed schemas.
 - Read [routers and verification](references/routers-and-verification.md) before
-  wiring chi, gorilla/mux, http.ServeMux, another router, or contract tests.
+  wiring chi, gorilla/mux, http.ServeMux, Echo, Gin, Fiber, another router, or
+  contract tests.
 - For a complete new integration, read all three references.
 
 ## Integration shape
@@ -59,9 +60,12 @@ Register every route, union variant, and schema name before the first
 `ServeHTTP` or `WriteJSON` call. The first build freezes the document.
 
 For chi and gorilla/mux, call `Adopt` on the outermost router after route setup.
-Use `RequireDocumented` in tests when route coverage matters. http.ServeMux
-cannot enumerate routes, so register documented endpoints through
-`specout.Std`. Use `specout.Document` for other routers.
+For Echo, Gin, and Fiber, use the adapter packages under `adapters/` and call
+their package-level `Adopt` on the engine or app: `specoutecho` (Echo v5),
+`specoutechov4` (Echo v4), `specoutgin`, and `specoutfiber` (Fiber v3). Use
+`RequireDocumented` in tests when route coverage matters. http.ServeMux cannot enumerate routes, so
+register documented endpoints through `specout.Std`. Use `specout.Bind` or
+`specout.Document` for other routers.
 
 ## Finish
 

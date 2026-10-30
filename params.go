@@ -49,6 +49,7 @@ func requiredParam(f reflect.StructField) bool {
 		tagValue(f.Tag.Get("jsonschema"), "default") == ""
 }
 
+// optionalTag reports whether a tag value has the omitempty or omitzero option.
 func optionalTag(tag string) bool {
 	_, options, _ := strings.Cut(tag, ",")
 	for option := range strings.SplitSeq(options, ",") {
@@ -84,10 +85,15 @@ func (sr *schemaRegistry) taggedParams(req reflect.Type) []any {
 			continue
 		}
 		name := parts0(qt)
-		if name == "" || seen[loc+"\x00"+name] {
+		key := loc + "\x00" + name
+		if loc == InHeader {
+			// HTTP header names are case-insensitive: X-Id and x-id are one header
+			key = strings.ToLower(key)
+		}
+		if name == "" || seen[key] {
 			panic("specout: empty or duplicate " + loc + " parameter " + name)
 		}
-		seen[loc+"\x00"+name] = true
+		seen[key] = true
 		params = append(params, sr.parameter(name, loc, f))
 	}
 	return params
@@ -96,7 +102,7 @@ func (sr *schemaRegistry) taggedParams(req reflect.Type) []any {
 // parameter builds every location from the same field metadata. An untyped
 // path placeholder has no field and uses the default required string schema.
 func (sr *schemaRegistry) parameter(name, loc string, f reflect.StructField) *obj {
-	schema := &jsonschema.Schema{Type: "string"}
+	schema := &jsonschema.Schema{Type: typeString}
 	if f.Type != nil {
 		schema = sr.reflectParam(f)
 		if loc != pathLocation && f.Type.Kind() == reflect.Pointer {
@@ -207,10 +213,24 @@ func parts0(s string) string {
 
 // tagValue extracts key=value from a jsonschema tag string.
 func tagValue(tag, key string) string {
-	for part := range strings.SplitSeq(tag, ",") {
+	for _, part := range tagParts(tag) {
 		if after, ok := strings.CutPrefix(part, key+"="); ok {
 			return after
 		}
 	}
 	return ""
+}
+
+// tagParts splits a jsonschema tag on its commas as invopop does: a comma
+// after a backslash belongs to the value, as in description=a\, b.
+func tagParts(tag string) []string {
+	parts := make([]string, 0, strings.Count(tag, ",")+1)
+	for part := range strings.SplitSeq(tag, ",") {
+		if n := len(parts); n > 0 && strings.HasSuffix(parts[n-1], `\`) {
+			parts[n-1] = strings.TrimSuffix(parts[n-1], `\`) + "," + part
+			continue
+		}
+		parts = append(parts, part)
+	}
+	return parts
 }

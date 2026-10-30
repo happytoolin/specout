@@ -23,7 +23,7 @@ type Handler[Req, Res any] struct {
 	// RequestContentTypes overrides the request body media types
 	// (application/x-www-form-urlencoded, application/xml, ...). The schema
 	// comes from Req; form media types use its form field names, while other
-	// media types use its JSON field names.
+	// media types use its JSON field names. A Req with no body panics.
 	RequestContentTypes []string
 	// Raw splices arbitrary keys into this operation object: x- extensions,
 	// or any other OpenAPI operation field specout does not model.
@@ -34,7 +34,7 @@ type Handler[Req, Res any] struct {
 
 // Types reifies the type parameters, making them visible to reflection at
 // registration time. It is the reification point; no AST analysis, ever.
-func (h Handler[Req, Res]) Types() (reflect.Type, reflect.Type) {
+func (Handler[Req, Res]) Types() (reflect.Type, reflect.Type) {
 	return reflect.TypeFor[Req](), reflect.TypeFor[Res]()
 }
 

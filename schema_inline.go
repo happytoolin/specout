@@ -15,8 +15,9 @@ func isBuiltin(t reflect.Type) bool {
 	// time.Time reflects to {type: string, format: date-time} — a scalar in
 	// every published spec. Without this it becomes a $ref to a component
 	// named "Time" when it is a bare body or a header type, while the same
-	// type used as a struct field inlines. One type, one shape.
-	if t == reflect.TypeFor[time.Time]() {
+	// type used as a struct field inlines. One type, one shape. The math/big
+	// types and json.Number are scalars too.
+	if t == reflect.TypeFor[time.Time]() || scalarTypes[t] != "" {
 		return true
 	}
 	switch t.Kind() {
@@ -26,7 +27,7 @@ func isBuiltin(t reflect.Type) bool {
 		return t.PkgPath() == "" && isBuiltin(t.Elem())
 	case reflect.Bool, reflect.String,
 		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
 		reflect.Float32, reflect.Float64:
 		// PkgPath is empty for the predeclared types only: a named alias
 		// (type Password string) keeps its own component.
@@ -53,8 +54,19 @@ func schemaFor(t reflect.Type, sr *schemaRegistry) any {
 }
 
 // propSchema builds a synthetic struct with one field shaped like f, so
-// invopop applies the field's jsonschema tag, then returns the property.
+// invopop applies the field's jsonschema tag, then returns the property. The
+// registry keeps it with the inline schemas outside components.
 func (sr *schemaRegistry) propSchema(t reflect.Type, tag reflect.StructTag) *jsonschema.Schema {
+	p := sr.fieldSchema(t, tag)
+	if p != nil {
+		sr.inline = append(sr.inline, p)
+	}
+	return p
+}
+
+// fieldSchema is the schema of a struct field of type t with tag, without
+// the registry keeping it: a caller puts it inside another schema.
+func (sr *schemaRegistry) fieldSchema(t reflect.Type, tag reflect.StructTag) *jsonschema.Schema {
 	validateAnonymousEmbeddings(t, make(map[reflect.Type]bool))
 	wrap := reflect.StructOf([]reflect.StructField{{Name: "Wrap", Type: t, Tag: tag}})
 	inlineRoot := true
@@ -67,23 +79,15 @@ func (sr *schemaRegistry) propSchema(t reflect.Type, tag reflect.StructTag) *jso
 			if t == wrap {
 				return nil
 			}
+			if s := sr.wireSchema(t); s != nil {
+				inlineRoot = false
+				return s
+			}
 			if inlineRoot {
 				inlineRoot = false
 				return nil
 			}
-			if isBuiltin(t) {
-				return nil
-			}
-			switch t.Kind() {
-			case reflect.Struct, reflect.Map:
-				return &jsonschema.Schema{Ref: sr.refFor(t)}
-			case reflect.Slice, reflect.Array:
-				if recursiveContainer(t) {
-					return &jsonschema.Schema{Ref: sr.refFor(t)}
-				}
-			default:
-			}
-			return nil
+			return sr.nestedRef(t)
 		},
 	}
 	s := r.Reflect(reflect.New(wrap).Interface())
@@ -98,10 +102,29 @@ func (sr *schemaRegistry) propSchema(t reflect.Type, tag reflect.StructTag) *jso
 	}
 	applyFormatTag(p, tag)
 	applyBoolEnumTag(p, t, tag)
+	applyNumberEnumTag(p, t, tag)
 	splitEnums(p)
 	sr.applySchemaFixes(t, p)
-	sr.inline = append(sr.inline, p)
 	return p
+}
+
+// nestedRef is the component $ref of a type nested in an inline schema: a
+// struct, a map or a recursive container. It is nil for a type that stays
+// inline.
+func (sr *schemaRegistry) nestedRef(t reflect.Type) *jsonschema.Schema {
+	if isBuiltin(t) {
+		return nil
+	}
+	switch t.Kind() {
+	case reflect.Struct, reflect.Map:
+	case reflect.Slice, reflect.Array:
+		if !recursiveContainer(t) {
+			return nil
+		}
+	default:
+		return nil
+	}
+	return &jsonschema.Schema{Ref: sr.refFor(t)}
 }
 
 // Recursive container chains have no struct boundary to stop inline expansion.

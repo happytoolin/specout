@@ -28,8 +28,8 @@ func (sr *schemaRegistry) unwrapDefs(t reflect.Type, s *jsonschema.Schema) *json
 		return defName == name
 	})
 	for _, defName := range defNames {
-		if sr.byName[defName] == nil {
-			sr.addDef(defName, s.Definitions[defName])
+		if def := s.Definitions[defName]; def != nil && sr.byName[defName] == nil {
+			sr.addDef(defName, def)
 		}
 	}
 	remapDefs(body)

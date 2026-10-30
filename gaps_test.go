@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -41,17 +42,18 @@ func TestGapRangeCode(t *testing.T) {
 	assert.False(t, declared[key][200], "Omit must drop the Res default from coverage")
 }
 
-// TestGapNoBodyStatuses: a bare 204 or 304 carries no body. HTTP forbids
-// content there, and inheriting Res would leak the handler's schema into it.
+// TestGapNoBodyStatuses: a bare 1xx, 204, 205 or 304 carries no body. HTTP
+// forbids content there, and inheriting Res would leak the handler's schema
+// into it.
 func TestGapNoBodyStatuses(t *testing.T) {
 	d := newGen()
 	r := chi.NewRouter()
 	specout.Chi(d, r).Get("/gone", specout.Handler[struct{}, gapRes]{
 		HandlerFunc: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) },
-		Responses:   []specout.Response{{Status: 204}, {Status: 304}},
+		Responses:   []specout.Response{{Status: 101}, {Status: 204}, {Status: 205}, {Status: 304}, {Key: "1XX"}},
 	})
 	responses := opOf(t, serveDoc(t, d, r), "/gone", "get")["responses"].(map[string]any)
-	for _, code := range []string{"204", "304"} {
+	for _, code := range []string{"101", "204", "205", "304", "1XX"} {
 		resp, ok := responses[code].(map[string]any)
 		require.True(t, ok, "missing %s", code)
 		assert.NotContains(t, resp, "content", "%s must carry no content", code)
@@ -60,24 +62,137 @@ func TestGapNoBodyStatuses(t *testing.T) {
 	assert.Contains(t, responses, "200", "the Res default 200 stays")
 }
 
-// TestGapOAuth2: an oauth2 flow with no URL is a spec the validator rejects,
-// so it panics at build.
-func TestGapOAuth2(t *testing.T) {
-	bad := specout.New(specout.Config{
-		Title: "t", Version: "1",
-		Auth: []specout.AuthScheme{specout.OAuth2("x", map[string]specout.OAuth2Flow{"implicit": {}})},
+// TestGapHeadCarriesNoContent: RFC 9110 gives a HEAD response no body, so a
+// HEAD operation keeps each status, description and header, and no content.
+func TestGapHeadCarriesNoContent(t *testing.T) {
+	d := specout.New(specout.Config{
+		Title: "t", Version: "1", ErrorType: gapRes{}, DefaultErrors: []int{http.StatusInternalServerError},
 	})
-	require.Panics(t, func() { buildDoc(t, bad) })
+	specout.Document(d, http.MethodHead, "/x", specout.Handler[struct{}, gapRes]{
+		HandlerFunc: noop,
+		Responses: []specout.Response{
+			{Status: http.StatusNotFound, Headers: []specout.Header{{Name: "X-Reason"}}},
+			{Status: http.StatusPartialContent, ContentType: "application/pdf"},
+		},
+	})
+	doc := buildDoc(t, d)
+	responses, _ := opOf(t, doc, "/x", "head")["responses"].(map[string]any)
+	require.Len(t, responses, 4)
+	for code, want := range map[string]string{"200": "OK", "404": "Not Found", "206": "Partial Content", "500": "Internal Server Error"} {
+		resp, _ := responses[code].(map[string]any)
+		assert.NotContains(t, resp, "content", code)
+		assert.Equal(t, want, resp["description"], code)
+	}
+	assert.Contains(t, responses["404"], "headers")
+	assert.NotContains(t, doc, "components", "a HEAD operation reflects no body type")
+}
+
+// TestGapBodylessContentPanics: 1xx, 204, 205 and 304 carry no body, so a
+// Response there with a Type that has fields or a media type panics at
+// registration. An empty Type and a range key that names 204 stay legal.
+func TestGapBodylessContentPanics(t *testing.T) {
+	for key, resp := range map[string]specout.Response{
+		"204": {Status: http.StatusNoContent, Type: gapRes{}},
+		"205": {Status: http.StatusResetContent, Type: gapRes{}},
+		"304": {Status: http.StatusNotModified, ContentType: "text/plain"},
+		"1XX": {Key: "1XX", ContentTypes: []string{"application/json"}},
+	} {
+		h := specout.Handler[struct{}, gapRes]{HandlerFunc: noop, Responses: []specout.Response{resp}}
+		assert.PanicsWithValue(t,
+			"specout: response "+key+" carries no body; remove its Type, ContentType or ContentTypes",
+			func() { specout.Document(newGen(), http.MethodGet, "/x", h) }, key)
+	}
+	d := newGen()
+	specout.Document(d, http.MethodGet, "/x", specout.Handler[struct{}, gapRes]{
+		HandlerFunc: noop,
+		Responses: []specout.Response{
+			{Status: http.StatusNoContent, Type: struct{}{}},
+			{Key: "2XX", Status: http.StatusNoContent},
+		},
+	})
+	responses, _ := opOf(t, buildDoc(t, d), "/x", "get")["responses"].(map[string]any)
+	assert.NotContains(t, responses["204"], "content")
+	assert.Contains(t, responses["2XX"], "content", "a 2XX response describes bodies too")
+}
+
+// TestGapRequestContentTypesNeedABody: media types for a request that has no
+// body describe nothing, so the registration panics.
+func TestGapRequestContentTypesNeedABody(t *testing.T) {
+	type onlyParams struct {
+		ID string `path:"id"`
+	}
+	assert.PanicsWithValue(t, "specout: POST /x sets RequestContentTypes, but Req has no request body", func() {
+		specout.Document(newGen(), http.MethodPost, "/x", specout.Handler[struct{}, gapRes]{
+			HandlerFunc: noop, RequestContentTypes: []string{"application/json"},
+		})
+	})
+	assert.PanicsWithValue(t, "specout: POST /x/{id} sets RequestContentTypes, but Req has no request body", func() {
+		specout.Document(newGen(), http.MethodPost, "/x/{id}", specout.Handler[onlyParams, gapRes]{
+			HandlerFunc: noop, RequestContentTypes: []string{"application/json"},
+		})
+	})
+}
+
+// TestGapOAuth2: an oauth2 flow with no URL is a spec the validator rejects,
+// so New panics.
+func TestGapOAuth2(t *testing.T) {
+	require.Panics(t, func() {
+		specout.New(specout.Config{
+			Title: "t", Version: "1",
+			Auth: []specout.AuthScheme{specout.OAuth2("x", map[string]specout.OAuth2Flow{"implicit": {}})},
+		})
+	})
 }
 
 // TestGapExternalDocsNeedsURL: url is required by OpenAPI, and an empty one
 // used to emit an object the validator rejects.
 func TestGapExternalDocsNeedsURL(t *testing.T) {
-	d := specout.New(specout.Config{
-		Title: "t", Version: "1",
-		ExternalDocs: &specout.ExternalDocs{Description: "no link"},
+	require.Panics(t, func() {
+		specout.New(specout.Config{
+			Title: "t", Version: "1",
+			ExternalDocs: &specout.ExternalDocs{Description: "no link"},
+		})
 	})
-	require.Panics(t, func() { buildDoc(t, d) })
+}
+
+// TestGapConfigThatBreaksTheDocument: each config emitted a document the
+// OpenAPI validator rejects, or dropped a declared scheme without a word. New
+// panics on it, before any route is registered.
+func TestGapConfigThatBreaksTheDocument(t *testing.T) {
+	for _, tc := range []struct {
+		name, want string
+		cfg        specout.Config
+	}{
+		{"license without name", "specout: License needs a Name", specout.Config{License: &specout.License{URL: "https://x.example"}}},
+		{"tag without a docs URL", "specout: ExternalDocs needs a URL", specout.Config{Tags: []specout.Tag{{Name: "a", ExternalDocs: &specout.ExternalDocs{}}}}},
+		{
+			"reflect.Type error envelope", "specout: a Type field takes a value such as Error{}, not a reflect.Type",
+			specout.Config{ErrorType: reflect.TypeFor[gapRes](), DefaultErrors: []int{http.StatusInternalServerError}},
+		},
+		{
+			"error status out of range", "specout: response status must be 0 (default) or 100-599, got 600",
+			specout.Config{ErrorType: gapRes{}, DefaultErrors: []int{600}},
+		},
+		{
+			"error status with no body", "specout: DefaultErrors holds 204, which carries no body for ErrorType",
+			specout.Config{ErrorType: gapRes{}, DefaultErrors: []int{http.StatusNoContent}},
+		},
+		{"tag without name", `specout: empty or duplicate tag name ""`, specout.Config{Tags: []specout.Tag{{Description: "d"}}}},
+		{"duplicate tag", `specout: empty or duplicate tag name "a"`, specout.Config{Tags: []specout.Tag{{Name: "a"}, {Name: "a"}}}},
+		{
+			"auth name with a space", `specout: AuthScheme.Name "bearer auth" must contain only ASCII letters, digits, dots, hyphens or underscores`,
+			specout.Config{Auth: []specout.AuthScheme{{Name: "bearer auth", Type: "httpBearer"}}},
+		},
+		{
+			"duplicate auth name", "specout: duplicate AuthScheme name bearerAuth",
+			specout.Config{Auth: []specout.AuthScheme{specout.Bearer, specout.APIKey("bearerAuth", "k", specout.InHeader)}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.cfg.Title, tc.cfg.Version = "t", "1"
+			assert.PanicsWithValue(t, tc.want, func() { specout.New(tc.cfg) })
+		})
+	}
 }
 
 type probeQ struct {

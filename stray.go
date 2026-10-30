@@ -2,12 +2,13 @@ package specout
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 )
 
 // strayScan collects the routes an adapter's walk reports that specout cannot
-// document. Both Adopt implementations report through it: they differ only in
-// how they ask their router for one entry at a time.
+// document. Every Adopt and CheckRoutes reports through it: they differ only
+// in how they ask their router for one entry at a time.
 type strayScan struct {
 	d       *Generator
 	skips   []SkipRule
@@ -39,14 +40,19 @@ func (s *strayScan) collect(pattern, methods string, h http.Handler) {
 	}
 }
 
+// err sorts the strays and names each one once: chi.Walk and some router
+// tables list the methods of one path in map order, a table can list one
+// route twice, and one router must give one error text.
 func (s *strayScan) err() error {
 	if len(s.unknown) == 0 {
 		return nil
 	}
-	return &StrayError{Routes: s.unknown}
+	slices.Sort(s.unknown)
+	return &StrayError{Routes: slices.Compact(s.unknown)}
 }
 
-// StrayError names routes registered without specout metadata.
+// StrayError names routes registered without specout metadata, in sorted
+// order.
 type StrayError struct{ Routes []string }
 
 func (e *StrayError) Error() string {

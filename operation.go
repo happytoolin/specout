@@ -1,6 +1,7 @@
 package specout
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"strings"
@@ -14,13 +15,9 @@ func (d *Generator) operationFor(rec *routeRecord, sr *schemaRegistry) *obj {
 	op := newObj()
 	op.setIf("summary", rec.summary)
 	op.setIf("description", rec.description)
-	opID := rec.operationID
-	if opID == "" {
-		opID = operationID(rec.method, docPath(rec.full))
-	}
 	// a malformed segment ({}) derives no id: omit the field rather than
 	// emit an empty, unusable operationId
-	op.setIf("operationId", opID)
+	op.setIf("operationId", emittedOperationID(rec))
 	if rec.deprecated {
 		op.set("deprecated", true)
 	}
@@ -49,6 +46,20 @@ func (d *Generator) operationFor(rec *routeRecord, sr *schemaRegistry) *obj {
 	return mergeRaw(op, rec.raw)
 }
 
+// checkRoute panics on route data that would break the document: Raw keys,
+// request media types and responses. Every binder calls it through addRoute
+// before the route reaches the router, so the stack names the route and a bad
+// route leaves no record. Checks that need the resolved path or the other
+// routes run at build.
+func (d *Generator) checkRoute(rec *routeRecord) {
+	checkRawKeys(rec.raw, operationFields)
+	checkRequestContentTypes(rec)
+	d.checkResponses(rec)
+}
+
+// braces removes the parameter braces from a path segment.
+var braces = strings.NewReplacer("{", "", "}", "")
+
 // operationID derives a deterministic id from method+path:
 // GET /onboarding/{id}/sync -> getOnboardingByIdSync.
 func operationID(method, path string) string {
@@ -58,7 +69,8 @@ func operationID(method, path string) string {
 		if seg == "" {
 			continue
 		}
-		seg = strings.Trim(seg, "{}")
+		// every brace goes, so /files/{name}.{ext} gives FilesName.ext
+		seg = braces.Replace(seg)
 		// braces with nothing to name: no derivable id
 		if seg == "" {
 			return ""
@@ -70,6 +82,15 @@ func operationID(method, path string) string {
 	return b.String()
 }
 
+// emittedOperationID is the operationId the document carries for rec. A Raw
+// operationId wins, because mergeRaw applies Raw last.
+func emittedOperationID(rec *routeRecord) string {
+	if id, ok := rec.raw["operationId"].(string); ok {
+		return id
+	}
+	return cmp.Or(rec.operationID, operationID(rec.method, docPath(rec.full)))
+}
+
 // checkOperationIDs fails loud when two operations would share an id:
 // client codegen assumes uniqueness.
 func checkOperationIDs(records []*routeRecord) error {
@@ -78,10 +99,7 @@ func checkOperationIDs(records []*routeRecord) error {
 		if rec.isCatchAll() {
 			continue
 		}
-		id := rec.operationID
-		if id == "" {
-			id = operationID(rec.method, docPath(rec.full))
-		}
+		id := emittedOperationID(rec)
 		if id == "" {
 			continue
 		}

@@ -8,7 +8,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/happytoolin/specout"
+	"github.com/happytoolin/specout/internal/adaptertest"
 	"github.com/happytoolin/specout/recorder"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -139,4 +141,21 @@ func TestVerifyWhileRecording(t *testing.T) {
 		assert.Empty(t, verify(d, rec))
 	}
 	wg.Wait()
+}
+
+// A handler that hijacks the connection writes the response itself, as a
+// WebSocket library writes its 101. The recorder used to report 200 for each
+// case of adaptertest.HijackCases.
+func TestRecorderHijackedResponses(t *testing.T) {
+	for _, tc := range adaptertest.HijackCases() {
+		t.Run(tc.Name, func(t *testing.T) {
+			d, r := gen(), chi.NewRouter()
+			b := specout.Chi(d, r)
+			b.Get("/ws", tc.Route())
+			require.NoError(t, b.Adopt())
+			rec := recorder.New(r)
+			assert.Equal(t, tc.Status, adaptertest.RawStatus(t, rec, "/ws", tc.Upgrade))
+			assert.Equal(t, tc.Errs, verify(d, rec))
+		})
+	}
 }
