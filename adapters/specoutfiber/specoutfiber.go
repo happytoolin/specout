@@ -191,19 +191,8 @@ func serve(next http.Handler, route observed) fiber.Handler {
 //
 // Adopt also checks the translation of every path against the parameters
 // Fiber parsed from it, so syntax specout reads differently fails here.
-//
-// Adopt also reports a route that never runs. Fiber tries the routes of one
-// method in registration order, and an earlier route can take every request
-// of a later one: /users/:id takes /users/me, and with the default Config,
-// /users takes /Users and /users/. Register the specific route first, or set
-// Config.CaseSensitive or Config.StrictRouting. Skipped routes take no part
-// in this check, so skip a guard route that calls c.Next(): it sends its
-// requests on to the later routes.
 func Adopt(d *specout.Generator, app *fiber.App, skips ...specout.SkipRule) error {
 	table := endpoints(app)
-	if err := shadowed(app, table, skips); err != nil {
-		return err
-	}
 	routes := make([]specout.RouteKey, 0, len(table))
 	for i := range table {
 		r := &table[i]
@@ -220,27 +209,8 @@ func Adopt(d *specout.Generator, app *fiber.App, skips ...specout.SkipRule) erro
 	return d.CheckRoutes(routes, skips...)
 }
 
-// shadowed reports the routes of table that never run on app, because an
-// earlier route takes their requests. A skipped route takes no part: it can
-// be a guard that calls c.Next, which lets the later routes run.
-func shadowed(app *fiber.App, table []fiber.Route, skips []specout.SkipRule) error {
-	cfg := app.Config()
-	routes := make([]fiberpath.Route, 0, len(table))
-	for i := range table {
-		r := fiberpath.Route{Method: table[i].Method, Path: table[i].Path}
-		if !slices.ContainsFunc(skips, func(s specout.SkipRule) bool { return s.Matches(fiberpath.Table(r.Path)) }) {
-			routes = append(routes, r)
-		}
-	}
-	return fiberpath.Shadowed("specoutfiber", routes, fiberpath.Reading{
-		CaseSensitive: cfg.CaseSensitive,
-		StrictRouting: cfg.StrictRouting,
-		Match:         func(path, pattern string) bool { return fiber.RoutePatternMatch(path, pattern, cfg) },
-	})
-}
-
-// endpoints lists the routes of app that run endpoint handlers, in Fiber's
-// match order, without the HEAD routes Fiber adds for GET routes. Fiber marks
+// endpoints lists the routes of app that run endpoint handlers, without the
+// HEAD routes Fiber adds for GET routes. Fiber marks
 // those in an unexported field, but builds each one as a copy of its GET
 // route, so the two share one handler slice.
 func endpoints(app *fiber.App) []fiber.Route {

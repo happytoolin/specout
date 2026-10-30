@@ -36,9 +36,6 @@ func noContent(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.Stat
 
 var okRoute = specout.Handler[struct{}, specout.NoContent]{HandlerFunc: noContent}
 
-// guardHint ends each "never runs" error.
-const guardHint = "; if that route is a guard that calls c.Next(), skip it with specout.Skip"
-
 func nativeRoute(c fiber.Ctx) error {
 	c.Status(http.StatusNoContent)
 	return nil
@@ -273,20 +270,6 @@ func TestAdoptReportsExplicitHeadBesideGet(t *testing.T) {
 	assert.Equal(t, []string{"HEAD /explicit"}, adaptertest.Strays(t, specoutfiber.Adopt(d, app)))
 }
 
-// Fiber v3 tries the HEAD copies of GET routes after the explicit HEAD routes,
-// so a Head route after a GET route that matches it still runs.
-func TestHeadAfterMatchingGetRuns(t *testing.T) {
-	d, app := adaptertest.Generator(), fiber.New()
-	r := specoutfiber.New(d, app)
-	r.Get("/users/:id", okRoute)
-	r.Head("/users/me", specout.Handler[struct{}, specout.NoContent]{
-		HandlerFunc: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusAccepted) },
-	})
-	status, _ := do(t, app, http.MethodHead, "/users/me")
-	assert.Equal(t, http.StatusAccepted, status)
-	require.NoError(t, specoutfiber.Adopt(d, app))
-}
-
 // Middleware that answers before the endpoint still counts for the route the
 // request would have reached, for GET and for the HEAD copy of GET.
 func TestRecordSeesMiddlewareResponses(t *testing.T) {
@@ -331,66 +314,6 @@ func TestRecordReportsMountedSubAppPath(t *testing.T) {
 		"declared GET /items/{id} 204 never produced by any test",
 		"handler wrote GET /sub/items/{id} 204 but spec does not declare it",
 	}, ft.Errs)
-}
-
-// Fiber tries the routes of one method in registration order, so an earlier
-// route can take every request of a later one. Adopt names both routes.
-func TestAdoptReportsRoutesThatNeverRun(t *testing.T) {
-	accepted := specout.Handler[struct{}, specout.NoContent]{
-		HandlerFunc: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusAccepted) },
-	}
-	for _, tc := range []struct{ first, second, target string }{
-		{"/users/:id", "/users/me", "/users/me"},
-		{"/users", "/Users", "/Users"},
-		{"/users", "/users/", "/users/"},
-		{"/users/:id", "/Users/:id/", "/Users/1/"},
-		{"/files/*", "/files/:name", "/files/a"},
-		{"/:a/:b", "/users/:id", "/users/1"},
-	} {
-		d, app := adaptertest.Generator(), fiber.New()
-		r := specoutfiber.New(d, app)
-		r.Get(tc.first, okRoute)
-		r.Get(tc.second, accepted)
-		status, _ := do(t, app, http.MethodGet, tc.target)
-		assert.Equal(t, http.StatusNoContent, status, "%s runs the first route", tc.target)
-		require.EqualError(t, specoutfiber.Adopt(d, app), "specoutfiber: GET "+tc.second+
-			" never runs: Fiber sends its requests to GET "+tc.first+", an earlier route"+guardHint)
-	}
-}
-
-// A later route that matches requests the earlier one does not take still
-// runs, and the Config can keep case or a trailing slash apart.
-func TestAdoptAcceptsRoutesThatRun(t *testing.T) {
-	for _, tc := range []struct {
-		cfg           fiber.Config
-		first, second string
-	}{
-		{fiber.Config{}, "/users/me", "/users/:id"},
-		{fiber.Config{}, "/users/:id<int>", "/users/me"},
-		{fiber.Config{}, "/files/:name", "/files/*"},
-		{fiber.Config{}, "/users/:id<int>", "/users/:name"},
-		{fiber.Config{}, "/:a/:b", "/users/:id/edit"},
-		{fiber.Config{}, `/a/\:id`, "/a/:id"},
-		{fiber.Config{CaseSensitive: true}, "/users", "/Users"},
-		{fiber.Config{StrictRouting: true}, "/users", "/users/"},
-	} {
-		d, app := adaptertest.Generator(), fiber.New(tc.cfg)
-		r := specoutfiber.New(d, app)
-		r.Get(tc.first, okRoute)
-		r.Get(tc.second, okRoute)
-		require.NoError(t, specoutfiber.Adopt(d, app), "%s then %s", tc.first, tc.second)
-	}
-}
-
-// A skipped guard route that calls c.Next lets the later routes run, so it
-// shadows nothing.
-func TestAdoptSkippedGuardShadowsNothing(t *testing.T) {
-	d, app := adaptertest.Generator(), fiber.New()
-	app.All("/api/*", func(c fiber.Ctx) error { return c.Next() })
-	specoutfiber.New(d, app).Get("/api/users", okRoute)
-	status, _ := do(t, app, http.MethodGet, "/api/users")
-	require.Equal(t, http.StatusNoContent, status, "the guard lets the route run")
-	require.NoError(t, specoutfiber.Adopt(d, app, specout.Skip("/api/*")))
 }
 
 // Bind checks a route after Fiber adds it. A registration that panics there

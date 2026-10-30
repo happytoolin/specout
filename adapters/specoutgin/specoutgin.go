@@ -146,64 +146,9 @@ func Adopt(d *specout.Generator, e *gin.Engine, skips ...specout.SkipRule) error
 	table := e.Routes()
 	routes := make([]specout.RouteKey, 0, len(table))
 	for _, ri := range table {
-		routes = append(routes, tableKey(d, ri.Method, ri.Path))
+		routes = append(routes, specout.RouteKey{Method: ri.Method, Path: documentedPath(ri.Method, ri.Path)})
 	}
 	return d.CheckRoutes(routes, skips...)
-}
-
-// maxEscapeReadings caps the colons tableKey tries to read as escaped: each
-// one doubles the readings.
-const maxEscapeReadings = 8
-
-// tableKey returns the route key of one path in Gin's route table. Gin turns
-// \: into : in its tree on the first request, so after it a colon in
-// /items/:id/x:y may be the literal of /items/:id/x\:y. When the plain reading
-// is not documented, tableKey takes the first reading with some colons
-// escaped that is.
-func tableKey(d *specout.Generator, method, p string) specout.RouteKey {
-	key := specout.RouteKey{Method: method, Path: tablePath(p)}
-	colons := colonIndexes(p)
-	if len(colons) == 0 || len(colons) > maxEscapeReadings || strings.Contains(p, `\:`) || documented(d, key) {
-		return key
-	}
-	for mask := 1; mask < 1<<len(colons); mask++ {
-		literal := specout.RouteKey{Method: method, Path: tablePath(escapeColons(p, colons, mask))}
-		if documented(d, literal) {
-			return literal
-		}
-	}
-	return key
-}
-
-// documented reports whether d documents key.
-func documented(d *specout.Generator, key specout.RouteKey) bool {
-	return d.CheckRoutes([]specout.RouteKey{key}) == nil
-}
-
-// colonIndexes returns the index of each colon in p.
-func colonIndexes(p string) []int {
-	var colons []int
-	for i := range len(p) {
-		if p[i] == ':' {
-			colons = append(colons, i)
-		}
-	}
-	return colons
-}
-
-// escapeColons puts a backslash before each colon of p whose bit is set in
-// mask.
-func escapeColons(p string, colons []int, mask int) string {
-	var b strings.Builder
-	last := 0
-	for bit, i := range colons {
-		if mask&(1<<bit) != 0 {
-			b.WriteString(p[last:i] + `\`)
-			last = i
-		}
-	}
-	b.WriteString(p[last:])
-	return b.String()
 }
 
 // RequireDocumented fails the test when e holds routes specout cannot

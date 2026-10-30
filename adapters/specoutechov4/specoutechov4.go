@@ -154,16 +154,9 @@ func (b *Router) Trace[Req, Res any](p string, h specout.Handler[Req, Res], m ..
 	b.Handle(http.MethodTrace, p, h, m...)
 }
 
-// anyMethods is the method list Echo v4's Any registers, one route each.
-var anyMethods = []string{
-	http.MethodConnect, http.MethodDelete, http.MethodGet, http.MethodHead, http.MethodOptions,
-	http.MethodPatch, http.MethodPost, echo.PROPFIND, http.MethodPut, http.MethodTrace, echo.REPORT,
-}
-
 // Adopt reports the routes of e and its host routers that specout cannot
-// document: routes no Router registered, and Any routes, which serve every
-// method. Echo v4 lists an Any route once per method; Adopt reports it once.
-// The 404 routes that Echo adds for group middleware are not endpoints and are
+// document: routes no Router registered. Echo v4 lists an Any route once per
+// method, and so does the report. The 404 routes that Echo adds for group middleware are not endpoints and are
 // skipped. Skip the spec endpoint itself, as in specout.Skip("/openapi.json").
 //
 // A route documents its own router only. A host route that no Router
@@ -187,28 +180,12 @@ func Adopt(d *specout.Generator, e *echo.Echo, skips ...specout.SkipRule) error 
 	return d.CheckRoutes(routes, skips...)
 }
 
-// routeKeys turns one router's table into route keys. A path whose Any
-// methods all run one handler becomes a single key with no method.
+// routeKeys turns one router's table into route keys.
 func routeKeys(table []*echo.Route) []specout.RouteKey {
-	byPath := make(map[string]map[string]string) // path -> method -> handler name
-	for _, ri := range table {
-		if ri.Method == echo.RouteNotFound {
-			continue
-		}
-		if byPath[ri.Path] == nil {
-			byPath[ri.Path] = make(map[string]string)
-		}
-		byPath[ri.Path][ri.Method] = ri.Name
-	}
 	var keys []specout.RouteKey
-	for p, methods := range byPath {
-		name := methods[http.MethodGet]
-		if name != "" && !slices.ContainsFunc(anyMethods, func(m string) bool { return methods[m] != name }) {
-			keys = append(keys, specout.RouteKey{Path: echopath.Table(p)})
-			continue
-		}
-		for method := range methods {
-			keys = append(keys, specout.RouteKey{Method: method, Path: echopath.Table(p)})
+	for _, ri := range table {
+		if ri.Method != echo.RouteNotFound {
+			keys = append(keys, specout.RouteKey{Method: ri.Method, Path: echopath.Table(ri.Path)})
 		}
 	}
 	return keys

@@ -229,7 +229,10 @@ func TestAdoptReportsStrays(t *testing.T) {
 	e.GET("/openapi.json", nativeRoute)
 	e.Any("/any", nativeRoute)
 	got := adaptertest.Strays(t, specoutechov4.Adopt(d, e, specout.Skip("/openapi.json")))
-	assert.Equal(t, []string{"? /any (no method constraint)", "GET /plain", "POST /plain"}, got)
+	assert.Equal(t, []string{
+		"CONNECT /any", "DELETE /any", "GET /any", "GET /plain", "HEAD /any", "OPTIONS /any", "PATCH /any",
+		"POST /any", "POST /plain", "PROPFIND /any", "PUT /any", "REPORT /any", "TRACE /any",
+	}, got)
 }
 
 func TestAdoptCoversHostRouters(t *testing.T) {

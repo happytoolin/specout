@@ -1,5 +1,4 @@
-// Package fiberpath translates Fiber v3 route paths into OpenAPI paths and
-// checks a Fiber route table for routes that never run.
+// Package fiberpath translates Fiber v3 route paths into OpenAPI paths.
 package fiberpath
 
 import (

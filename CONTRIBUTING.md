@@ -31,7 +31,7 @@ coverage.
 | Public types and registration state | `specout.go`, `handler.go`, `config.go`, `response.go` |
 | Router binding and route identity | `register_*.go`, `bind.go`, `document.go`, `routes.go` |
 | Echo, Gin, and Fiber adapters | `adapters/specoutecho`, `adapters/specoutechov4`, `adapters/specoutgin`, `adapters/specoutfiber` |
-| Shared adapter code | `internal/echopath`, `internal/fiberpath` (path translation and Fiber route checks), `internal/adaptertest` (test helpers) |
+| Shared adapter code | `internal/echopath`, `internal/fiberpath` (Fiber path translation), `internal/adaptertest` (test helpers) |
 | Path normalization and route checks | `paths.go`, `stray.go`, `verify.go` |
 | Document and operation assembly | `build.go`, `operation.go`, `security.go` |
 | Parameter metadata and styles | `params.go` |

@@ -28,8 +28,8 @@ import (
 )
 ```
 
-In this reference, "Echo" means both Echo adapters and "Fiber" means both Fiber
-adapters, except in the sections for one version.
+In this reference, "Echo" means both Echo adapters, except in the sections for
+one version.
 
 Verb helpers support `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`,
 and `TRACE`. `Handle`, `specout.Bind`, and `specout.Document` accept the same
@@ -186,8 +186,8 @@ differences remain:
   confirms the translation at registration.
 - A later route on the same path always replaces the earlier one. specout
   panics on the second registration, and the path then answers `404`.
-- `Any` adds one route for each of 11 methods. `Adopt` reports them as one
-  `(no method constraint)` route. `Adopt` also reads the routers of `e.Host`.
+- `Any` adds one route for each of 11 methods, and `Adopt` reports each one.
+  `Adopt` also reads the routers of `e.Host`.
   A documented route documents its own router only. A host route that you
   register on Echo itself, on the method and path of a documented route of
   another router, is reported with its host, as `GET api.example.com/items`.
@@ -267,11 +267,6 @@ the `GET` operation only, like http.ServeMux. `Adopt` needs the `*fiber.App`. It
 ignores middleware routes and the `HEAD` routes that Fiber adds for `GET`
 routes. It reports a `HEAD` route that is registered on its own. It also compares each translated path with the parameters that Fiber
 parsed, so a path that specout reads differently fails `Adopt`.
-
-`Adopt` also reports a route that never runs, because an earlier route of its
-method takes all of its requests, as `/users/:id` before `/users/me` or
-`/files/*` before `/files/:name`. A guard route that calls `c.Next()` sends its
-requests on to the later routes, so skip the guard with `specout.Skip`.
 
 Register routes on the app that serves them. A sub-app mounted with `app.Use`
 changes the path after registration. Use a group instead.
@@ -442,7 +437,7 @@ recorder.Verify(t, doc, rec)
 
 | Router | Install | Middleware responses |
 |---|---|---|
-| Echo | `e.Use(specoutecho.Record(rec))`. Order does not matter. | Recorded. |
+| Echo | `e.Use(specoutecho.Record(rec))` before other `e.Use` middleware. Route order does not matter. | Recorded. |
 | Gin | `engine.Use(specoutgin.Record(rec))` before any route. | Recorded. |
 | Fiber | `app.Use(specoutfiber.Record(rec))` before any route. | Recorded. `Record` finds the endpoint with `fiber.RoutePatternMatch`. |
 
