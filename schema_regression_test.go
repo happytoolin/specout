@@ -535,6 +535,29 @@ func TestLaunchBigNumbers(t *testing.T) {
 		root["content"].(map[string]any)["application/json"].(map[string]any)["schema"])
 }
 
+// json.Number is a Go string that the encoders write as a JSON number.
+func TestLaunchJSONNumber(t *testing.T) {
+	type response struct {
+		Amount jsonv1.Number `json:"amount"`
+	}
+	d := newGen()
+	specout.Document(d, http.MethodGet, "/x", specout.Get[response]{HandlerFunc: noop})
+	doc := buildDoc(t, d)
+	value := response{Amount: "12.5"}
+	wire, err := jsonv1.Marshal(value)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"amount":12.5}`, string(wire))
+	exportLaunchSamples(t, doc,
+		launchSample{"json.Number", launchResponseSchema(t, doc, "/x", "get"), value, true},
+		launchSample{
+			"string for json.Number", launchResponseSchema(t, doc, "/x", "get"),
+			map[string]any{"amount": "12.5"},
+			false,
+		},
+	)
+	assert.Equal(t, "number", props(t, doc, "response")["amount"].(map[string]any)["type"])
+}
+
 func TestUnencodableTypesPanicClearly(t *testing.T) {
 	for want, value := range map[string]any{
 		"complex64": struct {

@@ -16,8 +16,8 @@ func isBuiltin(t reflect.Type) bool {
 	// every published spec. Without this it becomes a $ref to a component
 	// named "Time" when it is a bare body or a header type, while the same
 	// type used as a struct field inlines. One type, one shape. The math/big
-	// types are scalars too.
-	if t == reflect.TypeFor[time.Time]() || bigTypes[t] != "" {
+	// types and json.Number are scalars too.
+	if t == reflect.TypeFor[time.Time]() || scalarTypes[t] != "" {
 		return true
 	}
 	switch t.Kind() {

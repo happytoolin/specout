@@ -2,6 +2,7 @@ package specout
 
 import (
 	"encoding"
+	jsonv1 "encoding/json"
 	json "encoding/json/v2"
 	"maps"
 	"math/big"
@@ -134,26 +135,28 @@ func writesText(t reflect.Type) bool {
 		!t.Implements(schemaMethodType) && t != reflect.TypeFor[net.IP]()
 }
 
-// bigTypes maps the math/big types to their JSON type. They are scalars, so
-// isBuiltin inlines them. *big.Int writes a number through MarshalJSON, and
-// *big.Float and *big.Rat write text.
-var bigTypes = map[reflect.Type]string{
-	reflect.TypeFor[big.Int]():   typeInteger,
-	reflect.TypeFor[big.Float](): typeString,
-	reflect.TypeFor[big.Rat]():   typeString,
+// scalarTypes maps library types that the encoders write as one JSON scalar
+// to their JSON type, so isBuiltin inlines them. *big.Int writes a number
+// through MarshalJSON, *big.Float and *big.Rat write text, and json.Number is
+// a Go string that the encoders write as a number.
+var scalarTypes = map[reflect.Type]string{
+	reflect.TypeFor[big.Int]():       typeInteger,
+	reflect.TypeFor[big.Float]():     typeString,
+	reflect.TypeFor[big.Rat]():       typeString,
+	reflect.TypeFor[jsonv1.Number](): typeNumber,
 }
 
 // wireSchema is the schema of a type whose JSON form the reflector gets wrong,
-// or nil for any other type. The reflector reads the Go fields of a math/big
-// type, of a type that writesText reports, such as netip.Addr or a UUID array,
+// or nil for any other type. The reflector reads json.Number as a string, and
+// it reads the Go fields of a math/big type, of a type that writesText reports, such as netip.Addr or a UUID array,
 // and of a struct whose JSON encoder method comes from an embedded field, such
 // as time.Time. The encoders write none of these as an object. The reflector
 // panics on a uintptr, which the encoders write as an integer.
 func (sr *schemaRegistry) wireSchema(t reflect.Type) *jsonschema.Schema {
 	var s *jsonschema.Schema
 	switch {
-	case bigTypes[t] != "":
-		s = &jsonschema.Schema{Type: bigTypes[t]}
+	case scalarTypes[t] != "":
+		s = &jsonschema.Schema{Type: scalarTypes[t]}
 	case writesText(t):
 		s = &jsonschema.Schema{Type: typeString}
 	case t.Kind() == reflect.Uintptr && !customJSON(t):
@@ -288,7 +291,7 @@ func dominantJSONFields(t reflect.Type) []reflect.StructField {
 // or from wireSchema. The reflector then never reads the fields of t.
 func ownSchema(t reflect.Type) bool {
 	_, promoted := promotedEncoder(t)
-	return t.Implements(schemaMethodType) || bigTypes[t] != "" || writesText(t) || promoted
+	return t.Implements(schemaMethodType) || scalarTypes[t] != "" || writesText(t) || promoted
 }
 
 func validateAnonymousEmbeddings(t reflect.Type, checked map[reflect.Type]bool) {

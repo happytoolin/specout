@@ -19,6 +19,7 @@ const (
 	typeString   = "string"
 	typeObject   = "object"
 	typeInteger  = "integer"
+	typeNumber   = "number"
 	typeArray    = "array"
 	formatBinary = "binary"
 )
@@ -360,7 +361,7 @@ func applyNumberEnumTag(p *jsonschema.Schema, t reflect.Type, tag reflect.Struct
 		}
 	case p.Items != nil && (t.Kind() == reflect.Slice || t.Kind() == reflect.Array):
 		applyNumberEnumTag(p.Items, t.Elem(), tag)
-	case p.Type == typeInteger || p.Type == "number":
+	case p.Type == typeInteger || p.Type == typeNumber:
 		p.Enum = numberEnum(tag, p.Enum)
 	}
 }
