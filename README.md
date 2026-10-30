@@ -170,7 +170,7 @@ documentation, and it compares the statuses in your HTTP tests with the document
 | Document version | 3.1.0 | 3.1.0, and also 3.0.3 | 3.1.0 | 2.0, or 3.1.0 with `--v3.1` on v2 RC |
 | Cookie parameters | Yes | Yes | Yes | — |
 | Discriminated unions | Yes, from Go types | Yes, with a handwritten schema | — | Yes, with `@Discriminator` on v2 RC |
-| Callbacks | With `Raw` | Yes | — | — |
+| Callbacks | Yes, from Go types | Yes, with a handwritten object | — | — |
 | **Checks** | | | | |
 | Find routes with no documentation | Yes | — | — | — |
 | Compare test statuses with the document | Yes | — | — | — |
@@ -210,6 +210,7 @@ Choose Huma or Fuego if you want the framework to decode and validate requests.
 | Schemas | Nested and recursive types, collections, optional fields, nullable values, enums, formats, value limits, and discriminated unions. |
 | Authentication | Bearer tokens, HTTP Basic, API keys, OAuth 2.0, OpenID Connect, and mutual TLS. Your middleware checks the credentials. |
 | Route details | Summaries, descriptions, tags, operation IDs, deprecation, examples, and security for each route. |
+| Requests your API sends | Webhooks and callbacks, with schemas from Go types. |
 | Checks | Find routes without documentation, and compare response statuses with your HTTP tests. |
 
 ## Describe your API
@@ -257,7 +258,109 @@ routes.Put("/items/{id}", specout.Handler[UpdateItemRequest, Item]{
 ```
 
 Use `specout.Get[Item]` for a route with no request data. Use
-`specout.NoContent` as the response type for a route with no response body.
+`specout.NoContent` as the response type for a route with no response body. Use
+`specout.File` as the type of a binary body, and `ContentTypes` for its media
+types:
+
+```go
+routes.Get("/report", specout.Get[specout.File]{
+	HandlerFunc: getReport,
+	Responses:   []specout.Response{{Status: http.StatusOK, ContentTypes: []string{"application/pdf"}}},
+})
+```
+
+Use `Request` to describe the request body, in the same way:
+
+```go
+routes.Post("/items", specout.Handler[CreateItem, Item]{
+	HandlerFunc: createItem,
+	Request:     specout.Request{Description: "The new item", Example: CreateItem{Name: "Lamp"}},
+})
+```
+
+### Requests your API sends
+
+A webhook is a request that your API sends on its own, such as an order event.
+Describe it as you describe a route, but give it a name and no handler. The
+request type is what your API sends:
+
+```go
+type OrderCreated struct {
+	Signature string `header:"X-Signature"`
+	OrderID   string `json:"orderId"`
+}
+
+doc.Webhook(http.MethodPost, "orderCreated", specout.Event[OrderCreated]{
+	Summary: "An order was created",
+})
+```
+
+`specout.Event[T]` means that the receiver answers `204` with no body. Add
+`Responses` if the receiver can answer in another way. For example, use
+`Key: "2XX"` for any success status.
+
+A callback is a request that your API sends because of one route. The URL is
+usually a runtime expression that reads the original request:
+
+```go
+jobDone := specout.NewCallback(
+	"jobDone", http.MethodPost, "{$request.body#/callbackUrl}",
+	specout.Event[JobResult]{Summary: "The job finished"},
+)
+
+routes.Post("/jobs", specout.Handler[StartJob, Job]{
+	HandlerFunc: startJob,
+	Callbacks:   []specout.Callback{jobDone},
+})
+```
+
+Webhooks and callbacks take the same fields as a route, such as `Summary`,
+`Responses`, and `Request`. These rules are different from a route:
+
+- They stay out of the route checks and the status comparison, because your
+  API does not serve them.
+- They do not get `DefaultErrors`, because those errors come from your API.
+- They do not need `Auth` from `Config`. Set `Security` if your API uses one of
+  those schemes to send the request.
+
+### Links between operations
+
+A link tells a client how to use a response in a next request. The build fails
+if no operation has the operation ID in the link:
+
+```go
+routes.Post("/jobs", specout.Handler[StartJob, Job]{
+	HandlerFunc: startJob,
+	Responses: []specout.Response{{
+		Status: http.StatusOK,
+		Links: map[string]specout.Link{
+			"status": {
+				OperationID: "getJob",
+				Parameters:  map[string]string{"id": "$response.body#/id"},
+			},
+		},
+	}},
+})
+
+routes.Get("/jobs/{id}", specout.Get[Job]{HandlerFunc: getJob, OperationID: "getJob"})
+```
+
+### Form fields and servers
+
+Use `Request.Encoding` to describe the fields of a form or multipart request
+body. A wrong field name panics at registration:
+
+```go
+Request: specout.Request{
+	Encoding: map[string]specout.Encoding{
+		"avatar": {ContentType: "image/png"},
+		"labels": {Style: "pipeDelimited", Explode: new(false)},
+	},
+},
+```
+
+Use `Handler.Servers` when one route has a different base URL from the rest of
+the API.
 
 ### The whole API
 
@@ -273,6 +376,7 @@ when your API needs them:
 | `Auth` | Describe authentication. Your middleware must check the credentials. |
 | `ErrorType`, `DefaultErrors` | Describe a shared error body and its status codes. Your handlers write these responses. |
 | `ClosedSchemas` | Mark object schemas as closed to unknown fields. Your code must reject those fields. |
+| `JSONSchemaDialect` | Set the default JSON Schema dialect of the document. Most APIs do not need this. |
 
 ### Types with custom JSON
 
@@ -326,8 +430,8 @@ The document shows each path in OpenAPI form, so `/items/:id` becomes
 `/items/{id}`. Your handler reads the value with `r.PathValue("id")` on every
 router.
 
-For another router, use `specout.Bind` to register and document each route. Use
-`specout.Document` when the router registers the handler and you only want the
+For another router, use `doc.Bind` to register and document each route. Use
+`doc.Document` when the router registers the handler and you only want the
 documentation. To request an adapter, open an
 [issue](https://github.com/happytoolin/specout/issues).
 
@@ -380,13 +484,33 @@ document, and you cannot add routes after a successful build.
 |---|---|
 | Bad `Config` | `specout.New` panics. |
 | Bad route data or bad path | The registration panics, and the router does not get the route. |
-| Failed build, with `WriteJSON` | `WriteJSON` returns the error. If the build panics, `WriteJSON` panics. |
+| Failed build, with `Build` or `WriteJSON` | The call returns an error that lists every problem. If the build panics, the call panics. |
 | Failed build, with `ServeHTTP` | `ServeHTTP` returns `500` without the error text. It logs the error once, and also the stack after a panic. |
+
+Call `doc.Build()` at startup or in a test, so that a bad document fails there
+and not on the first request:
+
+```go
+if err := doc.Build(); err != nil {
+	log.Fatal(err)
+}
+```
+
+Each message starts with the place of the problem, and it gives the fix when
+specout knows it:
+
+```text
+specout: POST /jobs: response 200: link "status": no operation has operationId "getJb"; set OperationID on the target route; did you mean "getJob"?
+```
+
+specout also panics on a `jsonschema` keyword that it does not know, such as
+`minLenght=1`. The tag parser ignores such a keyword, so the rule would be
+missing from the document.
 
 A few path checks need the full path, and the router knows it only after it adds
 the route. In these cases, the router has the route when the panic occurs:
 
-- A path that a `specout.Bind` mount function returns.
+- A path that a `doc.Bind` mount function returns.
 - A gorilla/mux subrouter prefix or host.
 - An empty gorilla/mux path.
 

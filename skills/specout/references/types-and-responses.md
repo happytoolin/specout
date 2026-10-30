@@ -141,7 +141,21 @@ them:
 ```go
 h := specout.Handler[importRequest, importResult]{
 	HandlerFunc:         importItems,
-	RequestContentTypes: []string{"application/json", "application/xml"},
+	Request: specout.Request{ContentTypes: []string{"application/json", "application/xml"}},
+}
+```
+
+Use `Request.Encoding` to describe the fields of a form or multipart body. Each key
+is a field name on the form, so a `form` tag replaces the JSON name. A key that is
+not a field panics, and so does a body that is not a form:
+
+```go
+h := specout.Handler[uploadRequest, uploadResult]{
+	HandlerFunc: upload,
+	Request: specout.Request{Encoding: map[string]specout.Encoding{
+		"file": {ContentType: "image/png"},
+		"tags": {Style: "pipeDelimited", Explode: new(false)},
+	}},
 }
 ```
 
@@ -195,9 +209,8 @@ body to show an example, and a HEAD response drops its examples:
 
 ```go
 h := specout.Handler[createRequest, item]{
-	HandlerFunc:        createItem,
-	RequestDescription: "The item to create.",
-	RequestExample:     createRequest{Name: "Lamp"},
+	HandlerFunc: createItem,
+	Request:     specout.Request{Description: "The item to create.", Example: createRequest{Name: "Lamp"}},
 	Responses: []specout.Response{{
 		Status:      http.StatusOK,
 		Description: "The new item.",
@@ -214,19 +227,19 @@ schema example: `jsonschema:"example=42"`.
 
 ## Binary and multiple response media types
 
-Use `ContentType` for a binary response:
+`specout.File` is a binary body. It is `application/octet-stream` by default. Use
+it as `Res`, or as `Response.Type` when the route has another body too. Set
+`ContentTypes` for its media types:
 
 ```go
-download := specout.Handler[downloadRequest, struct{}]{
+download := specout.Handler[downloadRequest, specout.File]{
 	HandlerFunc: downloadReport,
 	Responses: []specout.Response{{
-		Status:      http.StatusOK,
-		ContentType: "application/pdf",
+		Status:       http.StatusOK,
+		ContentTypes: []string{"application/pdf"},
 	}},
 }
 ```
-
-`ContentType: "binary"` is shorthand for `application/octet-stream`.
 
 Use `ContentTypes` when one typed response is available in several formats:
 
@@ -237,7 +250,24 @@ specout.Response{
 }
 ```
 
-Use `Response.Raw` only for response fields that the typed API does not model:
+Use `Links` to tell a client how to use a response in a next request. Set
+`OperationID` or `OperationRef`. The build fails when no operation has the
+`OperationID`:
+
+```go
+specout.Response{
+	Status: http.StatusOK,
+	Links: map[string]specout.Link{
+		"status": {
+			OperationID: "getJob",
+			Parameters:  map[string]string{"id": "$response.body#/id"},
+		},
+	},
+}
+```
+
+Use `Response.Raw` for `x-` extensions, or to replace a whole field that specout
+writes:
 
 ```go
 specout.Response{

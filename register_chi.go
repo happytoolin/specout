@@ -44,10 +44,10 @@ func (c *ChiRouter) register(method, pattern string, rec routeRecord) {
 	// chi matches /a//b and /a/./b only as written, but clients clean them
 	// and the document would show /a/b.
 	if msg := checkSegments(pattern); msg != "" {
-		panic("specout: chi route " + method + " " + pattern + ": " + msg)
+		panic("specout: " + method + " " + pattern + ": " + msg)
 	}
 	if strings.Contains(pattern, endAnchor) {
-		panic("specout: chi route " + method + " " + pattern + ": " + endAnchorMsg("chi"))
+		panic("specout: " + method + " " + pattern + ": " + endAnchorMsg("chi"))
 	}
 	rec.method, rec.pattern = method, pattern
 	c.d.addRoute(rec, func(rec *routeRecord) {
@@ -162,7 +162,7 @@ func (d *Generator) checkChiMount() error {
 				continue
 			}
 			return fmt.Errorf(
-				"specout: %s %s is served at %s, under a router mounted at %s; adopt the outermost "+
+				"specout: %s %s: served at %s, under a router mounted at %s; adopt the outermost "+
 					"router, or end a Config.Servers URL with %s",
 				rec.method, rec.full, p, prefix, prefix,
 			)

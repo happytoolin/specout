@@ -39,7 +39,7 @@ func TestLaunchWeirdMalformedJSONNames(t *testing.T) {
 			_, err := json.Marshal(value.Interface())
 			require.Error(t, err, "control: these tags are invalid for the JSON encoder")
 			field, _, _ := strings.Cut(name, ",")
-			assert.PanicsWithValue(t, "specout: invalid JSON field name "+strconv.Quote(field), func() {
+			assert.PanicsWithValue(t, "specout: GET /x: invalid JSON field name "+strconv.Quote(field), func() {
 				docOf(t, http.MethodGet, "/x", okGet.WithResponse(specout.Response{Status: http.StatusOK, Type: value.Interface()}))
 			}, "invalid JSON names must not produce a misleading schema")
 		})
@@ -62,7 +62,7 @@ func TestLaunchWeirdExcludedParameter(t *testing.T) {
 	type request struct {
 		Value string `jsonschema:"-,description=Hidden" query:"value"`
 	}
-	assert.PanicsWithValue(t, "specout: field Value has no parameter schema", func() {
+	assert.PanicsWithValue(t, "specout: GET /x: field Value: this parameter has no schema; remove jsonschema:\"-\"", func() {
 		docOf(t, http.MethodGet, "/x", specout.Handler[request, specout.NoContent]{HandlerFunc: noop})
 	})
 }
@@ -74,7 +74,7 @@ func TestLaunchWeirdDuplicateUnionNames(t *testing.T) {
 	}
 	d := newGen()
 	d.Register[schemaEmail]("email")
-	specout.Document(d, http.MethodGet, "/x", specout.Get[response]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/x", specout.Get[response]{HandlerFunc: noop})
 	doc := buildDoc(t, d)
 	exportLaunchSamples(t, doc, launchSample{"repeated union variant", launchResponseSchema(t, doc, "/x", "get"), response{Kind: "email", Data: schemaEmail{Address: "ops@example.com"}}, true})
 }
@@ -86,7 +86,7 @@ func TestLaunchWeirdNamedJSONEmbeddingFailsClearly(t *testing.T) {
 	for _, option := range []string{"inline", "embed"} {
 		t.Run(option, func(t *testing.T) {
 			typ := reflect.StructOf([]reflect.StructField{{Name: "Inner", Type: reflect.TypeFor[inner](), Tag: reflect.StructTag("json:" + strconv.Quote(","+option))}})
-			assert.PanicsWithValue(t, "specout: explicit JSON embedding requires an anonymous struct field", func() {
+			assert.PanicsWithValue(t, "specout: GET /x: "+typ.String()+" field Inner: the inline or embed option of a json tag needs an anonymous struct field", func() {
 				docOf(t, http.MethodGet, "/x", okGet.WithResponse(specout.Response{Status: http.StatusOK, Type: reflect.New(typ).Elem().Interface()}))
 			})
 		})

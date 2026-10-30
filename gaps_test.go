@@ -68,11 +68,11 @@ func TestGapHeadCarriesNoContent(t *testing.T) {
 	d := specout.New(specout.Config{
 		Title: "t", Version: "1", ErrorType: gapRes{}, DefaultErrors: []int{http.StatusInternalServerError},
 	})
-	specout.Document(d, http.MethodHead, "/x", specout.Handler[struct{}, gapRes]{
+	d.Document(http.MethodHead, "/x", specout.Handler[struct{}, gapRes]{
 		HandlerFunc: noop,
 		Responses: []specout.Response{
 			{Status: http.StatusNotFound, Headers: []specout.Header{{Name: "X-Reason"}}},
-			{Status: http.StatusPartialContent, ContentType: "application/pdf"},
+			{Status: http.StatusPartialContent, Type: specout.File{}, ContentTypes: []string{"application/pdf"}},
 		},
 	})
 	doc := buildDoc(t, d)
@@ -94,16 +94,16 @@ func TestGapBodylessContentPanics(t *testing.T) {
 	for key, resp := range map[string]specout.Response{
 		"204": {Status: http.StatusNoContent, Type: gapRes{}},
 		"205": {Status: http.StatusResetContent, Type: gapRes{}},
-		"304": {Status: http.StatusNotModified, ContentType: "text/plain"},
+		"304": {Status: http.StatusNotModified, ContentTypes: []string{"text/plain"}},
 		"1XX": {Key: "1XX", ContentTypes: []string{"application/json"}},
 	} {
 		h := specout.Handler[struct{}, gapRes]{HandlerFunc: noop, Responses: []specout.Response{resp}}
 		assert.PanicsWithValue(t,
-			"specout: response "+key+" carries no body; remove its Type, ContentType or ContentTypes",
-			func() { specout.Document(newGen(), http.MethodGet, "/x", h) }, key)
+			"specout: GET /x: response "+key+": this status has no body; remove Type and ContentTypes",
+			func() { newGen().Document(http.MethodGet, "/x", h) }, key)
 	}
 	d := newGen()
-	specout.Document(d, http.MethodGet, "/x", specout.Handler[struct{}, gapRes]{
+	d.Document(http.MethodGet, "/x", specout.Handler[struct{}, gapRes]{
 		HandlerFunc: noop,
 		Responses: []specout.Response{
 			{Status: http.StatusNoContent, Type: struct{}{}},
@@ -121,14 +121,14 @@ func TestGapRequestContentTypesNeedABody(t *testing.T) {
 	type onlyParams struct {
 		ID string `path:"id"`
 	}
-	assert.PanicsWithValue(t, "specout: POST /x describes a request body, but Req has no request body", func() {
-		specout.Document(newGen(), http.MethodPost, "/x", specout.Handler[struct{}, gapRes]{
-			HandlerFunc: noop, RequestContentTypes: []string{"application/json"},
+	assert.PanicsWithValue(t, "specout: POST /x: Handler.Request describes a body, but Req has no body; add a field with no path, query, header or cookie tag, or remove Handler.Request", func() {
+		newGen().Document(http.MethodPost, "/x", specout.Handler[struct{}, gapRes]{
+			HandlerFunc: noop, Request: specout.Request{ContentTypes: []string{"application/json"}},
 		})
 	})
-	assert.PanicsWithValue(t, "specout: POST /x/{id} describes a request body, but Req has no request body", func() {
-		specout.Document(newGen(), http.MethodPost, "/x/{id}", specout.Handler[onlyParams, gapRes]{
-			HandlerFunc: noop, RequestContentTypes: []string{"application/json"},
+	assert.PanicsWithValue(t, "specout: POST /x/{id}: Handler.Request describes a body, but Req has no body; add a field with no path, query, header or cookie tag, or remove Handler.Request", func() {
+		newGen().Document(http.MethodPost, "/x/{id}", specout.Handler[onlyParams, gapRes]{
+			HandlerFunc: noop, Request: specout.Request{ContentTypes: []string{"application/json"}},
 		})
 	})
 }
@@ -163,28 +163,28 @@ func TestGapConfigThatBreaksTheDocument(t *testing.T) {
 		name, want string
 		cfg        specout.Config
 	}{
-		{"license without name", "specout: License needs a Name", specout.Config{License: &specout.License{URL: "https://x.example"}}},
-		{"tag without a docs URL", "specout: ExternalDocs needs a URL", specout.Config{Tags: []specout.Tag{{Name: "a", ExternalDocs: &specout.ExternalDocs{}}}}},
+		{"license without name", "specout: Config.License: set Name; OpenAPI requires it", specout.Config{License: &specout.License{URL: "https://x.example"}}},
+		{"tag without a docs URL", "specout: Config.Tags \"a\": ExternalDocs needs a URL", specout.Config{Tags: []specout.Tag{{Name: "a", ExternalDocs: &specout.ExternalDocs{}}}}},
 		{
-			"reflect.Type error envelope", "specout: a Type field takes a value such as Error{}, not a reflect.Type",
+			"reflect.Type error envelope", "specout: Config.ErrorType: a Type field takes a value such as Problem{}, not a reflect.Type",
 			specout.Config{ErrorType: reflect.TypeFor[gapRes](), DefaultErrors: []int{http.StatusInternalServerError}},
 		},
 		{
-			"error status out of range", "specout: response status must be 0 (default) or 100-599, got 600",
+			"error status out of range", "specout: Config.DefaultErrors: status 600 is not valid; use 100-599, or Key: \"default\"",
 			specout.Config{ErrorType: gapRes{}, DefaultErrors: []int{600}},
 		},
 		{
-			"error status with no body", "specout: DefaultErrors holds 204, which carries no body for ErrorType",
+			"error status with no body", "specout: Config.DefaultErrors: status 204 has no body, so it cannot carry ErrorType; remove it",
 			specout.Config{ErrorType: gapRes{}, DefaultErrors: []int{http.StatusNoContent}},
 		},
-		{"tag without name", `specout: empty or duplicate tag name ""`, specout.Config{Tags: []specout.Tag{{Description: "d"}}}},
-		{"duplicate tag", `specout: empty or duplicate tag name "a"`, specout.Config{Tags: []specout.Tag{{Name: "a"}, {Name: "a"}}}},
+		{"tag without name", `specout: Config.Tags: tag name "" is empty or repeated; give each tag one name`, specout.Config{Tags: []specout.Tag{{Description: "d"}}}},
+		{"duplicate tag", `specout: Config.Tags: tag name "a" is empty or repeated; give each tag one name`, specout.Config{Tags: []specout.Tag{{Name: "a"}, {Name: "a"}}}},
 		{
-			"auth name with a space", `specout: AuthScheme.Name "bearer auth" must contain only ASCII letters, digits, dots, hyphens or underscores`,
-			specout.Config{Auth: []specout.AuthScheme{{Name: "bearer auth", Type: "httpBearer"}}},
+			"auth name with a space", `specout: Config.Auth: scheme name "bearer auth" must contain only ASCII letters, digits, dots, hyphens or underscores`,
+			specout.Config{Auth: []specout.AuthScheme{{Name: "bearer auth", Type: "http", Scheme: "bearer"}}},
 		},
 		{
-			"duplicate auth name", "specout: duplicate AuthScheme name bearerAuth",
+			"duplicate auth name", "specout: Config.Auth \"bearerAuth\": the name is repeated; give each scheme one name",
 			specout.Config{Auth: []specout.AuthScheme{specout.Bearer, specout.APIKey("bearerAuth", "k", specout.InHeader)}},
 		},
 	} {
@@ -241,9 +241,9 @@ func probeRegister(get func(string, specout.Handler[probeQ, probeRes]), post fun
 		Raw:          map[string]any{"x-rate-limit": 100},
 	})
 	post("/things", specout.Handler[probeBody, probeRes]{
-		HandlerFunc:         func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) },
-		RequestContentTypes: []string{"application/json", "application/xml"},
-		Responses:           []specout.Response{{Status: 200, ContentTypes: []string{"application/json", "application/xml"}}},
+		HandlerFunc: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) },
+		Request:     specout.Request{ContentTypes: []string{"application/json", "application/xml"}},
+		Responses:   []specout.Response{{Status: 200, ContentTypes: []string{"application/json", "application/xml"}}},
 	})
 }
 

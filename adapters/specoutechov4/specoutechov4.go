@@ -58,7 +58,7 @@ func (b *Router) Handle[Req, Res any](method, path string, h specout.Handler[Req
 		bound atomic.Bool
 		route *echo.Route
 	)
-	specout.Bind(b.d, method, path, h, func(next http.Handler) string {
+	b.d.Bind(method, path, h, func(next http.Handler) string {
 		route = b.r.Add(method, path, func(c echo.Context) error {
 			if !bound.Load() {
 				return echo.ErrNotFound

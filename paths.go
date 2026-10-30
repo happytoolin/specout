@@ -3,6 +3,7 @@ package specout
 import (
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -59,9 +60,10 @@ var openAPIMethods = []string{
 }
 
 // checkMethod panics on a method token OpenAPI cannot name.
-func checkMethod(method string) {
+func checkMethod(method, where string) {
 	if !slices.Contains(openAPIMethods, method) {
-		panic("specout: method must be one of GET/HEAD/POST/PUT/PATCH/DELETE/OPTIONS/TRACE, got " + method)
+		panic("specout: " + where + ": method " + strconv.Quote(method) +
+			" is not valid; use GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS or TRACE" + didYouMean(method, openAPIMethods))
 	}
 }
 

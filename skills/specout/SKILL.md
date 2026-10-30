@@ -66,8 +66,8 @@ For Echo, Gin, and Fiber, use the adapter packages under `adapters/` and call
 their package-level `Adopt` on the engine or app: `specoutecho` (Echo v5),
 `specoutechov4` (Echo v4), `specoutgin`, and `specoutfiber` (Fiber v3). Use
 `RequireDocumented` in tests when route coverage matters. http.ServeMux cannot enumerate routes, so
-register documented endpoints through `specout.Std`. Use `specout.Bind` or
-`specout.Document` for other routers.
+register documented endpoints through `specout.Std`. Use `doc.Bind` or
+`doc.Document` for other routers.
 
 ## Finish
 

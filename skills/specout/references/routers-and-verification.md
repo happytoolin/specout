@@ -14,7 +14,7 @@ route or status verification.
 | `github.com/labstack/echo/v4` | `specoutechov4.New` | `specoutechov4.Adopt` reads the Echo route tables. |
 | `github.com/gin-gonic/gin` | `specoutgin.New` | `specoutgin.Adopt` reads the Gin route table. |
 | `github.com/gofiber/fiber/v3` | `specoutfiber.New` | `specoutfiber.Adopt` reads the Fiber route table. |
-| Other routers | `specout.Bind` or `specout.Document` | `Bind` registers and records. `Document` records metadata only. |
+| Other routers | `doc.Bind` or `doc.Document` | `Bind` registers and records. `Document` records metadata only. |
 
 The Echo, Gin, and Fiber adapters are in separate packages, so the root package
 does not import those frameworks:
@@ -32,7 +32,7 @@ In this reference, "Echo" means both Echo adapters, except in the sections for
 one version.
 
 Verb helpers support `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`,
-and `TRACE`. `Handle`, `specout.Bind`, and `specout.Document` accept the same
+and `TRACE`. `Handle`, `doc.Bind`, and `doc.Document` accept the same
 OpenAPI method set.
 
 ## chi/v5
@@ -291,7 +291,7 @@ Write a small binder with it when a router can report the full path at
 registration:
 
 ```go
-specout.Bind(doc, http.MethodGet, "/items/:id", h, func(next http.Handler) string {
+doc.Bind(http.MethodGet, "/items/:id", h, func(next http.Handler) string {
 	router.Handler(http.MethodGet, "/items/:id", next)
 	return "/items/{id}"
 })
@@ -311,7 +311,7 @@ h := specout.Handler[getItemRequest, item]{
 }
 
 router.Handle(http.MethodGet, "/items/{id}", h.HandlerFunc)
-specout.Document(doc, http.MethodGet, "/items/{id}", h)
+doc.Document(http.MethodGet, "/items/{id}", h)
 ```
 
 Adapt the runtime registration line to the router's API. The path passed to

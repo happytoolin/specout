@@ -7,9 +7,9 @@ import (
 
 // externalDocsObj builds an externalDocs object. OpenAPI requires the url
 // field, so an empty one is a mistake rather than an omission.
-func externalDocsObj(ed *ExternalDocs) *obj {
+func externalDocsObj(where string, ed *ExternalDocs) *obj {
 	if ed.URL == "" {
-		panic("specout: ExternalDocs needs a URL")
+		panic("specout: " + where + ": ExternalDocs needs a URL")
 	}
 	return newObj().setIf("url", ed.URL).setIf("description", ed.Description)
 }

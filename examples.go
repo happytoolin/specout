@@ -4,6 +4,7 @@ import (
 	jsonv1 "encoding/json"
 	"encoding/json/jsontext"
 	"fmt"
+	"strconv"
 )
 
 // Example is one named example of a request or response body. Set Value or
@@ -19,7 +20,7 @@ type Example struct {
 // the field in the message.
 func checkExamples(where string, example any, examples map[string]Example) {
 	if example != nil && len(examples) > 0 {
-		panic("specout: " + where + " sets both Example and Examples; set one")
+		panic("specout: " + where + ": sets both Example and Examples; set one")
 	}
 	if example != nil {
 		exampleValue(where, example)
@@ -27,7 +28,7 @@ func checkExamples(where string, example any, examples map[string]Example) {
 	for _, name := range sortedKeys(examples) {
 		ex := examples[name]
 		if ex.Value != nil && ex.ExternalValue != "" {
-			panic("specout: " + where + " example " + name + " sets both Value and ExternalValue; set one")
+			panic("specout: " + where + ": example " + strconv.Quote(name) + " sets both Value and ExternalValue; set one")
 		}
 		if ex.Value != nil {
 			exampleValue(where, ex.Value)
@@ -40,7 +41,7 @@ func checkExamples(where string, example any, examples map[string]Example) {
 func exampleValue(where string, v any) jsontext.Value {
 	data, err := jsonv1.Marshal(v)
 	if err != nil {
-		panic(fmt.Sprintf("specout: %s example cannot be encoded: %v", where, err))
+		panic(fmt.Sprintf("specout: %s: a value cannot be encoded as JSON: %v", where, err))
 	}
 	return jsontext.Value(data)
 }

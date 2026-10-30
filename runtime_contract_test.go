@@ -14,32 +14,26 @@ import (
 
 func TestFluentBranchesAreIndependent(t *testing.T) {
 	base := specout.Get[string]{
-		Tags:                make([]string, 1, 4),
-		Responses:           make([]specout.Response, 1, 4),
-		RequestContentTypes: make([]string, 1, 4),
+		Tags:      make([]string, 1, 4),
+		Responses: make([]specout.Response, 1, 4),
 	}
-	first := base.WithTags("first").WithResponse(specout.Response{Status: 201}).
-		WithRequestContentTypes("application/json")
-	second := base.WithTags("second").WithResponses(specout.Response{Status: 202}).
-		WithRequestContentTypes("application/xml")
+	first := base.WithTags("first").WithResponse(specout.Response{Status: 201})
+	second := base.WithTags("second").WithResponses(specout.Response{Status: 202})
 	third := base.WithResponses(specout.Response{Status: 203})
 	assert.Equal(t, "first", first.Tags[1])
 	assert.Equal(t, "second", second.Tags[1])
 	assert.Equal(t, 201, first.Responses[1].Status)
 	assert.Equal(t, 202, second.Responses[1].Status)
 	assert.Equal(t, 203, third.Responses[1].Status)
-	assert.Equal(t, "application/json", first.RequestContentTypes[1])
-	assert.Equal(t, "application/xml", second.RequestContentTypes[1])
 	assert.Len(t, base.Tags, 1)
 	assert.Len(t, base.Responses, 1)
-	assert.Len(t, base.RequestContentTypes, 1)
 }
 
 func TestNestedRawMapsAreDeterministic(t *testing.T) {
 	var first []byte
 	for range 40 {
 		d := newGen()
-		specout.Document(d, http.MethodGet, "/x", specout.Get[string]{
+		d.Document(http.MethodGet, "/x", specout.Get[string]{
 			HandlerFunc: noop,
 			Raw: map[string]any{
 				"x-meta": map[string]any{
@@ -62,7 +56,7 @@ func TestNestedRawMapsAreDeterministic(t *testing.T) {
 
 func TestSpecHeadHasGetHeadersWithoutBody(t *testing.T) {
 	d := newGen()
-	specout.Document(d, http.MethodGet, "/x", okGet)
+	d.Document(http.MethodGet, "/x", okGet)
 	get := httptest.NewRecorder()
 	d.ServeHTTP(get, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/openapi.json", nil))
 	head := httptest.NewRecorder()

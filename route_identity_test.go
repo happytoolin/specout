@@ -102,7 +102,7 @@ func TestDocumentMatchesMethodAndPath(t *testing.T) {
 	r.Get("/documented", h.HandlerFunc)
 	r.Get("/stray", h.HandlerFunc)
 	r.Post("/documented", h.HandlerFunc)
-	specout.Document(d, http.MethodGet, "/documented", h)
+	d.Document(http.MethodGet, "/documented", h)
 	err := specout.Chi(d, r).Adopt()
 	var stray *specout.StrayError
 	require.ErrorAs(t, err, &stray)
@@ -116,17 +116,17 @@ func TestEquivalentTemplatePathsFail(t *testing.T) {
 	} {
 		t.Run(methods[0]+"_"+methods[1], func(t *testing.T) {
 			d := newGen()
-			specout.Document(d, methods[0], "/x/{id}", okGet)
-			specout.Document(d, methods[1], "/x/{name}", okGet)
-			wantBuildErr(t, d, "equivalent templated paths /x/{id} and /x/{name}")
+			d.Document(methods[0], "/x/{id}", okGet)
+			d.Document(methods[1], "/x/{name}", okGet)
+			wantBuildErr(t, d, "is the same path to OpenAPI")
 		})
 	}
 }
 
 func TestSameTemplateAllowsDifferentMethods(t *testing.T) {
 	d := newGen()
-	specout.Document(d, http.MethodGet, "/x/{id}", okGet)
-	specout.Document(d, http.MethodPost, "/x/{id}", okGet)
+	d.Document(http.MethodGet, "/x/{id}", okGet)
+	d.Document(http.MethodPost, "/x/{id}", okGet)
 	item := docPaths(t, d)["/x/{id}"].(map[string]any)
 	assert.Contains(t, item, "get")
 	assert.Contains(t, item, "post")
@@ -134,8 +134,8 @@ func TestSameTemplateAllowsDifferentMethods(t *testing.T) {
 
 func TestEquivalentCatchAllsRemainExcluded(t *testing.T) {
 	d := newGen()
-	specout.Document(d, http.MethodGet, "/files/{path...}", okGet)
-	specout.Document(d, http.MethodPost, "/files/{rest...}", okGet)
+	d.Document(http.MethodGet, "/files/{path...}", okGet)
+	d.Document(http.MethodPost, "/files/{rest...}", okGet)
 	paths := docPaths(t, d)
 	assert.NotContains(t, paths, "/files/{path...}")
 	assert.NotContains(t, paths, "/files/{rest...}")
@@ -143,8 +143,8 @@ func TestEquivalentCatchAllsRemainExcluded(t *testing.T) {
 
 func TestDuplicateCatchAllMethodStillFails(t *testing.T) {
 	d := newGen()
-	specout.Document(d, http.MethodGet, "/files/{path...}", okGet)
-	specout.Document(d, http.MethodGet, "/files/{path...}", okGet)
+	d.Document(http.MethodGet, "/files/{path...}", okGet)
+	d.Document(http.MethodGet, "/files/{path...}", okGet)
 	wantBuildErr(t, d, "duplicate route")
 }
 
@@ -215,7 +215,7 @@ func TestReplacedChiRouteNamesTheCause(t *testing.T) {
 	b.Get("/x", okGet)
 	b.Get("/x", okGet)
 	adopt(t, b)
-	wantBuildErr(t, d, "is not served by any adopted router")
+	wantBuildErr(t, d, "no adopted router serves it")
 }
 
 func TestGorillaBadTemplatePanicsWithGorillaReason(t *testing.T) {
@@ -225,7 +225,7 @@ func TestGorillaBadTemplatePanicsWithGorillaReason(t *testing.T) {
 		t.Run(pattern, func(t *testing.T) {
 			d := newGen()
 			msg := fmt.Sprint(panicValue(func() { specout.Gorilla(d, mux.NewRouter()).Get(pattern, okGet) }))
-			assert.Contains(t, msg, "specout: gorilla route GET "+pattern)
+			assert.Contains(t, msg, "specout: GET "+pattern)
 			assert.NotContains(t, docPaths(t, d), pattern)
 		})
 	}
@@ -239,7 +239,7 @@ func TestGorillaBadPathNeverReachesTheRouter(t *testing.T) {
 		t.Run(pattern, func(t *testing.T) {
 			r := mux.NewRouter()
 			msg := fmt.Sprint(panicValue(func() { specout.Gorilla(newGen(), r).Get(pattern, okGet) }))
-			assert.Contains(t, msg, "specout: gorilla route GET "+pattern)
+			assert.Contains(t, msg, "specout: GET "+pattern)
 			routes := 0
 			require.NoError(t, r.Walk(func(*mux.Route, *mux.Router, []*mux.Route) error {
 				routes++
@@ -252,7 +252,7 @@ func TestGorillaBadPathNeverReachesTheRouter(t *testing.T) {
 	// gorilla has the route.
 	sub := mux.NewRouter().PathPrefix("/a//b").Subrouter()
 	msg := fmt.Sprint(panicValue(func() { specout.Gorilla(newGen(), sub).Get("/c", okGet) }))
-	assert.Equal(t, "specout: gorilla route GET /c: the path has an empty segment (//)", msg)
+	assert.Equal(t, "specout: GET /c: the path has an empty segment (//)", msg)
 }
 
 func TestGorillaPathlessRouteIsSkippable(t *testing.T) {
@@ -286,7 +286,7 @@ func TestGorillaSlashRegexIsCatchAll(t *testing.T) {
 
 func TestDocumentRejectsNonOpenAPIPaths(t *testing.T) {
 	for pattern, want := range map[string]string{
-		"/items/:id": "uses router syntax :id; write the parameter as {id}",
+		"/items/:id": ":id is router syntax; write the parameter as {id}",
 		"/items/{id": "{ without a matching }",
 		"/items/id}": "} without a matching {",
 		"/a//b":      "drop {$}, empty segments and dot segments",
@@ -295,7 +295,7 @@ func TestDocumentRejectsNonOpenAPIPaths(t *testing.T) {
 		"items/{id}": "must start with /",
 	} {
 		t.Run(pattern, func(t *testing.T) {
-			msg := fmt.Sprint(panicValue(func() { specout.Document(newGen(), http.MethodGet, pattern, okGet) }))
+			msg := fmt.Sprint(panicValue(func() { newGen().Document(http.MethodGet, pattern, okGet) }))
 			assert.Contains(t, msg, want)
 		})
 	}
@@ -311,10 +311,10 @@ func TestEmptyAndDotSegmentsPanic(t *testing.T) {
 		t.Run(p, func(t *testing.T) {
 			r, d := chi.NewRouter(), newGen()
 			msg := fmt.Sprint(panicValue(func() { specout.Chi(d, r).Get(p, okGet) }))
-			assert.Contains(t, msg, "specout: chi route GET "+p+": the path has")
+			assert.Contains(t, msg, "specout: GET "+p+": the path has")
 			assert.Empty(t, r.Routes(), "the rejected route reached chi")
 			msg = fmt.Sprint(panicValue(func() {
-				specout.Bind(d, http.MethodGet, p, okGet, func(http.Handler) string { return p })
+				d.Bind(http.MethodGet, p, okGet, func(http.Handler) string { return p })
 			}))
 			assert.Contains(t, msg, "mounted at "+p+": the path has")
 			assert.Empty(t, docPaths(t, d))
@@ -324,7 +324,7 @@ func TestEmptyAndDotSegmentsPanic(t *testing.T) {
 	d, r := newGen(), chi.NewRouter()
 	specout.Chi(d, r).Get("/", okGet)
 	specout.Chi(d, r).Get("/v/{n:[0-9]+\\.[0-9]+}", okGet)
-	specout.Bind(d, http.MethodGet, "/files/", okGet, func(http.Handler) string { return "/files/" })
+	d.Bind(http.MethodGet, "/files/", okGet, func(http.Handler) string { return "/files/" })
 	require.NoError(t, specout.Chi(d, r).Adopt())
 	assert.Equal(t, []string{"/", "/files/", "/v/{n}"}, keys(docPaths(t, d)))
 }
@@ -335,7 +335,7 @@ func TestStarInParameterNameFails(t *testing.T) {
 	d, r := newGen(), chi.NewRouter()
 	specout.Chi(d, r).Get("/a/{x*}", okGet)
 	require.NoError(t, specout.Chi(d, r).Adopt())
-	wantBuildErr(t, d, `has a * in the path parameter name "x*"`)
+	wantBuildErr(t, d, `path parameter "x*" has a * in its name`)
 }
 
 // chi ends a parameter at the next pattern character and lets the regex
@@ -356,13 +356,13 @@ func TestChiRegexAcrossSegmentsIsACatchAll(t *testing.T) {
 func TestBindRecordsOnlyAfterTheRouterAccepts(t *testing.T) {
 	d := newGen()
 	require.Panics(t, func() {
-		specout.Bind(d, http.MethodGet, "/boom", okGet, func(http.Handler) string { panic("router said no") })
+		d.Bind(http.MethodGet, "/boom", okGet, func(http.Handler) string { panic("router said no") })
 	})
 	msg := fmt.Sprint(panicValue(func() {
-		specout.Bind(d, http.MethodGet, "items", okGet, func(http.Handler) string { return "items" })
+		d.Bind(http.MethodGet, "items", okGet, func(http.Handler) string { return "items" })
 	}))
 	assert.Contains(t, msg, "mounted at items: the path must start with /")
-	specout.Bind(d, http.MethodGet, "/ok/:id", okGet, func(next http.Handler) string {
+	d.Bind(http.MethodGet, "/ok/:id", okGet, func(next http.Handler) string {
 		require.NotNil(t, next)
 		return "/ok/{id}"
 	})
@@ -370,7 +370,7 @@ func TestBindRecordsOnlyAfterTheRouterAccepts(t *testing.T) {
 
 	called := false
 	require.Panics(t, func() {
-		specout.Bind(d, http.MethodGet, "/late", okGet, func(http.Handler) string { called = true; return "/late" })
+		d.Bind(http.MethodGet, "/late", okGet, func(http.Handler) string { called = true; return "/late" })
 	})
 	assert.False(t, called, "a frozen generator must not touch the router")
 }
@@ -392,7 +392,7 @@ func TestBindNamesTheRouteInRouterPanics(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			d := newGen()
 			v := panicValue(func() {
-				specout.Bind(d, http.MethodGet, "/a*b", okGet, func(http.Handler) string { panic(tc.value) })
+				d.Bind(http.MethodGet, "/a*b", okGet, func(http.Handler) string { panic(tc.value) })
 			})
 			assert.Equal(t, tc.want, fmt.Sprint(v))
 			if err, ok := tc.value.(error); ok {
@@ -407,18 +407,18 @@ func TestBindRejectsADuplicateRoute(t *testing.T) {
 	d := newGen()
 	mounts := 0
 	mount := func(http.Handler) string { mounts++; return "/items/{id}" }
-	specout.Bind(d, http.MethodGet, "/items/:id", okGet, mount)
-	specout.Bind(d, http.MethodPost, "/items/:id", okGet, mount)
-	msg := fmt.Sprint(panicValue(func() { specout.Bind(d, http.MethodGet, "/items/:key", okGet, mount) }))
-	assert.Contains(t, msg, `specout: duplicate route GET /items/{id} (registered as "/items/:id" and "/items/:key")`)
+	d.Bind(http.MethodGet, "/items/:id", okGet, mount)
+	d.Bind(http.MethodPost, "/items/:id", okGet, mount)
+	msg := fmt.Sprint(panicValue(func() { d.Bind(http.MethodGet, "/items/:key", okGet, mount) }))
+	assert.Contains(t, msg, `specout: GET /items/{id}: duplicate route, registered as "/items/:id" and "/items/:key"`)
 	assert.Equal(t, 3, mounts)
 	assert.Len(t, docPaths(t, d)["/items/{id}"], 2, "the duplicate left a record")
 }
 
 func TestCheckRoutesMatchesBindByMethodAndPath(t *testing.T) {
 	d := newGen()
-	specout.Bind(d, http.MethodGet, "/items/:id", okGet, func(http.Handler) string { return "/items/{id}" })
-	specout.Document(d, http.MethodPost, "/items", okGet)
+	d.Bind(http.MethodGet, "/items/:id", okGet, func(http.Handler) string { return "/items/{id}" })
+	d.Document(http.MethodPost, "/items", okGet)
 	err := d.CheckRoutes([]specout.RouteKey{
 		{Method: http.MethodGet, Path: "/items/{id}"},
 		{Method: http.MethodPost, Path: "/items"},
@@ -467,11 +467,11 @@ func TestBindersRejectNilArguments(t *testing.T) {
 }
 
 func TestBindAndDocumentRejectANilGenerator(t *testing.T) {
-	assert.PanicsWithValue(t, "specout: Bind needs a generator", func() {
-		specout.Bind(nil, http.MethodGet, "/x", okGet, func(http.Handler) string { return "/x" })
+	assert.PanicsWithValue(t, "specout: Bind needs a generator; make one with New", func() {
+		(*specout.Generator)(nil).Bind(http.MethodGet, "/x", okGet, func(http.Handler) string { return "/x" })
 	})
-	assert.PanicsWithValue(t, "specout: Document needs a generator", func() {
-		specout.Document(nil, http.MethodGet, "/x", okGet)
+	assert.PanicsWithValue(t, "specout: Document needs a generator; make one with New", func() {
+		(*specout.Generator)(nil).Document(http.MethodGet, "/x", okGet)
 	})
 }
 
@@ -501,7 +501,7 @@ func TestChiInnerAdoptFailsUnderUndeclaredMount(t *testing.T) {
 		root.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/openapi.json", http.NoBody))
 		assert.Equal(t, tc.want, w.Code, "servers %v", tc.servers)
 		if tc.want != http.StatusOK {
-			wantBuildErr(t, d, "GET /x is served at /api/x, under a router mounted at /api")
+			wantBuildErr(t, d, "GET /x: served at /api/x, under a router mounted at /api")
 		}
 	}
 }

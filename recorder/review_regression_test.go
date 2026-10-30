@@ -37,8 +37,8 @@ func TestStdExactAndSubtreeShareOnePath(t *testing.T) {
 		std := specout.Std(d, http.NewServeMux())
 		std.Get(order[0], nc(hit204))
 		std.Get(order[1], nc(hit204))
-		require.EqualError(t, d.WriteJSON(io.Discard), "specout: duplicate route GET /a/ (registered as "+
-			strconv.Quote(order[0])+" and "+strconv.Quote(order[1])+"): net/http serves both, but OpenAPI "+
+		require.EqualError(t, d.WriteJSON(io.Discard), "specout: GET /a/: duplicate route, registered as "+
+			strconv.Quote(order[0])+" and "+strconv.Quote(order[1])+": net/http serves both, but OpenAPI "+
 			"has one path for them; document one, register the other on the mux itself, and pass "+
 			"specout.Skip with its pattern to the recorder")
 	}
@@ -170,7 +170,7 @@ func TestVerifyNamesARouterHiddenByMiddleware(t *testing.T) {
 
 func TestObserveFeedsVerify(t *testing.T) {
 	d := gen()
-	specout.Document(d, http.MethodGet, "/items/{id}", nc(hit204))
+	d.Document(http.MethodGet, "/items/{id}", nc(hit204))
 	rec := recorder.New(nil, specout.Skip("/openapi.json"))
 	rec.Observe(http.MethodGet, "/items/{id}", http.StatusNoContent)
 	rec.Observe(http.MethodGet, "/openapi.json", http.StatusOK)

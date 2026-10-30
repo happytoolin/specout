@@ -33,7 +33,7 @@ func TestUnresolvedPatternFails(t *testing.T) {
 		specout.Chi(d, r).Get("/x", okGet)
 	})
 	// no Adopt of the root; the inner registration is relative
-	wantBuildErr(t, d, "never resolved")
+	wantBuildErr(t, d, "no full path")
 }
 
 // One func on two chi routes pairs deterministically across two builds.
@@ -182,7 +182,7 @@ func TestGorillaMethodlessFails(t *testing.T) {
 // Document escape hatch records absolute patterns for foreign routers.
 func TestDocument(t *testing.T) {
 	d := newGen()
-	specout.Document(d, http.MethodGet, "/anything", okGet)
+	d.Document(http.MethodGet, "/anything", okGet)
 	require.Contains(t, docPaths(t, d), "/anything", "documented route missing")
 }
 
@@ -190,7 +190,7 @@ func TestDocument(t *testing.T) {
 // an absolute pattern with no Adopt, and the foreign mux still serves it.
 func TestDocumentForeignRouterEndToEnd(t *testing.T) {
 	d, mux := newGen(), http.NewServeMux()
-	specout.Document(d, http.MethodGet, "/echo/items/{id}", okGet)
+	d.Document(http.MethodGet, "/echo/items/{id}", okGet)
 	mux.HandleFunc("GET /echo/items/{id}", okGet.HandlerFunc)
 	require.Contains(t, docPaths(t, d), "/echo/items/{id}", "Document path missing from spec")
 	rec := httptest.NewRecorder()
@@ -204,8 +204,8 @@ func TestBadMethodPanics(t *testing.T) {
 	for _, bad := range []string{"get /x", "GET  /x", "GET x"} {
 		require.Panics(t, func() { specout.Std(newGen(), mux).Handle(bad, okGet) })
 	}
-	require.Panics(t, func() { specout.Document(newGen(), "get", "/x", okGet) })
-	require.Panics(t, func() { specout.Document(newGen(), "GET", "x", okGet) })
+	require.Panics(t, func() { newGen().Document("get", "/x", okGet) })
+	require.Panics(t, func() { newGen().Document("GET", "x", okGet) })
 }
 
 // Gorilla composes subrouter prefixes into the route template, so the spec
@@ -328,7 +328,7 @@ func TestBraceQuantifierParamNormalized(t *testing.T) {
 	adopt(t, specout.Chi(d, r))
 	check("chi", d)
 	d = newGen()
-	specout.Document(d, http.MethodGet, pat, okGet)
+	d.Document(http.MethodGet, pat, okGet)
 	check("document", d)
 }
 
@@ -363,7 +363,7 @@ func TestNilHandlerPanics(t *testing.T) {
 // A method OpenAPI cannot name (CONNECT) would emit an invalid path-item
 // key, so the binder panics instead of writing an invalid document.
 func TestNonOpenAPIMethodPanics(t *testing.T) {
-	require.Panics(t, func() { specout.Document(newGen(), "CONNECT", "/x", okGet) })
+	require.Panics(t, func() { newGen().Document("CONNECT", "/x", okGet) })
 	require.Panics(t, func() { specout.Std(newGen(), http.NewServeMux()).Handle("CONNECT /x", okGet) })
 }
 
@@ -376,7 +376,7 @@ type strayPathReq struct {
 
 func TestStrayPathFieldFails(t *testing.T) {
 	d := newGen()
-	specout.Document(d, http.MethodGet, "/x/{id}", specout.Handler[strayPathReq, specout.NoContent]{HandlerFunc: okBody})
+	d.Document(http.MethodGet, "/x/{id}", specout.Handler[strayPathReq, specout.NoContent]{HandlerFunc: okBody})
 	wantBuildErr(t, d, `path:"Id"`)
 }
 
@@ -384,7 +384,7 @@ func TestStrayPathFieldFails(t *testing.T) {
 // a parameter name. Every router path reaches the same check.
 func TestBraceInParameterNameFails(t *testing.T) {
 	for name, register := range map[string]func(d *specout.Generator){
-		"document": func(d *specout.Generator) { specout.Document(d, http.MethodGet, "/x/{{id}}", okGet) },
+		"document": func(d *specout.Generator) { d.Document(http.MethodGet, "/x/{{id}}", okGet) },
 		"chi": func(d *specout.Generator) {
 			r := chi.NewRouter()
 			specout.Chi(d, r).Get("/x/{a{b}}", okGet)
@@ -395,7 +395,7 @@ func TestBraceInParameterNameFails(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			d := newGen()
 			register(d)
-			wantBuildErr(t, d, "has a brace inside a path parameter name")
+			wantBuildErr(t, d, "a path parameter name has a brace")
 		})
 	}
 }
@@ -403,10 +403,10 @@ func TestBraceInParameterNameFails(t *testing.T) {
 // chi and gorilla read net/http's {$} as a parameter named $, so /a/{$}
 // serves /a/xyz and not /a/, the path the document would name.
 func TestEndAnchorOutsideStdPanics(t *testing.T) {
-	assert.PanicsWithValue(t, "specout: chi route GET /a/{$}: {$} is net/http syntax; chi reads it as a "+
+	assert.PanicsWithValue(t, "specout: GET /a/{$}: {$} is net/http syntax; chi reads it as a "+
 		"parameter named $, so the route serves /a/xyz and not /a/. Register the path without {$}",
 		func() { specout.Chi(newGen(), chi.NewRouter()).Get("/a/{$}", okGet) })
-	assert.PanicsWithValue(t, "specout: gorilla route GET /a/{$}: {$} is net/http syntax; gorilla reads it "+
+	assert.PanicsWithValue(t, "specout: GET /a/{$}: {$} is net/http syntax; gorilla reads it "+
 		"as a parameter named $, so the route serves /a/xyz and not /a/. Register the path without {$}",
 		func() { specout.Gorilla(newGen(), gmux.NewRouter()).Get("/a/{$}", okGet) })
 }
@@ -416,9 +416,9 @@ func TestEndAnchorOutsideStdPanics(t *testing.T) {
 // across a Mount, and a group prefix can repeat a route's name.
 func TestRepeatedPathParameterFails(t *testing.T) {
 	for name, register := range map[string]func(d *specout.Generator){
-		"document": func(d *specout.Generator) { specout.Document(d, http.MethodGet, "/a/{id}/b/{id}", okGet) },
+		"document": func(d *specout.Generator) { d.Document(http.MethodGet, "/a/{id}/b/{id}", okGet) },
 		"bind": func(d *specout.Generator) {
-			specout.Bind(d, http.MethodGet, "/a/:id/b/:id", okGet, func(http.Handler) string { return "/a/{id}/b/{id}" })
+			d.Bind(http.MethodGet, "/a/:id/b/:id", okGet, func(http.Handler) string { return "/a/{id}/b/{id}" })
 		},
 		"chi mount": func(d *specout.Generator) {
 			r, sub := chi.NewRouter(), chi.NewRouter()
@@ -430,7 +430,7 @@ func TestRepeatedPathParameterFails(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			d := newGen()
 			register(d)
-			wantBuildErr(t, d, `names the path parameter "id" twice`)
+			wantBuildErr(t, d, `path parameter "id" appears twice`)
 		})
 	}
 }
@@ -443,7 +443,7 @@ func TestPathFieldMatchesPattern(t *testing.T) {
 		Skip string `json:"skip" path:"-"`
 	}
 	d := newGen()
-	specout.Document(d, http.MethodGet, "/x/{id}", specout.Handler[req, specout.NoContent]{HandlerFunc: okBody})
+	d.Document(http.MethodGet, "/x/{id}", specout.Handler[req, specout.NoContent]{HandlerFunc: okBody})
 	require.Contains(t, docPaths(t, d), "/x/{id}", "path-typed route missing")
 }
 

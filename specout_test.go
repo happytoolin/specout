@@ -139,7 +139,7 @@ func TestHandlerFluent(t *testing.T) {
 
 	for _, h := range []specout.Handler[EmptyReq, Onboarding]{literal, chained} {
 		g := newGen()
-		specout.Document(g, http.MethodGet, "/x", h)
+		g.Document(http.MethodGet, "/x", h)
 		op := opOf(t, buildDoc(t, g), "/x", "get")
 		assert.Equal(t, "s", op["summary"])
 		assert.Equal(t, []any{"t"}, op["tags"])

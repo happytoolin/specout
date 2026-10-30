@@ -91,8 +91,8 @@ func TestGenericComponentsUseOneLegalNameForDefinitionsAndRefs(t *testing.T) {
 
 func TestNullableFixupIsIdempotentForSharedAndCompositeSchemas(t *testing.T) {
 	d := newGen()
-	specout.Document(d, http.MethodGet, "/a", specout.Handler[struct{}, schemaSharedA]{HandlerFunc: noop})
-	specout.Document(d, http.MethodGet, "/b", specout.Handler[struct{}, schemaSharedB]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/a", specout.Handler[struct{}, schemaSharedA]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/b", specout.Handler[struct{}, schemaSharedB]{HandlerFunc: noop})
 	doc := buildDoc(t, d)
 
 	child := props(t, doc, "schemaSharedChild")
@@ -118,8 +118,8 @@ func TestNullableEnumAndConstKeepTheirConstraint(t *testing.T) {
 
 func TestRecursiveAnonymousPointerEmbeddingTerminates(t *testing.T) {
 	d := newGen()
-	specout.Document(d, http.MethodGet, "/recursive", specout.Handler[struct{}, RecursiveEmbedded]{HandlerFunc: noop})
-	assert.PanicsWithValue(t, "specout: recursive anonymous embedding in specout_test.RecursiveEmbedded", func() {
+	d.Document(http.MethodGet, "/recursive", specout.Handler[struct{}, RecursiveEmbedded]{HandlerFunc: noop})
+	assert.PanicsWithValue(t, "specout: GET /recursive: recursive anonymous embedding in specout_test.RecursiveEmbedded", func() {
 		buildDoc(t, d)
 	})
 }
@@ -133,7 +133,7 @@ func componentsSchema(t *testing.T, doc map[string]any, name string) map[string]
 
 func TestClosedSchemasPreserveTypedAndFreeMaps(t *testing.T) {
 	d := specout.New(specout.Config{Title: "t", Version: "1", ClosedSchemas: true})
-	specout.Document(d, http.MethodPost, "/maps", specout.Handler[schemaMapBody, specout.NoContent]{HandlerFunc: noop})
+	d.Document(http.MethodPost, "/maps", specout.Handler[schemaMapBody, specout.NoContent]{HandlerFunc: noop})
 	p := props(t, buildDoc(t, d), "schemaMapBody")
 
 	typed := p["typed"].(map[string]any)
@@ -174,16 +174,16 @@ func TestClosedSchemasRejectHiddenFields(t *testing.T) {
 	} {
 		t.Run(want, func(t *testing.T) {
 			d := specout.New(specout.Config{Title: "t", Version: "1", ClosedSchemas: true})
-			specout.Document(d, http.MethodGet, "/x", okGet.WithResponse(specout.Response{Status: http.StatusOK, Type: body}))
-			assert.PanicsWithValue(t, "specout: specout_test."+want+` has jsonschema:"-", but JSON still writes it, `+
+			d.Document(http.MethodGet, "/x", okGet.WithResponse(specout.Response{Status: http.StatusOK, Type: body}))
+			assert.PanicsWithValue(t, "specout: GET /x: specout_test."+want+` has jsonschema:"-", but JSON still writes it, `+
 				`and ClosedSchemas rejects it; tag it json:"-", or drop ClosedSchemas`, func() { _ = d.WriteJSON(io.Discard) })
 		})
 	}
 	d := specout.New(specout.Config{Title: "t", Version: "1", ClosedSchemas: true})
-	specout.Document(d, http.MethodGet, "/x", okGet.WithResponse(specout.Response{Status: http.StatusOK, Type: ignored{}}))
+	d.Document(http.MethodGet, "/x", okGet.WithResponse(specout.Response{Status: http.StatusOK, Type: ignored{}}))
 	assert.NotContains(t, props(t, buildDoc(t, d), "ignored"), "secret")
 	open := newGen()
-	specout.Document(open, http.MethodGet, "/x", okGet.WithResponse(specout.Response{Status: http.StatusOK, Type: direct{}}))
+	open.Document(http.MethodGet, "/x", okGet.WithResponse(specout.Response{Status: http.StatusOK, Type: direct{}}))
 	assert.NotContains(t, props(t, buildDoc(t, open), "direct"), "secret", "an open schema keeps the hidden field out")
 }
 
@@ -210,8 +210,8 @@ func TestNestedFullSchemaAlsoSeparatesARequestBodyView(t *testing.T) {
 		Value request `json:"value"`
 	}
 	d := newGen()
-	specout.Document(d, http.MethodPost, "/requests/{id}", specout.Handler[request, specout.NoContent]{HandlerFunc: noop})
-	specout.Document(d, http.MethodGet, "/requests", specout.Handler[struct{}, envelope]{HandlerFunc: noop})
+	d.Document(http.MethodPost, "/requests/{id}", specout.Handler[request, specout.NoContent]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/requests", specout.Handler[struct{}, envelope]{HandlerFunc: noop})
 	doc := buildDoc(t, d)
 
 	assert.Contains(t, componentsSchema(t, doc, "request")["properties"], "ID")
@@ -265,7 +265,7 @@ func TestUnionConstrainsTheCompleteEnvelope(t *testing.T) {
 	d := newGen()
 	d.Register[schemaEmail]("email")
 	d.Register[schemaSlack]("slack")
-	specout.Document(d, http.MethodPost, "/union", specout.Handler[schemaUnion, specout.NoContent]{HandlerFunc: noop})
+	d.Document(http.MethodPost, "/union", specout.Handler[schemaUnion, specout.NoContent]{HandlerFunc: noop})
 	components := schemas(t, buildDoc(t, d))
 	union := components["schemaUnion"].(map[string]any)
 
@@ -355,8 +355,8 @@ func TestLaunchTextMarshalersAreStrings(t *testing.T) {
 		Keys map[schemaTextKey]int `json:"keys"`
 	}
 	d := newGen()
-	specout.Document(d, http.MethodGet, "/x", specout.Get[response]{HandlerFunc: noop})
-	specout.Document(d, http.MethodGet, "/id", specout.Get[schemaTextID]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/x", specout.Get[response]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/id", specout.Get[schemaTextID]{HandlerFunc: noop})
 	doc := buildDoc(t, d)
 	value := response{ID: schemaTextID{1, 2}, Addr: netip.MustParseAddr("::1"), Keys: map[schemaTextKey]int{5: 1}}
 	exportLaunchSamples(t, doc,
@@ -377,8 +377,8 @@ func TestLaunchUintptrIsAnInteger(t *testing.T) {
 		Address uintptr `json:"address"`
 	}
 	d := newGen()
-	specout.Document(d, http.MethodGet, "/x", specout.Get[response]{HandlerFunc: noop})
-	specout.Document(d, http.MethodGet, "/root", specout.Get[uintptr]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/x", specout.Get[response]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/root", specout.Get[uintptr]{HandlerFunc: noop})
 	doc := buildDoc(t, d)
 	exportLaunchSamples(t, doc,
 		launchSample{"uintptr field", launchResponseSchema(t, doc, "/x", "get"), response{Address: 42}, true},
@@ -419,9 +419,9 @@ func TestLaunchPromotedEncoderSetsTheSchema(t *testing.T) {
 		List []schemaStamp `json:"list"`
 	}
 	d := newGen()
-	specout.Document(d, http.MethodGet, "/x", specout.Get[response]{HandlerFunc: noop})
-	specout.Document(d, http.MethodGet, "/stamp", specout.Get[schemaStamp]{HandlerFunc: noop})
-	specout.Document(d, http.MethodGet, "/own", specout.Get[schemaOwnStamp]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/x", specout.Get[response]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/stamp", specout.Get[schemaStamp]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/own", specout.Get[schemaOwnStamp]{HandlerFunc: noop})
 	doc := buildDoc(t, d)
 	stamp := schemaStamp{Time: time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC), Note: "dropped"}
 	wire, err := jsonv1.Marshal(stamp)
@@ -458,7 +458,7 @@ type schemaOuterStamp struct {
 
 func TestLaunchShallowestPromotedEncoderSetsTheSchema(t *testing.T) {
 	d := newGen()
-	specout.Document(d, http.MethodGet, "/x", specout.Get[schemaOuterStamp]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/x", specout.Get[schemaOuterStamp]{HandlerFunc: noop})
 	doc := buildDoc(t, d)
 	value := schemaOuterStamp{Time: time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)}
 	wire, err := jsonv1.Marshal(value)
@@ -479,7 +479,7 @@ func TestLaunchPointerTextMarshalerIsAString(t *testing.T) {
 		Patterns []regexp.Regexp `json:"patterns"`
 	}
 	d := newGen()
-	specout.Document(d, http.MethodGet, "/x", specout.Get[response]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/x", specout.Get[response]{HandlerFunc: noop})
 	doc := buildDoc(t, d)
 	value := response{Pattern: regexp.MustCompile(`^a+$`), Patterns: []regexp.Regexp{*regexp.MustCompile(`b`)}}
 	wire, err := jsonv1.Marshal(value)
@@ -508,8 +508,8 @@ func TestLaunchBigNumbers(t *testing.T) {
 		Rat   *big.Rat   `json:"rat"`
 	}
 	d := newGen()
-	specout.Document(d, http.MethodGet, "/x", specout.Get[response]{HandlerFunc: noop})
-	specout.Document(d, http.MethodGet, "/int", specout.Get[*big.Int]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/x", specout.Get[response]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/int", specout.Get[*big.Int]{HandlerFunc: noop})
 	doc := buildDoc(t, d)
 	huge, ok := new(big.Int).SetString("123456789012345678901234567890", 10)
 	require.True(t, ok)
@@ -541,7 +541,7 @@ func TestLaunchJSONNumber(t *testing.T) {
 		Amount jsonv1.Number `json:"amount"`
 	}
 	d := newGen()
-	specout.Document(d, http.MethodGet, "/x", specout.Get[response]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/x", specout.Get[response]{HandlerFunc: noop})
 	doc := buildDoc(t, d)
 	value := response{Amount: "12.5"}
 	wire, err := jsonv1.Marshal(value)
@@ -571,7 +571,7 @@ func TestUnencodableTypesPanicClearly(t *testing.T) {
 		}{},
 	} {
 		t.Run(want, func(t *testing.T) {
-			assert.PanicsWithValue(t, "specout: JSON cannot encode "+want+`; tag its field json:"-"`, func() {
+			assert.PanicsWithValue(t, "specout: GET /x: JSON cannot encode "+want+`; tag its field json:"-"`, func() {
 				docOf(t, http.MethodGet, "/x", okGet.WithResponse(specout.Response{Status: http.StatusOK, Type: value}))
 			})
 		})
@@ -717,8 +717,8 @@ func TestAnonymousNameSkipsUserTypeName(t *testing.T) {
 		if !userFirst {
 			userPath, anonPath = anonPath, userPath
 		}
-		specout.Document(d, http.MethodGet, userPath, specout.Get[Anonymous1]{HandlerFunc: noop})
-		specout.Document(d, http.MethodGet, anonPath, specout.Get[anonymous]{HandlerFunc: noop})
+		d.Document(http.MethodGet, userPath, specout.Get[Anonymous1]{HandlerFunc: noop})
+		d.Document(http.MethodGet, anonPath, specout.Get[anonymous]{HandlerFunc: noop})
 		doc := buildDoc(t, d)
 		assert.Contains(t, props(t, doc, "Anonymous1"), "id", "userFirst=%t", userFirst)
 		assert.Contains(t, props(t, doc, "Anonymous2"), "name", "userFirst=%t", userFirst)
