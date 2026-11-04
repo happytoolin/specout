@@ -206,12 +206,13 @@ Choose Huma or Fuego if you want the framework to decode and validate requests.
 | Output | OpenAPI 3.1 and JSON Schema 2020-12, as JSON in a stable order. |
 | Parameters | Path, query, header, and cookie. |
 | Request bodies | JSON, binary files, multipart uploads, and custom media types. |
-| Responses | Status codes, headers, media types, shared errors, and responses without a body. |
+| Responses | Status codes, headers, media types, shared errors, links, and responses without a body. |
 | Schemas | Nested and recursive types, collections, optional fields, nullable values, enums, formats, value limits, and discriminated unions. |
 | Authentication | Bearer tokens, HTTP Basic, API keys, OAuth 2.0, OpenID Connect, and mutual TLS. Your middleware checks the credentials. |
 | Route details | Summaries, descriptions, tags, operation IDs, deprecation, examples, and security for each route. |
 | Requests your API sends | Webhooks and callbacks, with schemas from Go types. |
 | Checks | Find routes without documentation, and compare response statuses with your HTTP tests. |
+| Valid output | specout stops with a fix on a value that would make the document break OpenAPI 3.1 or JSON Schema 2020-12. |
 
 ## Describe your API
 
@@ -337,8 +338,9 @@ doc.Webhook(http.MethodPost, "orderCreated", specout.Event[OrderCreated]{
 ```
 
 `specout.Event[T]` means that the receiver answers `204` with no body. Add
-`Responses` if the receiver can answer in another way. For example, use
-`Key: "2XX"` for any success status.
+`Responses` if the receiver can answer in another way. A declared success
+response replaces the `204`. For example, use `Key: "2XX"` for any success
+status.
 
 A callback is a request that your API sends because of one route. The URL is
 usually a runtime expression that reads the original request:
