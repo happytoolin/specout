@@ -39,6 +39,12 @@ func (d *Generator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodHead {
 		_, _ = w.Write(spec)
 	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.served == nil {
+		d.served = map[RouteKey]bool{}
+	}
+	d.served[NewRouteKey(r.Method, r.URL.Path)] = true
 }
 
 // chiOuter returns the chi router that served r, or nil. bytes compares it with
@@ -148,6 +154,9 @@ func (d *Generator) encode() ([]byte, error) {
 	b, err := json.Marshal(spec, jsontext.WithIndent("  "))
 	if err != nil {
 		return nil, fmt.Errorf("specout: encode spec: %w", err)
+	}
+	if refErr := checkRefs(b); refErr != nil {
+		return nil, refErr
 	}
 	return append(b, '\n'), nil // trailing newline, like a text file
 }

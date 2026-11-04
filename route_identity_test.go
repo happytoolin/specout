@@ -252,7 +252,7 @@ func TestGorillaBadPathNeverReachesTheRouter(t *testing.T) {
 	// gorilla has the route.
 	sub := mux.NewRouter().PathPrefix("/a//b").Subrouter()
 	msg := fmt.Sprint(panicValue(func() { specout.Gorilla(newGen(), sub).Get("/c", okGet) }))
-	assert.Equal(t, "specout: GET /c: the path has an empty segment (//)", msg)
+	assert.Equal(t, "specout: GET /c: the path has an empty segment (//); remove the extra /", msg)
 }
 
 func TestGorillaPathlessRouteIsSkippable(t *testing.T) {
@@ -289,9 +289,11 @@ func TestDocumentRejectsNonOpenAPIPaths(t *testing.T) {
 		"/items/:id": ":id is router syntax; write the parameter as {id}",
 		"/items/{id": "{ without a matching }",
 		"/items/id}": "} without a matching {",
-		"/a//b":      "drop {$}, empty segments and dot segments",
-		"/c/{$}":     "drop {$}, empty segments and dot segments",
-		"/d/./e":     "drop {$}, empty segments and dot segments",
+		"/a//b":      "empty segment (//)",
+		"/c/{$}":     "{$} is the net/http end anchor",
+		"/d/./e":     "dot segment (/.)",
+		"/f?x=1":     `the character '?'`,
+		"/g h":       `the character ' '`,
 		"items/{id}": "must start with /",
 	} {
 		t.Run(pattern, func(t *testing.T) {

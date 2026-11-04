@@ -19,12 +19,14 @@ type Example struct {
 }
 
 // checkExamples panics on examples that would break the document. where names
-// the field in the message.
-func checkExamples(where string, example any, examples map[string]Example) {
+// the field in the message. bodies lists the Go types that the body can take,
+// the first one for the message.
+func checkExamples(where string, example any, examples map[string]Example, bodies ...reflect.Type) {
 	if example != nil && len(examples) > 0 {
 		panic("specout: " + where + ": sets both Example and Examples; set one")
 	}
 	if example != nil {
+		checkExampleType(where+": Example", example, bodies)
 		exampleValue(where, example)
 	}
 	for _, name := range sortedKeys(examples) {
@@ -35,9 +37,29 @@ func checkExamples(where string, example any, examples map[string]Example) {
 		case ex.Value == nil && ex.ExternalValue == "":
 			panic("specout: " + where + ": example " + strconv.Quote(name) + " has no value; set Value or ExternalValue")
 		case ex.Value != nil:
+			checkExampleType(where+": example "+strconv.Quote(name), ex.Value, bodies)
 			exampleValue(where, ex.Value)
 		}
 	}
+}
+
+// checkExampleType panics when v is a named struct of a type that the body
+// cannot take, such as an error body on a success response. A map, a slice, a
+// scalar and raw JSON can show any shape, so they pass. A union body takes a
+// value of each of its variants.
+func checkExampleType(where string, v any, bodies []reflect.Type) {
+	t := deref(reflect.TypeOf(v))
+	if len(bodies) == 0 || t.Kind() != reflect.Struct || t.Name() == "" {
+		return
+	}
+	for _, body := range bodies {
+		body = deref(body)
+		if body == t || body.Kind() == reflect.Interface {
+			return
+		}
+	}
+	want := deref(bodies[0])
+	panic(fmt.Sprintf("specout: %s: the value is a %s, but the body is a %s; use a %s value", where, t, want, want))
 }
 
 // exampleValue encodes an example with encoding/json, the encoder that specout

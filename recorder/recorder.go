@@ -28,9 +28,16 @@ type Recorder struct {
 
 	mu    sync.Mutex
 	codes map[specout.RouteKey]map[int]bool
-	// unmatched counts requests ServeHTTP served without finding a route,
-	// so Verify can tell a wrapped router from untested routes.
-	unmatched int
+	// misses are the requests that ServeHTTP served without finding a route.
+	// Verify matches them against the paths of the document.
+	misses []miss
+}
+
+// miss is a request that ran no route that the recorder could see, such as a
+// request that middleware outside the router answered.
+type miss struct {
+	method, path string
+	status       int
 }
 
 // New wraps next (the app router) for observation: a route matching a skip is
@@ -80,15 +87,17 @@ func (rec *Recorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if routerRedirect(r, rw) {
 		return
 	}
-	// unmatched, or a skipped route: no key, no drift entry
-	if pattern == "" {
-		rec.mu.Lock()
-		rec.unmatched++
-		rec.mu.Unlock()
-		return
-	}
 	// a handler that hijacked the connection wrote its own status
-	if status, ok := hijack.Status(r.Header, rw.Status(), rw.Status() != 0, watch.Hijacked()); ok {
+	status, ok := hijack.Status(r.Header, rw.Status(), rw.Status() != 0, watch.Hijacked())
+	switch {
+	case !ok:
+	case pattern == "":
+		// Verify matches the path against the document
+		rec.mu.Lock()
+		m := miss{method: r.Method, path: r.URL.EscapedPath(), status: cmp.Or(status, http.StatusOK)}
+		rec.misses = append(rec.misses, m)
+		rec.mu.Unlock()
+	default:
 		rec.Observe(method, pattern, status)
 	}
 }

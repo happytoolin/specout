@@ -72,7 +72,7 @@ func remapDefs(s *jsonschema.Schema) {
 
 // jsonSchemaTypes are the type names that JSON Schema defines.
 var jsonSchemaTypes = map[string]bool{
-	nullType: true, "boolean": true, typeObject: true, typeArray: true,
+	nullType: true, typeBoolean: true, typeObject: true, typeArray: true,
 	typeNumber: true, typeString: true, typeInteger: true,
 }
 

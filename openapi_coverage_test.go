@@ -212,7 +212,7 @@ func coverageGenerator() *specout.Generator {
 		Request: specout.Request{
 			Description: "The new item", Optional: true,
 			Examples: map[string]specout.Example{
-				"short": {Summary: "Short", Description: "A short name", Value: coverageItem{Name: "a"}},
+				"short": {Summary: "Short", Description: "A short name", Value: coverageRequest{ID: "7", Name: "a"}},
 				"file":  {ExternalValue: "https://example.com/item.json"},
 			},
 		},
@@ -228,7 +228,7 @@ func coverageGenerator() *specout.Generator {
 			{Key: "default", Type: coverageItem{}},
 		},
 		Servers:   []specout.Server{{URL: "https://example.com"}},
-		Callbacks: []specout.Callback{specout.NewCallback("done", http.MethodPost, "{$request.body#/url}", specout.Event[coverageItem]{})},
+		Callbacks: []specout.Callback{specout.NewCallback(http.MethodPost, "done", "{$request.body#/url}", specout.Event[coverageItem]{})},
 	})
 	for _, method := range []string{http.MethodGet, http.MethodDelete, http.MethodOptions, http.MethodHead, http.MethodPatch, http.MethodTrace} {
 		d.Document(method, "/items", specout.Get[coverageItem]{HandlerFunc: noop, Public: true})

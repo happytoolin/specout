@@ -61,6 +61,7 @@ func schemeOfType(a AuthScheme) *obj {
 		if a.URL == "" {
 			panic("specout: " + authWhere(a) + ": openIdConnect needs a URL, the discovery document")
 		}
+		checkURL(authWhere(a), "URL", a.URL)
 		return newObj().set("type", authOpenIDConnect).set("openIdConnectUrl", a.URL)
 	default:
 		types := []string{authHTTP, authAPIKey, authOAuth2, authOpenIDConnect, authMutualTLS}
@@ -181,6 +182,7 @@ func oauth2Flows(a AuthScheme) *obj {
 				strings.Join(names, ", ") + didYouMean(name, names))
 		}
 		if f.RefreshURL != "" {
+			checkURL(authWhere(a)+": flow "+strconv.Quote(name), "RefreshURL", f.RefreshURL)
 			fo.set("refreshUrl", f.RefreshURL)
 		}
 		scopes := newObj()
@@ -196,4 +198,5 @@ func requireURL(a AuthScheme, flow, field, url string) {
 	if url == "" {
 		panic("specout: " + authWhere(a) + ": flow " + strconv.Quote(flow) + " needs " + field)
 	}
+	checkURL(authWhere(a)+": flow "+strconv.Quote(flow), field, url)
 }

@@ -94,6 +94,9 @@ func (sr *schemaRegistry) taggedParams(req reflect.Type) []any {
 			panic("specout: field " + f.Name + ": " + loc + " parameter name " + strconv.Quote(name) + " is empty or repeated")
 		}
 		seen[key] = true
+		if loc == InHeader {
+			checkHeaderParam(f, name)
+		}
 		params = append(params, sr.parameter(name, loc, f))
 	}
 	return params
@@ -124,7 +127,7 @@ var parameterStyles = map[string][]string{
 	pathLocation: {"matrix", "label", "simple"},
 	InHeader:     {"simple"},
 	InCookie:     {"form"},
-	InQuery:      {"form", "spaceDelimited", "pipeDelimited", "deepObject"},
+	InQuery:      {"form", "spaceDelimited", "pipeDelimited", styleDeepObject},
 }
 
 // applyParamStyle copies style= and explode= onto the parameter object. They
@@ -139,13 +142,16 @@ func applyParamStyle(p *obj, f reflect.StructField, loc string) {
 		}
 		p.set("style", st)
 	}
+	var explode *bool
 	if ex := tagValue(tag, "explode"); ex != "" {
 		b, err := strconv.ParseBool(ex)
 		if err != nil {
 			panic("specout: field " + f.Name + ": explode=" + ex + " is not valid; use true or false")
 		}
 		p.set("explode", b)
+		explode = &b
 	}
+	checkStyleKind(f, tagValue(tag, "style"), explode)
 }
 
 // applyParamFlags copies the parameter keywords of the jsonschema tag onto the
@@ -223,6 +229,7 @@ func (sr *schemaRegistry) pathParamObjs(pattern string, req reflect.Type) []any 
 // Parameters have their own wire names; json:"-" only hides a body property.
 func (sr *schemaRegistry) reflectParam(f reflect.StructField) *jsonschema.Schema {
 	checkSchemaTag("field "+f.Name, f.Tag.Get("jsonschema"))
+	checkExtrasTag("field "+f.Name, f.Tag.Get("jsonschema_extras"))
 	var tag strings.Builder
 	for _, key := range []string{"jsonschema", "jsonschema_description", "jsonschema_extras"} {
 		tag.WriteString(key + ":" + strconv.Quote(f.Tag.Get(key)) + " ")
@@ -231,6 +238,7 @@ func (sr *schemaRegistry) reflectParam(f reflect.StructField) *jsonschema.Schema
 	if s == nil {
 		panic("specout: field " + f.Name + `: this parameter has no schema; remove jsonschema:"-"`)
 	}
+	fixFieldValues("field "+f.Name, s)
 	return s
 }
 

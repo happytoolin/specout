@@ -95,6 +95,32 @@ func (c *ChiRouter) Trace[Req, Res any](p string, h Handler[Req, Res]) {
 	c.register(http.MethodTrace, p, recOf(h))
 }
 
+// Route adds a subrouter at pattern, as chi.Router.Route does, and gives fn
+// the binder of the subrouter.
+func (c *ChiRouter) Route(pattern string, fn func(r *ChiRouter)) *ChiRouter {
+	if fn == nil {
+		panic("specout: Route " + pattern + ": fn is nil; pass a func that registers the routes")
+	}
+	sub := c.r.Route(pattern, func(r chi.Router) { fn(&ChiRouter{d: c.d, r: r}) })
+	return &ChiRouter{d: c.d, r: sub}
+}
+
+// Group adds an inline group with its own middleware stack, as
+// chi.Router.Group does, and gives fn the binder of the group.
+func (c *ChiRouter) Group(fn func(r *ChiRouter)) *ChiRouter {
+	if fn == nil {
+		panic("specout: Group: fn is nil; pass a func that registers the routes")
+	}
+	group := c.r.Group(func(r chi.Router) { fn(&ChiRouter{d: c.d, r: r}) })
+	return &ChiRouter{d: c.d, r: group}
+}
+
+// With returns a binder whose routes also run middlewares, as chi.Router.With
+// does.
+func (c *ChiRouter) With(middlewares ...func(http.Handler) http.Handler) *ChiRouter {
+	return &ChiRouter{d: c.d, r: c.r.With(middlewares...)}
+}
+
 // Adopt walks an already-built chi router: routes whose handler specout
 // does not know (plain r.Get strays) are reported as errors; skips use
 // SkipRule patterns like /healthz or /debug/*.

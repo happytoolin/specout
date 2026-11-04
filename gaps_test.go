@@ -44,7 +44,8 @@ func TestGapRangeCode(t *testing.T) {
 
 // TestGapNoBodyStatuses: a bare 1xx, 204, 205 or 304 carries no body. HTTP
 // forbids content there, and inheriting Res would leak the handler's schema
-// into it.
+// into it. The declared 204 and 205 are success responses, so they replace the
+// Res default 200.
 func TestGapNoBodyStatuses(t *testing.T) {
 	d := newGen()
 	r := chi.NewRouter()
@@ -59,7 +60,7 @@ func TestGapNoBodyStatuses(t *testing.T) {
 		assert.NotContains(t, resp, "content", "%s must carry no content", code)
 		assert.NotEmpty(t, resp["description"], "%s needs a description", code)
 	}
-	assert.Contains(t, responses, "200", "the Res default 200 stays")
+	assert.NotContains(t, responses, "200", "a declared 2xx replaces the Res default 200")
 }
 
 // TestGapHeadCarriesNoContent: RFC 9110 gives a HEAD response no body, so a
@@ -77,8 +78,8 @@ func TestGapHeadCarriesNoContent(t *testing.T) {
 	})
 	doc := buildDoc(t, d)
 	responses, _ := opOf(t, doc, "/x", "head")["responses"].(map[string]any)
-	require.Len(t, responses, 4)
-	for code, want := range map[string]string{"200": "OK", "404": "Not Found", "206": "Partial Content", "500": "Internal Server Error"} {
+	require.Len(t, responses, 3, "the declared 206 replaces the Res default 200")
+	for code, want := range map[string]string{"404": "Not Found", "206": "Partial Content", "500": "Internal Server Error"} {
 		resp, _ := responses[code].(map[string]any)
 		assert.NotContains(t, resp, "content", code)
 		assert.Equal(t, want, resp["description"], code)

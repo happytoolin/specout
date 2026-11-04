@@ -35,7 +35,7 @@ func (d *Generator) operationFor(rec *routeRecord, sr *schemaRegistry) *obj {
 		op.set("servers", serverObjs(rec.label()+": Servers", rec.servers))
 	}
 	if len(rec.tags) > 0 {
-		op.set("tags", rec.tags)
+		op.set("tags", operationTags(rec.label(), rec.tags))
 	}
 	// path params from the resolved pattern, query params from Req tags
 	params := slices.Concat(sr.pathParamObjs(rec.full, rec.req), sr.taggedParams(rec.req))
@@ -75,11 +75,15 @@ func (d *Generator) checkRoute(rec *routeRecord) {
 		{"requestBody", "Request", rec.describesRequestBody()},
 		{"responses", "Responses", len(rec.responses) > 0},
 	})
+	d.checkRawValues(rec)
+	operationTags(rec.label(), rec.tags)
 	serverObjs(rec.label()+": Servers", rec.servers)
 	if rec.externalDocs != nil {
 		externalDocsObj(rec.label(), rec.externalDocs)
 	}
 	checkRequestBody(rec)
+	checkBodyFiles(rec)
+	checkTraceBody(rec)
 	d.checkSecurity(rec)
 	d.checkResponses(rec)
 	d.checkCallbacks(rec)

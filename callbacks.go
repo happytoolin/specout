@@ -45,13 +45,14 @@ type Callback struct {
 	rec  routeRecord
 }
 
-// NewCallback documents a request that your API sends after an operation. name
-// identifies the callback. url is where the request goes, usually a runtime
-// expression that reads the original request, such as
-// "{$request.body#/callbackUrl}". h describes the request as Webhook does. One
-// Callback value can go on several routes when h sets no OperationID: an
-// operationId names one operation of the whole document.
-func NewCallback[Req, Res any](name, method, url string, h Handler[Req, Res]) Callback {
+// NewCallback documents a request that your API sends after an operation. The
+// method comes first, as in Webhook and Document. name identifies the
+// callback. url is where the request goes, usually a runtime expression that
+// reads the original request, such as "{$request.body#/callbackUrl}". h
+// describes the request as Webhook does. One Callback value can go on several
+// routes when h sets no OperationID: an operationId names one operation of the
+// whole document.
+func NewCallback[Req, Res any](method, name, url string, h Handler[Req, Res]) Callback {
 	if name == "" || url == "" {
 		panic("specout: NewCallback needs a name and a url")
 	}

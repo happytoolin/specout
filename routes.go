@@ -213,30 +213,34 @@ func (d *Generator) pairPaths() error {
 func (d *Generator) validateRecords() error {
 	claims := pathClaims{operations: map[string]string{}, templates: map[string]string{}}
 	var errs []error
+	var notAdopted []string
 	for _, rec := range d.records {
-		if err := d.checkResolved(rec); err != nil {
+		switch err := d.checkResolved(rec); {
+		case rec.full == "" && len(d.sources) == 0:
+			notAdopted = append(notAdopted, rec.method+" "+rec.pattern)
+		case err != nil:
 			errs = append(errs, err)
-			continue
+		default:
+			errs = append(errs, checkPathParams(rec), claims.claim(rec))
 		}
-		errs = append(errs, checkPathParams(rec), claims.claim(rec))
+	}
+	if len(notAdopted) > 0 {
+		errs = append(errs, fmt.Errorf("specout: %s: specout cannot read the full path of a chi route without Adopt; "+
+			"call Adopt on the outermost chi router before Build", strings.Join(notAdopted, ", ")))
 	}
 	return errors.Join(errs...)
 }
 
-// checkResolved names a record that no router walk gave a full path.
+// checkResolved names a record that the walk of an adopted router did not
+// find. validateRecords reports the records of a generator with no adopted
+// router together.
 func (d *Generator) checkResolved(rec *routeRecord) error {
-	if rec.full != "" {
+	if rec.full != "" || len(d.sources) == 0 {
 		return nil
 	}
-	if len(d.sources) > 0 {
-		return fmt.Errorf(
-			"specout: %s %s: no adopted router serves it; a later route with the "+
-				"same method and path replaced it, or its router is not under the one passed to Adopt",
-			rec.method, rec.pattern,
-		)
-	}
 	return fmt.Errorf(
-		"specout: %s %s: this route has no full path; call Adopt on the outermost router, or use Document",
+		"specout: %s %s: no adopted router serves it; a later route with the "+
+			"same method and path replaced it, or its router is not under the one passed to Adopt",
 		rec.method, rec.pattern,
 	)
 }
@@ -278,7 +282,7 @@ func checkPathParams(rec *routeRecord) error {
 			rec.method, rec.pattern, name, name, didYouMean(name, pathParams(rec.full)),
 		)
 	}
-	return nil
+	return checkRawParameters(rec)
 }
 
 // starredParam returns a path parameter name of p that holds a *. A

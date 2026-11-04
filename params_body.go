@@ -55,10 +55,8 @@ func checkRequestBody(rec *routeRecord) {
 			"add a field with no path, query, header or cookie tag, or remove Handler.Request")
 	}
 	checkEncoding(rec, body)
-	checkExamples(rec.label()+": Request", rec.body.Example, rec.body.Examples)
-	for _, c := range rec.body.ContentTypes {
-		mediaType(rec.label()+": Request", c)
-	}
+	checkExamples(rec.label()+": Request", rec.body.Example, rec.body.Examples, rec.req, body)
+	checkMediaTypes(rec.label()+": Request", rec.body.ContentTypes)
 }
 
 // formSchema copies the JSON component only when form tags change its names.

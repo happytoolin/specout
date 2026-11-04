@@ -4,6 +4,11 @@ All runnable examples use the same shape: `New` builds the generator and API
 handler, `Handler` adds Swagger UI, and `main` delegates export and server
 startup to `internal/examplekit`.
 
+All specout code is in the route, type, and response files of each example. You
+can copy it. `internal/examplekit` holds only plumbing that is not part of
+specout: a JSON writer and reader, the Swagger UI page, and the server start.
+Use your own helpers for these in your service.
+
 | Example | Purpose | Router | Port |
 |---|---|---|---|
 | `onboarding` | Compact native example and golden document | chi | 8080 |

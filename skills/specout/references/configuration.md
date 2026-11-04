@@ -68,9 +68,16 @@ doc := specout.New(specout.Config{
 | `JSONSchemaDialect` | Sets the default JSON Schema dialect of the document. Most APIs do not need it. |
 | `Raw` | Adds `x-` extensions to the document root. Any other key panics. |
 
+Each URL in `Config`, in `ExternalDocs` and in an auth scheme must be a URL.
+The contact email must be only an address, such as `api@example.com`. A value
+that is not valid panics.
+
 `ErrorType` and `DefaultErrors` form one feature. A list of default codes without
 an error type panics. Default errors are allowed by recorder
-verification but are not required to be produced on every route.
+verification but are not required to be produced on every route. A route with
+`Public: true` does not get `401` or `403` from `DefaultErrors`. A declared
+`4xx`, `5xx`, or `default` response with no `Type` also has the `ErrorType`
+body.
 
 `ClosedSchemas` is useful when clients must reject unknown object fields. Do not
 enable it only for style because it changes the published contract.
@@ -225,7 +232,7 @@ doc.Webhook(http.MethodPost, "orderCreated", specout.Event[OrderCreated]{
 })
 
 jobDone := specout.NewCallback(
-	"jobDone", http.MethodPost, "{$request.body#/callbackUrl}",
+	http.MethodPost, "jobDone", "{$request.body#/callbackUrl}",
 	specout.Event[JobResult]{Summary: "The job finished"},
 )
 routes.Post("/jobs", specout.Handler[StartJob, Job]{

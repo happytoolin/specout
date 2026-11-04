@@ -122,7 +122,10 @@ func (d *Generator) infoObj() *obj {
 	info.setIf("summary", d.cfg.Summary)
 	info.setIf("description", d.cfg.Description)
 	info.setIf("termsOfService", d.cfg.TermsOfService)
+	checkURL("Config", "TermsOfService", d.cfg.TermsOfService)
 	if c := d.cfg.Contact; c != nil {
+		checkURL("Config.Contact", "URL", c.URL)
+		checkEmail("Config.Contact", c.Email)
 		info.set("contact", newObj().setIf("name", c.Name).setIf("url", c.URL).setIf("email", c.Email))
 	}
 	if l := d.cfg.License; l != nil {
@@ -133,6 +136,7 @@ func (d *Generator) infoObj() *obj {
 		if l.URL != "" && l.Identifier != "" {
 			panic("specout: Config.License: sets both URL and Identifier; set one")
 		}
+		checkURL("Config.License", "URL", l.URL)
 		info.set("license", newObj().set("name", l.Name).setIf("identifier", l.Identifier).setIf("url", l.URL))
 	}
 	return info

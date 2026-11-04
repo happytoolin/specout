@@ -195,7 +195,7 @@ func userRoutes(b *specout.ChiRouter, s *store) {
 			writeJSON(w, 200, "logged in user session: "+name)
 		},
 		specout.Response{
-			Status: 200, ContentTypes: jsonOrXML, Raw: map[string]any{"description": "successful operation"},
+			Status: 200, ContentTypes: jsonOrXML, Description: "successful operation",
 			Headers: []specout.Header{
 				{Name: "X-Rate-Limit", Type: int32(0)},
 				{Name: "X-Expires-After", Type: time.Time{}},

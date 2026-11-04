@@ -1,5 +1,7 @@
 package specout
 
+import "net/http"
+
 // DeclaredStatuses exposes the method+path -> codes map a route declares for
 // itself, for the recorder's "declared but never produced" drift check. It
 // excludes the global DefaultErrors envelope: no test is expected to trigger
@@ -11,7 +13,9 @@ func (d *Generator) DeclaredStatuses() (map[RouteKey]map[int]bool, error) {
 // SpecStatuses is DeclaredStatuses plus the global DefaultErrors envelope:
 // exactly the codes the emitted spec lists for each route. The recorder uses
 // it for the other drift direction, so a handler that returns a declared
-// default (say a 404) is not reported as "spec does not declare it".
+// default (say a 404) is not reported as "spec does not declare it". It also
+// allows 200 on each method and path where d served the document, so a test
+// that fetches the document is not drift.
 func (d *Generator) SpecStatuses() (map[RouteKey]map[int]bool, error) {
 	return d.statusMap(true)
 }
@@ -28,6 +32,14 @@ func (d *Generator) statusMap(withDefaults bool) (map[RouteKey]map[int]bool, err
 	out := make(map[RouteKey]map[int]bool, len(d.records))
 	for _, rec := range d.records {
 		out[NewRouteKey(rec.method, rec.full)] = planStatuses(d.responsePlan(rec, withDefaults), withDefaults)
+	}
+	if withDefaults {
+		for key := range d.served {
+			if out[key] == nil {
+				out[key] = map[int]bool{}
+			}
+			out[key][http.StatusOK] = true
+		}
 	}
 	return out, nil
 }

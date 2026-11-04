@@ -48,7 +48,7 @@ func statusRoute(t *testing.T) (*specout.Generator, *recorder.Recorder) {
 				w.WriteHeader(http.StatusOK)
 			}
 		},
-		Responses: []specout.Response{{Status: http.StatusCreated}, {Status: http.StatusConflict}},
+		Responses: []specout.Response{{Status: http.StatusOK}, {Status: http.StatusCreated}, {Status: http.StatusConflict}},
 	})
 	require.NoError(t, b.Adopt())
 	return d, recorder.New(r)

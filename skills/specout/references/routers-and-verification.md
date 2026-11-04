@@ -51,23 +51,27 @@ if err := routes.Adopt(); err != nil {
 }
 ```
 
-For grouped routes, register against the group and adopt only the outermost
-router:
+For grouped routes, use the `Route`, `Group`, and `With` methods of the binder.
+They work as they do in chi, and give the binder of the group. Adopt only the
+outermost router:
 
 ```go
-router.Route("/v1", func(r chi.Router) {
-	routes := specout.Chi(doc, r)
-	routes.Get("/items", listItems)
+routes.Route("/v1", func(r *specout.ChiRouter) {
+	r.Get("/items", listItems)
+	r.With(requireAdmin).Delete("/items/{id}", deleteItem)
 })
 
-if err := specout.Chi(doc, router).Adopt(); err != nil {
+if err := routes.Adopt(); err != nil {
 	return err
 }
 ```
 
+`specout.Chi(doc, r)` inside a plain `router.Route` callback also works.
+
 `Adopt` reports plain chi endpoints that do not have a matching specout
 registration or `Document` declaration. It also gives the generator the full
-paths for relative group registrations.
+paths for relative group registrations. `Build` fails without `Adopt`, and the
+error names each chi route.
 
 `Adopt` on an inner router documents the paths relative to its mount. For
 example, a router mounted at `/api` documents `/items`, and clients call
@@ -390,7 +394,7 @@ a wrapped chi, gorilla/mux, or http.ServeMux router.
 ```go
 func TestObservedStatusesMatch(t *testing.T) {
 	doc, router := newAPI()
-	recorded := recorder.New(router, specout.Skip("/openapi.json"))
+	recorded := recorder.New(router)
 
 	recorded.ServeHTTP(
 		httptest.NewRecorder(),
@@ -416,11 +420,16 @@ Global `DefaultErrors` are allowed but are not required on every route. A bare
 `default` or response range allows matching statuses without creating a test
 coverage requirement. With http.ServeMux, a HEAD request handled by a GET route
 counts toward that GET route. An explicit HEAD route needs its own test.
-Unmatched requests are not recorded.
+A request that the document serves is not drift.
 
 Every relevant request must pass through the `Recorder`. Do not wrap only the
-final assertion. Pass the router itself to `recorder.New`. A middleware
-wrapper hides the routes; `Verify` then reports that no route matched.
+final assertion. You can pass the production handler, with its middleware, to
+`recorder.New`. Middleware outside the router hides the route of a request, so
+`Verify` finds the route from the request path, and a literal segment wins over
+a parameter. A `401` from an outer auth middleware then counts for the route. A
+`404` or `405` without a route is the router's answer, and counts for no route.
+When no request matches a documented path, for example behind
+`http.StripPrefix`, `Verify` reports that no route matched.
 
 For Echo, Gin, and Fiber, create the recorder without a router and install the
 adapter's `Record` middleware:

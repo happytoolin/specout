@@ -21,6 +21,7 @@ const (
 	typeInteger  = "integer"
 	typeNumber   = "number"
 	typeArray    = "array"
+	typeBoolean  = "boolean"
 	formatBinary = "binary"
 )
 
@@ -218,7 +219,7 @@ func (sr *schemaRegistry) fixStructFields(t reflect.Type, s *jsonschema.Schema) 
 	removeShadowedFields(t, s, fields)
 	for _, f := range fields {
 		if parts0(f.Tag.Get("jsonschema")) != "-" {
-			sr.fixStructField(s, f)
+			sr.fixStructField(t, s, f)
 		}
 	}
 }
@@ -244,7 +245,7 @@ func checkHiddenFields(owner, t reflect.Type, seen map[reflect.Type]bool) {
 	}
 }
 
-func (sr *schemaRegistry) fixStructField(s *jsonschema.Schema, f reflect.StructField) {
+func (sr *schemaRegistry) fixStructField(owner reflect.Type, s *jsonschema.Schema, f reflect.StructField) {
 	name := fieldName(f)
 	p, ok := s.Properties.Get(name)
 	// encoding/json excludes only the exact tag "-". The reflector
@@ -259,6 +260,7 @@ func (sr *schemaRegistry) fixStructField(s *jsonschema.Schema, f reflect.StructF
 	applyBoolEnumTag(p, f.Type, f.Tag)
 	applyNumberEnumTag(p, f.Type, f.Tag)
 	applyKeywordTags(p, f.Tag)
+	fixFieldValues(fieldTagOwner(owner, f), p)
 	// a union branch puts its variant where the payload field holds any
 	if strings.Contains(f.Tag.Get("jsonschema"), "oneof_type=") {
 		sr.payloads[p] = f.Type

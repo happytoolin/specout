@@ -3,6 +3,7 @@ package recorder
 import (
 	"cmp"
 	"maps"
+	"net/http"
 	"slices"
 
 	"github.com/happytoolin/specout"
@@ -28,27 +29,52 @@ func Verify(t specout.TestingT, d *specout.Generator, rec *Recorder) {
 		t.Errorf("%v", err)
 		return
 	}
-	observed, unmatched := rec.snapshot()
+	observed, misses := rec.snapshot()
+	unmatched := rec.matchMisses(observed, allowed, misses)
 
-	// Requests went through, but none reached a known route: the recorder
-	// most likely wraps middleware around the router, which hides its routes.
+	// Requests went through, but none reached a known route: middleware or a
+	// prefix outside the router hides its routes.
 	if len(observed) == 0 && unmatched > 0 && len(required) > 0 {
 		t.Errorf("recorder matched no route in %d requests; pass the router itself to recorder.New, "+
-			"and put middleware inside it", unmatched)
+			"or wrap the recorder in the middleware, as in middleware(recorder.New(router))", unmatched)
 	}
 	reportNeverProduced(t, required, observed)
 	reportUndeclared(t, allowed, observed)
 }
 
-// snapshot copies the observed codes and the unmatched count.
-func (rec *Recorder) snapshot() (statuses, int) {
+// snapshot copies the observed codes and the requests that matched no route.
+func (rec *Recorder) snapshot() (statuses, []miss) {
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
 	observed := make(statuses, len(rec.codes))
 	for key, codes := range rec.codes {
 		observed[key] = maps.Clone(codes)
 	}
-	return observed, rec.unmatched
+	return observed, slices.Clone(rec.misses)
+}
+
+// matchMisses adds each request that matched no route to observed, under the
+// documented route that its path matches. Middleware outside the router, such
+// as an auth check that answers 401, hides the route from the recorder, but
+// the request was for that route. A 404 or 405 is the answer of a router that
+// found no route, so it counts for no route. It returns the count of requests
+// that match no route.
+func (rec *Recorder) matchMisses(observed, documented statuses, misses []miss) int {
+	unmatched := 0
+	for _, m := range misses {
+		key, ok := matchRoute(documented, m.method, m.path)
+		switch {
+		case !ok, m.status == http.StatusNotFound, m.status == http.StatusMethodNotAllowed:
+			unmatched++
+		case slices.ContainsFunc(rec.skips, func(s specout.SkipRule) bool { return s.Matches(key.Path) }):
+		default:
+			if observed[key] == nil {
+				observed[key] = map[int]bool{}
+			}
+			observed[key][m.status] = true
+		}
+	}
+	return unmatched
 }
 
 // reportNeverProduced fails for each declared code that no request produced.

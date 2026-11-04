@@ -238,24 +238,65 @@ and `price`.
 |---|---|
 | `path`, `query`, `header`, `cookie` | The location of a parameter. |
 | `json` | The name of a body field. `omitempty` makes the field optional. |
+| `form` | The name of a field in a form or multipart body, when it is not the JSON name. |
 | `jsonschema:"minLength=1,maxLength=40"` | The length limits of a string. |
 | `jsonschema:"minimum=1,maximum=3"` | The limits of a number. |
 | `jsonschema:"minItems=1,maxItems=3"` | The length limits of an array. |
 | `jsonschema:"enum=en\|es"` | The allowed values. |
 | `jsonschema:"default=en"` | A default value. Your handler must apply it. |
 
-### Responses
-
-The second type of `specout.Handler` is the `200` response. Add other responses
-with `Responses`:
+A `specout.File` field makes the request body `multipart/form-data`:
 
 ```go
-routes.Put("/items/{id}", specout.Handler[UpdateItemRequest, Item]{
-	HandlerFunc: updateItem,
-	Summary:     "Update an item",
-	Responses:   []specout.Response{{Status: http.StatusNotFound, Type: Problem{}}},
+type UploadAvatar struct {
+	ID     string       `path:"id"`
+	Avatar specout.File `json:"avatar"`
+	Note   string       `json:"note,omitempty"`
+}
+```
+
+### Responses
+
+The second type of `specout.Handler` is the success response: a `200` with that
+body, or a `204` when the type is `specout.NoContent`. Add other responses with
+`Responses`:
+
+```go
+doc := specout.New(specout.Config{
+	Title: "Items API", Version: "1.0.0",
+	ErrorType: Problem{}, DefaultErrors: []int{http.StatusInternalServerError},
+})
+
+routes.Post("/items", specout.Handler[CreateItem, Item]{
+	HandlerFunc: createItem,
+	Responses: []specout.Response{
+		{Status: http.StatusCreated, Headers: []specout.Header{{Name: "Location", Required: true}}},
+		{Status: http.StatusBadRequest},
+	},
+})
+
+routes.Delete("/items/{id}", specout.Delete{
+	HandlerFunc: deleteItem,
+	Responses:   []specout.Response{{Status: http.StatusNotFound}},
 })
 ```
+
+A declared success response replaces the `200` or the `204`. A success response
+is a `2xx`, a redirect (a `3xx` other than `304`), or a `101`. In the example,
+the `201` replaces the `200`, and the `204` stays next to the `404`.
+
+A response with no `Type` gets the body of its status:
+
+| Status | Body |
+|---|---|
+| `2xx` | The second type of the handler. |
+| `4xx`, `5xx`, and `Key: "default"` | `Config.ErrorType`. With no `ErrorType`, the response has no body. |
+| Any other status | No body. |
+
+Set `Type` to give a response another body. Set `Type: specout.NoContent{}` for
+a response with no body. Set `Omit: true` to remove a response, such as a status
+from `DefaultErrors`. A route with `Public: true` does not get the `401` and
+`403` from `DefaultErrors`.
 
 Use `specout.Get[Item]` for a route with no request data. Use
 `specout.NoContent` as the response type for a route with no response body. Use
@@ -304,7 +345,7 @@ usually a runtime expression that reads the original request:
 
 ```go
 jobDone := specout.NewCallback(
-	"jobDone", http.MethodPost, "{$request.body#/callbackUrl}",
+	http.MethodPost, "jobDone", "{$request.body#/callbackUrl}",
 	specout.Event[JobResult]{Summary: "The job finished"},
 )
 
@@ -382,12 +423,21 @@ when your API needs them:
 
 specout builds a schema from the Go fields of a type. A type with its own
 `MarshalJSON` method can write a different shape, and specout cannot see that
-shape. Give the type a `JSONSchema()` method, which comes from
-[invopop/jsonschema](https://github.com/invopop/jsonschema):
+shape. Give the type a `JSONSchema()` method. `specout.Schema` is the schema type
+of [invopop/jsonschema](https://github.com/invopop/jsonschema):
 
 ```go
 // Money.MarshalJSON writes a string such as "12.50".
-func (Money) JSONSchema() *jsonschema.Schema { return &jsonschema.Schema{Type: "string"} }
+func (Money) JSONSchema() *specout.Schema { return &specout.Schema{Type: "string"} }
+```
+
+Use `specout.Enum` for a list of values that several fields share. Each field,
+parameter, and body of the type then gets the same list:
+
+```go
+type Status string
+
+func (Status) JSONSchema() *specout.Schema { return specout.Enum("todo", "doing", "done") }
 ```
 
 Schemas describe the output of `encoding/json`. `encoding/json/v2` writes some
@@ -422,6 +472,23 @@ routes.Get("/items/:id", specout.Handler[GetItemRequest, Item]{
 engine.GET("/openapi.json", gin.WrapH(doc))
 
 if err := specoutgin.Adopt(doc, engine, specout.Skip("/openapi.json")); err != nil {
+	log.Fatal(err)
+}
+```
+
+With chi, call `Adopt` on the outermost router before `Build`. Only that router
+knows the full path of each route in a group. `Route`, `Group`, and `With` work
+as they do in chi, and give the binder of the group:
+
+```go
+r := chi.NewRouter()
+routes := specout.Chi(doc, r)
+routes.Route("/v1", func(r *specout.ChiRouter) {
+	r.Get("/items/{id}", specout.Handler[GetItemRequest, Item]{HandlerFunc: getItem})
+})
+r.Handle("/openapi.json", doc)
+
+if err := routes.Adopt(); err != nil {
 	log.Fatal(err)
 }
 ```
@@ -507,6 +574,25 @@ specout also panics on a `jsonschema` keyword that it does not know, such as
 `minLenght=1`. The tag parser ignores such a keyword, so the rule would be
 missing from the document.
 
+The document must stay valid OpenAPI 3.1 and JSON Schema 2020-12. Thus specout
+also stops on these values:
+
+| Value | Example |
+|---|---|
+| A `default` or `example` that its own schema rejects | `enum=en\|es,default=de` |
+| A schema keyword with a value that is not valid | `pattern=(a`, `multipleOf=0`, a repeated enum value |
+| A `jsonschema_extras` key with a checked form, or a 3.0 keyword | `required=true`, `nullable=true` |
+| A header parameter that OpenAPI ignores | `Accept`, `Content-Type`, `Authorization` |
+| A style that does not fit the parameter type | `style=deepObject` on a string |
+| A body that cannot carry its files, or a `TRACE` body | A `File` field with `application/json` |
+| A media type that is not `type/subtype`, or a repeated media type | `json` |
+| A path with a query, a fragment or a space | `/items?x=1` |
+| A `$ref` that points to nothing | `oneof_ref=#/$defs/Missing` |
+| A `Raw` value that breaks the object it replaces | A Raw response with no `description` |
+| A URL or an email address that is not valid | `Contact.Email: "nobody"` |
+
+A list default in a tag, such as `default=1` on a `[]int`, becomes `[1]`.
+
 A few path checks need the full path, and the router knows it only after it adds
 the route. In these cases, the router has the route when the panic occurs:
 
@@ -553,6 +639,11 @@ func TestStatuses(t *testing.T) {
 
 With Echo, Gin, and Fiber, use `recorder.New(nil)` and install the adapter's
 `Record` middleware.
+
+You can pass the production handler, with its middleware, to `recorder.New`.
+Middleware outside the router hides the route of a request, so `Verify` finds
+the route from the request path. A `401` from an auth middleware then counts for
+the route. A request for the document itself is not drift.
 
 A handler that hijacks the connection writes its own response. If the handler
 wrote no status and the request asks to switch protocols, as in a WebSocket

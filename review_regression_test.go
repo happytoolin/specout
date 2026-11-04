@@ -147,7 +147,7 @@ func TestDefaultResponseWithCoverageStatusAllowsOtherCodes(t *testing.T) {
 	d := newGen()
 	d.Document(http.MethodGet, "/x", okGet.WithResponse(specout.Response{Key: "default", Status: 404}))
 	key := specout.NewRouteKey(http.MethodGet, "/x")
-	assert.Equal(t, map[int]bool{404: true}, declaredStatuses(t, d)[key])
+	assert.Equal(t, map[int]bool{204: true, 404: true}, declaredStatuses(t, d)[key], "a default response keeps the 204")
 	assert.True(t, specStatuses(t, d)[key][0])
 	assert.Contains(t, opOf(t, buildDoc(t, d), "/x", "get")["responses"], "default")
 }
@@ -493,8 +493,8 @@ func TestServeKeepsBuildErrorAndHidesIt(t *testing.T) {
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 		assert.NotContains(t, w.Body.String(), "secret")
 	}
-	assert.Equal(t, 1, strings.Count(logs.String(), "no full path"), "one build, one log line: %s", logs.String())
-	wantBuildErr(t, d, "no full path")
+	assert.Equal(t, 1, strings.Count(logs.String(), "without Adopt"), "one build, one log line: %s", logs.String())
+	wantBuildErr(t, d, "cannot read the full path of a chi route without Adopt")
 
 	require.NoError(t, specout.Chi(d, r).Adopt())
 	w := serve()
@@ -624,13 +624,13 @@ func TestRequestExamplesMatchTheBodySchema(t *testing.T) {
 	value := upload{Name: "Lamp", Secret: "s"}
 	doc = docOf(t, http.MethodPost, "/upload", specout.Handler[upload, job]{
 		HandlerFunc: noop, Request: specout.Request{
-			ContentTypes: []string{"multipart/form-data", "application/json"},
+			ContentTypes: []string{"multipart/form-data", "multipart/mixed"},
 			Examples:     map[string]specout.Example{"one": {Value: value}},
 		},
 	})
 	content := child(t, opOf(t, doc, "/upload", "post"), "requestBody", "content")
 	assert.Equal(t, map[string]any{"display_name": "Lamp"}, child(t, content, "multipart/form-data", "examples", "one")["value"])
-	assert.Equal(t, map[string]any{"name": "Lamp", "secret": "s"}, child(t, content, "application/json", "examples", "one")["value"])
+	assert.Equal(t, map[string]any{"name": "Lamp", "secret": "s"}, child(t, content, "multipart/mixed", "examples", "one")["value"])
 
 	assert.Contains(t, panicMessage(t, func() {
 		newGen().Document(http.MethodPost, "/x", specout.Handler[job, job]{
@@ -767,7 +767,7 @@ func TestBuildReportsEachProblemOnce(t *testing.T) {
 		Status: http.StatusOK, Links: map[string]specout.Link{"status": {OperationID: "getJobsId"}},
 	}}})
 	err = d.Build()
-	require.ErrorContains(t, err, "GET /jobs/{id}: this route has no full path")
+	require.ErrorContains(t, err, "GET /jobs/{id}: specout cannot read the full path of a chi route without Adopt")
 	assert.NotContains(t, err.Error(), "no operation has operationId")
 }
 
@@ -776,7 +776,7 @@ func TestBuildReportsEachProblemOnce(t *testing.T) {
 // names both.
 func TestCallbackMessagesNameTheRoute(t *testing.T) {
 	url := "{$request.body#/url}"
-	bad := specout.NewCallback("done", http.MethodPost, url, specout.Event[job]{Security: []specout.Security{{Scheme: "nope"}}})
+	bad := specout.NewCallback(http.MethodPost, "done", url, specout.Event[job]{Security: []specout.Security{{Scheme: "nope"}}})
 	assert.Contains(t, panicMessage(t, func() {
 		newGen().Document(http.MethodPost, "/a", specout.Get[job]{HandlerFunc: noop, Callbacks: []specout.Callback{bad}})
 	}), `specout: POST /a: POST callback done: Security names scheme "nope"`)
@@ -786,12 +786,12 @@ func TestCallbackMessagesNameTheRoute(t *testing.T) {
 	}
 	d := newGen()
 	d.Document(http.MethodPost, "/a", specout.Get[job]{HandlerFunc: noop, Callbacks: []specout.Callback{
-		specout.NewCallback("done", http.MethodPost, url, specout.Event[unencodable]{}),
+		specout.NewCallback(http.MethodPost, "done", url, specout.Event[unencodable]{}),
 	}})
 	assert.Equal(t, `specout: POST /a: POST callback done: JSON cannot encode chan int; tag its field json:"-"`,
 		panicMessage(t, func() { _ = d.Build() }))
 
-	shared := specout.NewCallback("done", http.MethodPost, url, specout.Event[job]{OperationID: "onDone"})
+	shared := specout.NewCallback(http.MethodPost, "done", url, specout.Event[job]{OperationID: "onDone"})
 	d = newGen()
 	d.Document(http.MethodPost, "/a", specout.Get[job]{HandlerFunc: noop, Callbacks: []specout.Callback{shared}})
 	d.Document(http.MethodPost, "/b", specout.Get[job]{HandlerFunc: noop, Callbacks: []specout.Callback{shared}})

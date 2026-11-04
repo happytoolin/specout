@@ -323,6 +323,7 @@ func validateStructEmbeddings(t reflect.Type, checked map[reflect.Type]bool) {
 			continue
 		}
 		checkSchemaTag(fieldTagOwner(t, f), f.Tag.Get("jsonschema"))
+		checkExtrasTag(fieldTagOwner(t, f), f.Tag.Get("jsonschema_extras"))
 		if !promotes(f) && embedOption(f.Tag) {
 			panic("specout: " + fieldTagOwner(t, f) +
 				": the inline or embed option of a json tag needs an anonymous struct field")

@@ -157,7 +157,10 @@ func TestChiUnmatchedMountStubIsNotAnOperation(t *testing.T) {
 	assert.Empty(t, verify(d, rec))
 }
 
-func TestVerifyNamesARouterHiddenByMiddleware(t *testing.T) {
+// A wrapper outside the router hides the route pattern, so Verify matches the
+// path against the document. A path that matches no documented route gets the
+// hint.
+func TestVerifyMatchesARouterHiddenByMiddleware(t *testing.T) {
 	d, r := gen(), chi.NewRouter()
 	b := specout.Chi(d, r)
 	b.Get("/x", nc(hit204))
@@ -165,6 +168,10 @@ func TestVerifyNamesARouterHiddenByMiddleware(t *testing.T) {
 	wrapped := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) { r.ServeHTTP(w, req) })
 	rec := recorder.New(wrapped)
 	serve(rec, http.MethodGet, "/x")
+	assert.Empty(t, verify(d, rec))
+
+	rec = recorder.New(http.StripPrefix("/api", r))
+	serve(rec, http.MethodGet, "/api/x")
 	assert.NotEmpty(t, findErr(verify(d, rec), "recorder matched no route in 1 requests"))
 }
 

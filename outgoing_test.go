@@ -96,9 +96,9 @@ func TestOutgoingKeepsItsOwnSecurityAndResponses(t *testing.T) {
 
 func TestCallbacksGroupUnderNameAndURL(t *testing.T) {
 	const url = "{$request.body#/callbackUrl}"
-	done := specout.NewCallback("jobDone", http.MethodPost, url, specout.Event[jobDone]{Summary: "The job finished"})
-	check := specout.NewCallback("jobDone", http.MethodHead, url, specout.Event[struct{}]{})
-	failed := specout.NewCallback("jobFailed", http.MethodPost, "https://example.com/{$request.query.tenant}", specout.Event[problem]{})
+	done := specout.NewCallback(http.MethodPost, "jobDone", url, specout.Event[jobDone]{Summary: "The job finished"})
+	check := specout.NewCallback(http.MethodHead, "jobDone", url, specout.Event[struct{}]{})
+	failed := specout.NewCallback(http.MethodPost, "jobFailed", "https://example.com/{$request.query.tenant}", specout.Event[problem]{})
 
 	d := authGen()
 	d.Document(http.MethodPost, "/jobs", specout.Handler[startJob, job]{HandlerFunc: noop}.WithCallbacks(done, check, failed))
@@ -119,7 +119,7 @@ func TestRouteChecksIgnoreOutgoingRequests(t *testing.T) {
 	d := newGen()
 	d.Document(http.MethodPost, "/jobs", specout.Handler[startJob, job]{
 		HandlerFunc: noop,
-		Callbacks:   []specout.Callback{specout.NewCallback("done", http.MethodPost, "{$request.body#/callbackUrl}", specout.Event[jobDone]{})},
+		Callbacks:   []specout.Callback{specout.NewCallback(http.MethodPost, "done", "{$request.body#/callbackUrl}", specout.Event[jobDone]{})},
 	})
 	d.Webhook(http.MethodPost, "done", specout.Event[jobDone]{})
 	statuses, err := d.SpecStatuses()
@@ -139,8 +139,8 @@ func TestOperationIDsAreUniqueAcrossOutgoingRequests(t *testing.T) {
 	d.Document(http.MethodPost, "/jobs", specout.Handler[startJob, job]{
 		HandlerFunc: noop,
 		Callbacks: []specout.Callback{
-			specout.NewCallback("a", http.MethodPost, "u", specout.Event[jobDone]{OperationID: "same"}),
-			specout.NewCallback("b", http.MethodPost, "u", specout.Event[jobDone]{OperationID: "same"}),
+			specout.NewCallback(http.MethodPost, "a", "u", specout.Event[jobDone]{OperationID: "same"}),
+			specout.NewCallback(http.MethodPost, "b", "u", specout.Event[jobDone]{OperationID: "same"}),
 		},
 	})
 	assert.ErrorContains(t, buildErr(d), `duplicate operationId "same"`)
@@ -169,11 +169,11 @@ func TestBadOutgoingRequestsPanic(t *testing.T) {
 		`Security names scheme "x"`: webhook(func(d *specout.Generator) {
 			d.Webhook(http.MethodPost, "a", specout.Event[jobDone]{Security: []specout.Security{{Scheme: "x"}}})
 		}),
-		"NewCallback needs a name":         func() { specout.NewCallback("", http.MethodPost, "u", event) },
-		"needs a name and a url":           func() { specout.NewCallback("a", http.MethodPost, "", event) },
+		"NewCallback needs a name":         func() { specout.NewCallback(http.MethodPost, "", "u", event) },
+		"needs a name and a url":           func() { specout.NewCallback(http.MethodPost, "a", "", event) },
 		"make it with NewCallback":         route(specout.Callback{}),
-		`repeats POST callback "a"`:        route(specout.NewCallback("a", http.MethodPost, "u", event), specout.NewCallback("a", http.MethodPost, "u", event)),
-		"Handler.Request describes a body": route(specout.NewCallback("a", http.MethodPost, "u", specout.Event[struct{}]{Request: specout.Request{Description: "x"}})),
+		`repeats POST callback "a"`:        route(specout.NewCallback(http.MethodPost, "a", "u", event), specout.NewCallback(http.MethodPost, "a", "u", event)),
+		"Handler.Request describes a body": route(specout.NewCallback(http.MethodPost, "a", "u", specout.Event[struct{}]{Request: specout.Request{Description: "x"}})),
 	} {
 		assert.Contains(t, panicMessage(t, call), want)
 	}
@@ -362,7 +362,7 @@ func TestReadmeOutgoingExamples(t *testing.T) {
 		Responses: []specout.Response{{Key: "2XX", Description: "Any success status"}},
 	})
 	jobFinished := specout.NewCallback(
-		"jobDone", http.MethodPost, "{$request.body#/callbackUrl}",
+		http.MethodPost, "jobDone", "{$request.body#/callbackUrl}",
 		specout.Event[jobDone]{Summary: "The job finished"},
 	)
 	routes := specout.Std(doc, http.NewServeMux())

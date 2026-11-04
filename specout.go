@@ -1,7 +1,11 @@
-// Package specout generates OpenAPI 3.1 specifications from plain Go
-// http.HandlerFunc factories: metadata rides the generic Handler type,
-// the spec builds from the live router, and the output is
-// byte-deterministic.
+// Package specout generates an OpenAPI 3.1 document from Go types and plain
+// net/http handlers.
+//
+// A Handler[Req, Res] holds one route: its http.HandlerFunc, the Req type of
+// its parameters and body, the Res type of its success body, and the other
+// fields of the operation. Register it on your router with Std, Chi or
+// Gorilla, or with an adapter. The Generator then builds the document and
+// serves it. The output is the same for the same routes.
 package specout
 
 import (
@@ -38,6 +42,9 @@ type Generator struct {
 	inputs   int
 	buildErr error
 	errAt    int
+	// served holds each method and path where the generator served the
+	// document, so the recorder does not report the document route as drift.
+	served map[RouteKey]bool
 }
 
 // New returns a Generator that collects routes for cfg. It is safe for

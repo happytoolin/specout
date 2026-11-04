@@ -133,8 +133,16 @@ func TestMessagesSuggestTheNearestName(t *testing.T) {
 				HandlerFunc: noop, Request: specout.Request{Encoding: map[string]specout.Encoding{"avtar": {}}},
 			})
 		},
-		`pattern "GET GET /x" is not valid; pass Handle "METHOD /path", and pass Get, Post and the other verb methods only /path`: func() {
+		`specout: GET "GET /x": the path must start with /; pass only the path to Get, such as "/items"`: func() {
 			specout.Std(newGen(), http.NewServeMux()).Get("GET /x", specout.Get[job]{HandlerFunc: noop})
+		},
+		`pattern "GET x" is not valid; pass Handle "METHOD /path"`: func() {
+			specout.Std(newGen(), http.NewServeMux()).Handle("GET x", specout.Get[job]{HandlerFunc: noop})
+		},
+		"specout: GET /x: GET /x matches the same requests as GET /x; register each route once, or change one of the paths": func() {
+			routes := specout.Std(newGen(), http.NewServeMux())
+			routes.Get("/x", specout.Get[job]{HandlerFunc: noop})
+			routes.Get("/x", specout.Get[job]{HandlerFunc: noop})
 		},
 	} {
 		assert.Contains(t, panicMessage(t, call), want)

@@ -33,7 +33,7 @@ func TestUnresolvedPatternFails(t *testing.T) {
 		specout.Chi(d, r).Get("/x", okGet)
 	})
 	// no Adopt of the root; the inner registration is relative
-	wantBuildErr(t, d, "no full path")
+	wantBuildErr(t, d, "cannot read the full path of a chi route without Adopt")
 }
 
 // One func on two chi routes pairs deterministically across two builds.
@@ -466,4 +466,46 @@ func TestSharedHandlerTwoGroups(t *testing.T) {
 	for _, p := range []string{"/a/x", "/b/x"} {
 		assert.Equal(t, "shared", opOf(t, doc, p, "get")["summary"], p)
 	}
+}
+
+// ChiRouter.Route, Group and With give the binder of the chi subrouter, so a
+// group needs no second call to specout.Chi. Adopt on the root resolves them.
+func TestChiBinderGroups(t *testing.T) {
+	d, r := newGen(), chi.NewRouter()
+	var ran []string
+	mark := func(name string) func(http.Handler) http.Handler {
+		return func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				ran = append(ran, name)
+				next.ServeHTTP(w, req)
+			})
+		}
+	}
+	routes := specout.Chi(d, r)
+	routes.Route("/tasks", func(r *specout.ChiRouter) {
+		r.Get("/", okGet)
+		r.Group(func(r *specout.ChiRouter) {
+			r.With(mark("auth")).Delete("/{id}", okGet)
+		})
+	})
+	adopt(t, routes)
+	paths := docPaths(t, d)
+	assert.ElementsMatch(t, []string{"/tasks/", "/tasks/{id}"}, keys(paths))
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/tasks/7", nil))
+	assert.Equal(t, http.StatusNoContent, w.Code)
+	assert.Equal(t, []string{"auth"}, ran, "With adds the middleware to the route")
+}
+
+// With no Adopt, Build names every chi route in one error, and says what to do.
+func TestChiWithoutAdoptIsOneError(t *testing.T) {
+	d := newGen()
+	routes := specout.Chi(d, chi.NewRouter())
+	routes.Get("/tasks", okGet)
+	routes.Delete("/tasks/{id}", okGet)
+	err := d.Build()
+	require.Error(t, err)
+	assert.Equal(t, "specout: GET /tasks, DELETE /tasks/{id}: specout cannot read the full path of a chi route "+
+		"without Adopt; call Adopt on the outermost chi router before Build", err.Error())
 }

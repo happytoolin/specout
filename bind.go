@@ -122,6 +122,9 @@ func checkOpenAPIPath(p string) string {
 // and chi matches them only as written, so the document would name a path
 // that differs from the one served. Parameter regexes may hold any of them.
 func checkSegments(p string) string {
+	if msg := pathCharProblem(docPath(p)); msg != "" {
+		return msg
+	}
 	p = strings.TrimSuffix(strings.TrimPrefix(docPath(p), "/"), "/")
 	if p == "" {
 		return ""
@@ -129,9 +132,9 @@ func checkSegments(p string) string {
 	for seg := range strings.SplitSeq(p, "/") {
 		switch seg {
 		case "":
-			return "the path has an empty segment (//)"
+			return "the path has an empty segment (//); remove the extra /"
 		case ".", "..":
-			return "the path has a dot segment (/" + seg + ")"
+			return "the path has a dot segment (/" + seg + "); remove it"
 		}
 	}
 	return ""

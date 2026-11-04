@@ -22,8 +22,11 @@ func (d *Generator) Document[Req, Res any](method, pattern string, h Handler[Req
 	// {$} is the std mux end anchor, and // and /. are segments a request
 	// cannot carry as written: each would reach the document as written,
 	// unlike the path the router matches.
-	if strings.Contains(pattern, "{$}") || checkSegments(pattern) != "" {
-		panic("specout: " + where + ": this is not an OpenAPI path; drop {$}, empty segments and dot segments")
+	if strings.Contains(pattern, "{$}") {
+		panic("specout: " + where + ": {$} is the net/http end anchor, not OpenAPI syntax; remove it")
+	}
+	if msg := checkSegments(pattern); msg != "" {
+		panic("specout: " + where + ": " + msg)
 	}
 	checkMethod(method, pattern)
 	rec := recOf(h)

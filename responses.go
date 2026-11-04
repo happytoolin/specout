@@ -48,11 +48,11 @@ func (d *Generator) responsePlan(rec *routeRecord, withDefaults bool) []respEntr
 			p.omitted[key] = true
 			continue
 		}
-		p.put(respEntry{key: key, code: resp.Status, typ: declaredType(where+": response "+key, rec.res, resp), resp: resp})
+		p.put(respEntry{key: key, code: resp.Status, typ: d.declaredType(where+": response "+key, rec, resp), resp: resp})
 	}
 	// global defaults, exactly as the drift maps count them
 	if withDefaults && !rec.outgoing {
-		d.putDefaultErrors(&p)
+		d.putDefaultErrors(&p, rec)
 	}
 	return p.entries()
 }
@@ -85,31 +85,81 @@ func (p *plannedResponses) entries() []respEntry {
 	return out
 }
 
-// resDefault is the response that Res declares on its own: 200 with Res as the
-// body. A struct{} Res declares nothing on its own: any explicit Response
-// replaces it (e.g. {Status:200, Type:File{}}), and with none
-// the route answers 204.
+// resDefault is the success response that Res declares on its own: 200 with
+// Res as the body, or 204 when Res has no body. A route that declares a success
+// response of its own does not get it, so a 201 replaces the 200, and a 404
+// keeps the 204.
 func resDefault(rec *routeRecord) (respEntry, bool) {
-	if !isEmptyStruct(rec.res) {
-		return newRespEntry(http.StatusOK, rec.res), true
-	}
-	if anyExplicit(rec.responses) {
+	if slices.ContainsFunc(rec.responses, successResponse) {
 		return respEntry{}, false
 	}
-	return newRespEntry(http.StatusNoContent, nil), true
+	if isEmptyStruct(rec.res) {
+		return newRespEntry(http.StatusNoContent, nil), true
+	}
+	return newRespEntry(http.StatusOK, rec.res), true
 }
 
-// declaredType is the body type of an explicit Response: its Type, else Res.
-// 1xx, 204, 205 and 304 carry no body: inheriting Res would emit content the
-// HTTP spec forbids, and checkResponse rejects a Type with a body there.
-func declaredType(where string, res reflect.Type, resp *Response) reflect.Type {
+// successResponse reports whether r declares a success response: a 2xx, a
+// redirect (a 3xx other than 304), or the 101 of a protocol upgrade. A 304 Not
+// Modified goes with a 200.
+func successResponse(r Response) bool {
+	switch {
+	case r.Omit:
+		return false
+	case r.Key != "":
+		return r.Key == "2XX" || r.Key == "3XX"
+	}
+	return r.Status == http.StatusSwitchingProtocols ||
+		(r.Status >= http.StatusOK && r.Status < http.StatusBadRequest && r.Status != http.StatusNotModified)
+}
+
+// declaredType is the body type of a declared Response: its Type, else the
+// body that its status has by default. A 2xx has the body of Res. A 4xx, 5xx or
+// default response has the body of Config.ErrorType, on an operation that the
+// API serves. A webhook or callback goes to another server, so ErrorType does
+// not describe it. Any other response has no body. 1xx, 204, 205 and 304 carry
+// no body, and checkResponse rejects a Type with a body there.
+func (d *Generator) declaredType(where string, rec *routeRecord, resp *Response) reflect.Type {
 	if resp.Type != nil {
 		return valueType(where, resp.Type)
 	}
 	if bodylessResponse(resp) {
 		return nil
 	}
-	return res
+	switch responseClass(resp) {
+	case classSuccess:
+		return rec.res
+	case classError:
+		if d.cfg.ErrorType != nil && !rec.outgoing {
+			return reflect.TypeOf(d.cfg.ErrorType)
+		}
+	}
+	return nil
+}
+
+// The response classes that set the default body of a declared Response.
+const (
+	classOther = iota
+	classSuccess
+	classError
+)
+
+// responseClass sorts a declared Response by its Key, else its Status: 2xx is
+// a success, and 4xx, 5xx and the default response are errors.
+func responseClass(resp *Response) int {
+	switch {
+	case resp.Key == defaultResponseKey, resp.Key == "4XX", resp.Key == "5XX":
+		return classError
+	case resp.Key == "2XX":
+		return classSuccess
+	case resp.Key != "":
+		return classOther
+	case resp.Status >= http.StatusOK && resp.Status < http.StatusMultipleChoices:
+		return classSuccess
+	case resp.Status >= http.StatusBadRequest:
+		return classError
+	}
+	return classOther
 }
 
 // Raw replaces the entire responses object, including inherited defaults.
@@ -157,6 +207,7 @@ func rawEntry(where, key string, v jsontext.Value) respEntry {
 	if v.Kind() != '{' {
 		panic("specout: " + where + ": " + key + " must be a Response object")
 	}
+	checkRawResponse(where+" "+key, e.code, v)
 	return e
 }
 
@@ -188,8 +239,9 @@ func bodylessResponse(resp *Response) bool {
 }
 
 // putDefaultErrors adds the configured error responses for every code the route
-// neither declared nor omitted.
-func (d *Generator) putDefaultErrors(p *plannedResponses) {
+// neither declared nor omitted. A Public route needs no credentials, so it does
+// not get 401 or 403.
+func (d *Generator) putDefaultErrors(p *plannedResponses, rec *routeRecord) {
 	if d.cfg.ErrorType == nil {
 		return
 	}
@@ -197,7 +249,8 @@ func (d *Generator) putDefaultErrors(p *plannedResponses) {
 	for _, code := range d.cfg.DefaultErrors {
 		key := responseKey("Config.DefaultErrors", code, "")
 		_, declared := p.byKey[key]
-		if p.omitted[key] || declared {
+		authError := code == http.StatusUnauthorized || code == http.StatusForbidden
+		if p.omitted[key] || declared || (rec.public && authError) {
 			continue
 		}
 		p.put(respEntry{key: key, code: code, typ: et})
@@ -264,8 +317,13 @@ func (d *Generator) checkResponses(rec *routeRecord) {
 		panic("specout: " + rec.label() + ": every response is omitted; declare at least one")
 	}
 	for _, e := range plan {
-		if e.resp != nil {
-			checkResponse(rec.label()+": response "+e.key, e)
+		if e.resp == nil {
+			continue
+		}
+		where := rec.label() + ": response " + e.key
+		checkResponse(where, e)
+		if _, ok := e.resp.Raw["content"]; ok && rec.method == http.MethodHead {
+			panic("specout: " + where + `: a HEAD response has no body; remove the Raw key "content"`)
 		}
 	}
 }
@@ -274,15 +332,16 @@ func (d *Generator) checkResponses(rec *routeRecord) {
 // Response. where names the response.
 func checkResponse(where string, e respEntry) {
 	resp := e.resp
+	_, rawContent := resp.Raw["content"]
 	switch {
 	case bodylessResponse(resp) && (len(resp.ContentTypes) > 0 || hasBody(e.typ)):
 		panic("specout: " + where + ": this status has no body; remove Type and ContentTypes")
+	case bodylessResponse(resp) && rawContent:
+		panic("specout: " + where + `: this status has no body; remove the Raw key "content"`)
 	case len(resp.ContentTypes) > 0 && !hasBody(e.typ):
-		panic("specout: " + where + ": ContentTypes needs a body type; set Type, or use a Res with a body")
+		panic("specout: " + where + ": ContentTypes needs a body type; set Type")
 	}
-	for _, ct := range resp.ContentTypes {
-		mediaType(where, ct)
-	}
+	checkMediaTypes(where, resp.ContentTypes)
 	checkResponseExamples(where, e)
 	checkHeaders(where, resp.Headers)
 	linkObjs(where, resp.Links)
@@ -307,7 +366,7 @@ func checkResponseExamples(where string, e respEntry) {
 	if !hasBody(e.typ) {
 		panic("specout: " + where + ": sets an example, but this response has no body; set Type, or remove the example")
 	}
-	checkExamples(where, resp.Example, resp.Examples)
+	checkExamples(where, resp.Example, resp.Examples, e.typ)
 }
 
 // checkHeaders checks the headers of one Response or Encoding. HTTP header names ignore
@@ -318,6 +377,10 @@ func checkHeaders(where string, headers []Header) {
 		key := strings.ToLower(hd.Name)
 		if hd.Name == "" {
 			panic("specout: " + where + ": a Header needs a Name")
+		}
+		if key == "content-type" {
+			panic("specout: " + where + ": OpenAPI ignores a header named Content-Type here; " +
+				"describe the media type with ContentTypes or ContentType, and remove the Header")
 		}
 		if seen[key] {
 			panic("specout: " + where + ": header " + strconv.Quote(hd.Name) + " is repeated; header names ignore case")
@@ -401,13 +464,6 @@ func responseSchema(t reflect.Type, sr *schemaRegistry) any {
 	return schemaFor(t, sr)
 }
 
-// mediaType panics when ct, a content map key, is empty.
-func mediaType(where, ct string) {
-	if ct == "" {
-		panic("specout: " + where + ": ContentTypes has an empty media type")
-	}
-}
-
 // headerObjs is one headers object, in declared order.
 func headerObjs(headers []Header, sr *schemaRegistry) *obj {
 	out := newObj()
@@ -417,17 +473,11 @@ func headerObjs(headers []Header, sr *schemaRegistry) *obj {
 	return out
 }
 
-// anyExplicit reports whether a route declares a response of its own. One
-// non-omitted entry is enough to replace the Res default (e.g. a 200 binary
-// download on a handler whose Res is struct{}).
-func anyExplicit(responses []Response) bool {
-	return slices.ContainsFunc(responses, func(r Response) bool { return !r.Omit })
-}
-
 // isEmptyStruct reports a type with no body. File has no fields, but it is a
-// binary body.
+// binary body, and a type with a JSONSchema method has the body it describes.
 func isEmptyStruct(t reflect.Type) bool {
-	return t != nil && t.Kind() == reflect.Struct && t.NumField() == 0 && t != reflect.TypeFor[File]()
+	return t != nil && t.Kind() == reflect.Struct && t.NumField() == 0 && t != reflect.TypeFor[File]() &&
+		!isJSONSchemaer(t)
 }
 
 // hasBody reports whether a response type puts content in the document.

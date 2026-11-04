@@ -5,21 +5,22 @@ import "github.com/happytoolin/specout"
 // ok and okJSON override the description of the Res-derived 200: ok is the
 // published JSON + XML pair, okJSON the operations that answer JSON only.
 func ok(description string) specout.Response {
-	return specout.Response{Status: 200, ContentTypes: jsonOrXML, Raw: map[string]any{"description": description}}
+	return specout.Response{Status: 200, ContentTypes: jsonOrXML, Description: description}
 }
 
 func okJSON(description string) specout.Response {
-	return specout.Response{Status: 200, Raw: map[string]any{"description": description}}
+	return specout.Response{Status: 200, Description: description}
 }
 
 // desc is a description-only response: the published document declares its
 // errors and its few body-less 200s this way; def is its "default" catch-all.
+// The document has no ErrorType, so an error with no Type has no body.
 func desc(code int, description string) specout.Response {
-	return specout.Response{Status: code, Type: struct{}{}, Raw: map[string]any{"description": description}}
+	return specout.Response{Status: code, Type: specout.NoContent{}, Description: description}
 }
 
 func def(description string) specout.Response {
-	return specout.Response{Key: "default", Type: struct{}{}, Description: description}
+	return specout.Response{Key: "default", Description: description}
 }
 
 var (

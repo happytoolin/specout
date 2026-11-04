@@ -187,7 +187,7 @@ func TestEscapedColonRecordWhenMiddlewareAnswers(t *testing.T) {
 			e.Use(specoutgin.Record(rec), func(c *gin.Context) { c.AbortWithStatus(http.StatusUnauthorized) })
 			specoutgin.New(d, e).Get(tc.route, specout.Handler[struct{}, specout.NoContent]{
 				HandlerFunc: noContent,
-				Responses:   []specout.Response{{Status: http.StatusUnauthorized}},
+				Responses:   []specout.Response{{Status: http.StatusNoContent, Omit: true}, {Status: http.StatusUnauthorized}},
 			})
 			require.Equal(t, http.StatusUnauthorized, get(t, e, tc.target).Code)
 			var ft adaptertest.FakeT

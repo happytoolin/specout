@@ -11,6 +11,7 @@ func externalDocsObj(where string, ed *ExternalDocs) *obj {
 	if ed.URL == "" {
 		panic("specout: " + where + ": ExternalDocs needs a URL")
 	}
+	checkURL(where+": ExternalDocs", "URL", ed.URL)
 	return newObj().setIf("url", ed.URL).setIf("description", ed.Description)
 }
 
