@@ -54,7 +54,7 @@ func (b *Router) Handle[Req, Res any](method, p string, h specout.Handler[Req, R
 	// So the route answers 404 until Bind returns: a registration that panics
 	// serves nothing, even when the caller recovers.
 	var bound atomic.Bool
-	specout.Bind(b.d, method, p, h, func(next http.Handler) string {
+	b.d.Bind(method, p, h, func(next http.Handler) string {
 		run := gate(&bound, serve(next, observed{method: method, path: documented}, strings.Contains(full, "*")))
 		b.r.Handle(method, p, append(slices.Clip(m), run)...)
 		return documented

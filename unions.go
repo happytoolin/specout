@@ -71,7 +71,7 @@ func (sr *schemaRegistry) reflectVariants(s *jsonschema.Schema) {
 func (sr *schemaRegistry) variantType(name string) reflect.Type {
 	t, ok := sr.variants[name]
 	if !ok {
-		panic("specout: union variant " + name + " is not registered")
+		panic("specout: union variant " + strconv.Quote(name) + ` is not registered; call doc.Register[T]("` + name + `")`)
 	}
 	return t
 }
@@ -203,7 +203,7 @@ type unionBranch struct {
 
 func (sr *schemaRegistry) addUnionBranch(source *jsonschema.Schema, u unionDecl, b unionBranch) {
 	if sr.byName[b.name] != nil || sr.owners[b.name] != nil {
-		panic("specout: duplicate component name " + b.name)
+		panic("specout: duplicate component name " + strconv.Quote(b.name) + "; call doc.SchemaName[T] with another name")
 	}
 	branch := *source
 	branch.OneOf = nil

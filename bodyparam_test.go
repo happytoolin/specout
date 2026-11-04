@@ -133,7 +133,7 @@ func TestBodyNameClashShowsEachTagOnce(t *testing.T) {
 	msg, _ := panicValue(func() {
 		docOf(t, http.MethodPost, "/x/{id}", specout.Handler[bodyClash, bodyClashBody]{HandlerFunc: noop})
 	}).(string)
-	assert.Contains(t, msg, "duplicate component name bodyClashBody")
+	assert.Contains(t, msg, `duplicate component name "bodyClashBody"`)
 	// reflect quotes the struct tag, so its own quotes carry backslashes
 	assert.Equal(t, 1, strings.Count(msg, `json:\"name\"`), msg)
 }

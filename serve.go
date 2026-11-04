@@ -39,6 +39,12 @@ func (d *Generator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodHead {
 		_, _ = w.Write(spec)
 	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.served == nil {
+		d.served = map[RouteKey]bool{}
+	}
+	d.served[NewRouteKey(r.Method, r.URL.Path)] = true
 }
 
 // chiOuter returns the chi router that served r, or nil. bytes compares it with
@@ -49,6 +55,14 @@ func chiOuter(r *http.Request) routeSource {
 		return nil
 	}
 	return chiWalkSource{rctx.Routes}
+}
+
+// Build builds and freezes the spec, and returns every problem it finds. Call it
+// at startup or in a test, so that a bad document fails there and not on the
+// first request. A panic in the build reaches the caller.
+func (d *Generator) Build() error {
+	_, _, err := d.bytes(nil, false)
+	return err
 }
 
 // WriteJSON writes the spec to w. Builds and freezes if not already.
@@ -132,7 +146,7 @@ func (d *Generator) encodeCaught() ([]byte, error) {
 
 // encode builds the spec and encodes it as indented JSON. Caller holds d.mu.
 func (d *Generator) encode() ([]byte, error) {
-	spec, err := d.build()
+	spec, err := d.buildDoc()
 	if err != nil {
 		return nil, err
 	}
@@ -140,6 +154,9 @@ func (d *Generator) encode() ([]byte, error) {
 	b, err := json.Marshal(spec, jsontext.WithIndent("  "))
 	if err != nil {
 		return nil, fmt.Errorf("specout: encode spec: %w", err)
+	}
+	if refErr := checkRefs(b); refErr != nil {
+		return nil, refErr
 	}
 	return append(b, '\n'), nil // trailing newline, like a text file
 }

@@ -21,6 +21,7 @@ const (
 	typeInteger  = "integer"
 	typeNumber   = "number"
 	typeArray    = "array"
+	typeBoolean  = "boolean"
 	formatBinary = "binary"
 )
 
@@ -218,7 +219,7 @@ func (sr *schemaRegistry) fixStructFields(t reflect.Type, s *jsonschema.Schema) 
 	removeShadowedFields(t, s, fields)
 	for _, f := range fields {
 		if parts0(f.Tag.Get("jsonschema")) != "-" {
-			sr.fixStructField(s, f)
+			sr.fixStructField(t, s, f)
 		}
 	}
 }
@@ -244,7 +245,7 @@ func checkHiddenFields(owner, t reflect.Type, seen map[reflect.Type]bool) {
 	}
 }
 
-func (sr *schemaRegistry) fixStructField(s *jsonschema.Schema, f reflect.StructField) {
+func (sr *schemaRegistry) fixStructField(owner reflect.Type, s *jsonschema.Schema, f reflect.StructField) {
 	name := fieldName(f)
 	p, ok := s.Properties.Get(name)
 	// encoding/json excludes only the exact tag "-". The reflector
@@ -259,6 +260,7 @@ func (sr *schemaRegistry) fixStructField(s *jsonschema.Schema, f reflect.StructF
 	applyBoolEnumTag(p, f.Type, f.Tag)
 	applyNumberEnumTag(p, f.Type, f.Tag)
 	applyKeywordTags(p, f.Tag)
+	fixFieldValues(fieldTagOwner(owner, f), p)
 	// a union branch puts its variant where the payload field holds any
 	if strings.Contains(f.Tag.Get("jsonschema"), "oneof_type=") {
 		sr.payloads[p] = f.Type
@@ -284,13 +286,13 @@ func (sr *schemaRegistry) addDashProperty(s *jsonschema.Schema, f reflect.Struct
 // applyKeywordTags applies the bare readonly, writeonly and deprecated
 // keywords, which the reflector misses.
 func applyKeywordTags(p *jsonschema.Schema, tag reflect.StructTag) {
-	for part := range strings.SplitSeq(tag.Get("jsonschema"), ",") {
+	for _, part := range tagParts(tag.Get("jsonschema")) {
 		switch part {
 		case "readonly", "readOnly=true":
 			p.ReadOnly = true
 		case "writeonly", "writeOnly=true":
 			p.WriteOnly = true
-		case "deprecated", "deprecated=true":
+		case keyDeprecated, "deprecated=true":
 			p.Deprecated = true
 		}
 	}
@@ -298,7 +300,8 @@ func applyKeywordTags(p *jsonschema.Schema, tag reflect.StructTag) {
 
 // requiredField reports whether a field's tags make its property required:
 // the json tag has no omitempty or omitzero, or the jsonschema tag says
-// required.
+// required. The reflector finds required with a plain split on commas, even
+// after an escaped comma, so this does too.
 func requiredField(tag reflect.StructTag) bool {
 	return !optionalTag(tag.Get("json")) || slices.Contains(strings.Split(tag.Get("jsonschema"), ","), "required")
 }
@@ -372,7 +375,7 @@ func applyNumberEnumTag(p *jsonschema.Schema, t reflect.Type, tag reflect.Struct
 func numberEnum(tag reflect.StructTag, reflected []any) []any {
 	var values []any
 	listed := false
-	for item := range strings.SplitSeq(tag.Get("jsonschema"), ",") {
+	for _, item := range tagParts(tag.Get("jsonschema")) {
 		value, isEnum := strings.CutPrefix(item, "enum=")
 		if !isEnum {
 			continue
@@ -404,7 +407,7 @@ func jsonNumber(s string) (jsonv1.Number, bool) {
 // repeats. It reports false when a value is not a bool.
 func boolEnum(tag reflect.StructTag) ([]any, bool) {
 	var values []any
-	for item := range strings.SplitSeq(tag.Get("jsonschema"), ",") {
+	for _, item := range tagParts(tag.Get("jsonschema")) {
 		value, ok := strings.CutPrefix(item, "enum=")
 		if !ok {
 			continue

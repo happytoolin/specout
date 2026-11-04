@@ -95,7 +95,7 @@ func TestDerivedOperationIDHasNoBraces(t *testing.T) {
 // nothing.
 func TestResponseDescriptionsAreNeverEmpty(t *testing.T) {
 	d := specout.New(specout.Config{Title: "t", Version: "1", ErrorType: struct{ M string }{}, DefaultErrors: []int{0}})
-	specout.Document(d, http.MethodGet, "/x", specout.Get[string]{HandlerFunc: noop}.WithResponse(specout.Response{Status: 299}))
+	d.Document(http.MethodGet, "/x", specout.Get[string]{HandlerFunc: noop}.WithResponse(specout.Response{Status: 299}))
 	responses := opOf(t, buildDoc(t, d), "/x", "get")["responses"].(map[string]any)
 	assert.Equal(t, "default response", responses["default"].(map[string]any)["description"])
 	assert.Equal(t, "299 response", responses["299"].(map[string]any)["description"])

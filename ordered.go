@@ -38,6 +38,16 @@ func (o *obj) setIf(k, v string) *obj {
 // get returns the value at k, or nil when the key is absent.
 func (o *obj) get(k string) any { return o.vals[k] }
 
+// child returns the object at k, and adds an empty one when the key is absent.
+func (o *obj) child(k string) *obj {
+	c, ok := o.vals[k].(*obj)
+	if !ok {
+		c = newObj()
+		o.set(k, c)
+	}
+	return c
+}
+
 // MarshalJSON writes the object with keys in insertion order.
 func (o obj) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer

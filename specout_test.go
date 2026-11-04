@@ -69,21 +69,22 @@ func TestQuickStartFlow(t *testing.T) {
 		assert.Contains(t, paths, p, "missing path %q", p)
 	}
 
-	// 204 for NoContent, 200+201 refs for the upsert, global errors stamped
+	// 204 for NoContent, the declared 201 replaces the 200, global errors stamped
 	assert.Contains(t, opOf(t, doc, "/onboarding/{id}", "delete")["responses"].(map[string]any), "204", "delete missing 204")
 	putResps := opOf(t, doc, "/onboarding/{id}", "put")["responses"].(map[string]any)
 	assert.Contains(t, putResps, "201", "put missing 201")
+	assert.NotContains(t, putResps, "200", "the declared 201 replaces the 200")
 	for _, code := range []string{"400", "404", "500"} {
 		assert.Contains(t, putResps, code, "put missing global default")
 	}
 
-	// component dedupe: Onboarding emitted once, referenced at 200 and 201
+	// the 201 has the Res body, and the errors have ErrorType
 	assert.Contains(t, schemas(t, doc), "Onboarding", "missing Onboarding component")
 	ref := func(code string) any {
 		return putResps[code].(map[string]any)["content"].(map[string]any)["application/json"].(map[string]any)["schema"].(map[string]any)["$ref"]
 	}
-	assert.Equal(t, "#/components/schemas/Onboarding", ref("200"), "dedupe 200")
-	assert.Equal(t, ref("200"), ref("201"), "dedupe 201")
+	assert.Equal(t, "#/components/schemas/Onboarding", ref("201"), "the 201 body")
+	assert.Equal(t, "#/components/schemas/Problem", ref("404"), "the 404 body")
 
 	// determinism: second serve is byte-identical
 	assert.True(t, bytes.Equal(body, fetch()), "spec not deterministic across serves")
@@ -139,7 +140,7 @@ func TestHandlerFluent(t *testing.T) {
 
 	for _, h := range []specout.Handler[EmptyReq, Onboarding]{literal, chained} {
 		g := newGen()
-		specout.Document(g, http.MethodGet, "/x", h)
+		g.Document(http.MethodGet, "/x", h)
 		op := opOf(t, buildDoc(t, g), "/x", "get")
 		assert.Equal(t, "s", op["summary"])
 		assert.Equal(t, []any{"t"}, op["tags"])

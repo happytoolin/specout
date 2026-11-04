@@ -110,6 +110,17 @@ func TestSpecKeepsPublishedShapes(t *testing.T) {
 	for _, name := range []string{"Pet", "Tag", "Category"} {
 		assert.Equal(t, "int64", dig(t, schemas, name, "properties", "id", "format"), "%s.id format", name)
 	}
+
+	// each "default" response is the published description alone. With no
+	// Type, it would show the success body of its operation.
+	for p, item := range dig(t, doc, "paths").(map[string]any) {
+		for m, op := range item.(map[string]any) {
+			responses := dig(t, op, "responses").(map[string]any)
+			if def, ok := responses["default"]; ok {
+				assert.Equal(t, map[string]any{"description": "Unexpected error"}, def, "%s %s default", m, p)
+			}
+		}
+	}
 }
 
 // captureT collects failures so a test can assert on one drift category

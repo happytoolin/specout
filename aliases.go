@@ -8,5 +8,11 @@ package specout
 // Get is the empty-request read: no body, no params, Res as the 200 body.
 type Get[Res any] = Handler[struct{}, Res]
 
-// Delete is the 204-only shape: nothing in, nothing out.
+// Delete is the shape with nothing in and nothing out: the operation answers
+// 204. Responses can add an error, such as a 404, and the 204 stays.
 type Delete = Handler[struct{}, NoContent]
+
+// Event is the shape of a webhook or a callback whose receiver answers with no
+// body: Body is what your API sends, and the receiver answers 204. A declared
+// success response, such as Key: "2XX", replaces the 204.
+type Event[Body any] = Handler[Body, NoContent]

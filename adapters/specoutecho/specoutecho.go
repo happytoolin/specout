@@ -54,7 +54,7 @@ func (b *Router) Handle[Req, Res any](method, path string, h specout.Handler[Req
 	// until Bind returns: a registration that panics serves nothing, even when
 	// the caller recovers.
 	var bound atomic.Bool
-	specout.Bind(b.d, method, path, h, func(next http.Handler) string {
+	b.d.Bind(method, path, h, func(next http.Handler) string {
 		serve := echo.WrapHandler(next)
 		ri, err := b.r.AddRoute(echo.Route{
 			Method: method,

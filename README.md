@@ -170,7 +170,7 @@ documentation, and it compares the statuses in your HTTP tests with the document
 | Document version | 3.1.0 | 3.1.0, and also 3.0.3 | 3.1.0 | 2.0, or 3.1.0 with `--v3.1` on v2 RC |
 | Cookie parameters | Yes | Yes | Yes | — |
 | Discriminated unions | Yes, from Go types | Yes, with a handwritten schema | — | Yes, with `@Discriminator` on v2 RC |
-| Callbacks | With `Raw` | Yes | — | — |
+| Callbacks | Yes, from Go types | Yes, with a handwritten object | — | — |
 | **Checks** | | | | |
 | Find routes with no documentation | Yes | — | — | — |
 | Compare test statuses with the document | Yes | — | — | — |
@@ -208,8 +208,9 @@ Choose Huma or Fuego if you want the framework to decode and validate requests.
 | Request bodies | JSON, binary files, multipart uploads, and custom media types. |
 | Responses | Status codes, headers, media types, shared errors, and responses without a body. |
 | Schemas | Nested and recursive types, collections, optional fields, nullable values, enums, formats, value limits, and discriminated unions. |
-| Authentication | Bearer tokens, API keys, OAuth 2.0, and OpenID Connect. Your middleware checks the credentials. |
-| Route details | Summaries, descriptions, tags, operation IDs, and deprecation. |
+| Authentication | Bearer tokens, HTTP Basic, API keys, OAuth 2.0, OpenID Connect, and mutual TLS. Your middleware checks the credentials. |
+| Route details | Summaries, descriptions, tags, operation IDs, deprecation, examples, and security for each route. |
+| Requests your API sends | Webhooks and callbacks, with schemas from Go types. |
 | Checks | Find routes without documentation, and compare response statuses with your HTTP tests. |
 
 ## Describe your API
@@ -237,27 +238,170 @@ and `price`.
 |---|---|
 | `path`, `query`, `header`, `cookie` | The location of a parameter. |
 | `json` | The name of a body field. `omitempty` makes the field optional. |
+| `form` | The name of a field in a form or multipart body, when it is not the JSON name. |
 | `jsonschema:"minLength=1,maxLength=40"` | The length limits of a string. |
 | `jsonschema:"minimum=1,maximum=3"` | The limits of a number. |
 | `jsonschema:"minItems=1,maxItems=3"` | The length limits of an array. |
 | `jsonschema:"enum=en\|es"` | The allowed values. |
 | `jsonschema:"default=en"` | A default value. Your handler must apply it. |
 
-### Responses
-
-The second type of `specout.Handler` is the `200` response. Add other responses
-with `Responses`:
+A `specout.File` field makes the request body `multipart/form-data`:
 
 ```go
-routes.Put("/items/{id}", specout.Handler[UpdateItemRequest, Item]{
-	HandlerFunc: updateItem,
-	Summary:     "Update an item",
-	Responses:   []specout.Response{{Status: http.StatusNotFound, Type: Problem{}}},
+type UploadAvatar struct {
+	ID     string       `path:"id"`
+	Avatar specout.File `json:"avatar"`
+	Note   string       `json:"note,omitempty"`
+}
+```
+
+### Responses
+
+The second type of `specout.Handler` is the success response: a `200` with that
+body, or a `204` when the type is `specout.NoContent`. Add other responses with
+`Responses`:
+
+```go
+doc := specout.New(specout.Config{
+	Title: "Items API", Version: "1.0.0",
+	ErrorType: Problem{}, DefaultErrors: []int{http.StatusInternalServerError},
+})
+
+routes.Post("/items", specout.Handler[CreateItem, Item]{
+	HandlerFunc: createItem,
+	Responses: []specout.Response{
+		{Status: http.StatusCreated, Headers: []specout.Header{{Name: "Location", Required: true}}},
+		{Status: http.StatusBadRequest},
+	},
+})
+
+routes.Delete("/items/{id}", specout.Delete{
+	HandlerFunc: deleteItem,
+	Responses:   []specout.Response{{Status: http.StatusNotFound}},
 })
 ```
 
+A declared success response replaces the `200` or the `204`. A success response
+is a `2xx`, a redirect (a `3xx` other than `304`), or a `101`. In the example,
+the `201` replaces the `200`, and the `204` stays next to the `404`.
+
+A response with no `Type` gets the body of its status:
+
+| Status | Body |
+|---|---|
+| `2xx` | The second type of the handler. |
+| `4xx`, `5xx`, and `Key: "default"` | `Config.ErrorType`. With no `ErrorType`, the response has no body. |
+| Any other status | No body. |
+
+Set `Type` to give a response another body. Set `Type: specout.NoContent{}` for
+a response with no body. Set `Omit: true` to remove a response, such as a status
+from `DefaultErrors`. A route with `Public: true` does not get the `401` and
+`403` from `DefaultErrors`.
+
 Use `specout.Get[Item]` for a route with no request data. Use
-`specout.NoContent` as the response type for a route with no response body.
+`specout.NoContent` as the response type for a route with no response body. Use
+`specout.File` as the type of a binary body, and `ContentTypes` for its media
+types:
+
+```go
+routes.Get("/report", specout.Get[specout.File]{
+	HandlerFunc: getReport,
+	Responses:   []specout.Response{{Status: http.StatusOK, ContentTypes: []string{"application/pdf"}}},
+})
+```
+
+Use `Request` to describe the request body, in the same way:
+
+```go
+routes.Post("/items", specout.Handler[CreateItem, Item]{
+	HandlerFunc: createItem,
+	Request:     specout.Request{Description: "The new item", Example: CreateItem{Name: "Lamp"}},
+})
+```
+
+### Requests your API sends
+
+A webhook is a request that your API sends on its own, such as an order event.
+Describe it as you describe a route, but give it a name and no handler. The
+request type is what your API sends:
+
+```go
+type OrderCreated struct {
+	Signature string `header:"X-Signature"`
+	OrderID   string `json:"orderId"`
+}
+
+doc.Webhook(http.MethodPost, "orderCreated", specout.Event[OrderCreated]{
+	Summary: "An order was created",
+})
+```
+
+`specout.Event[T]` means that the receiver answers `204` with no body. Add
+`Responses` if the receiver can answer in another way. For example, use
+`Key: "2XX"` for any success status.
+
+A callback is a request that your API sends because of one route. The URL is
+usually a runtime expression that reads the original request:
+
+```go
+jobDone := specout.NewCallback(
+	http.MethodPost, "jobDone", "{$request.body#/callbackUrl}",
+	specout.Event[JobResult]{Summary: "The job finished"},
+)
+
+routes.Post("/jobs", specout.Handler[StartJob, Job]{
+	HandlerFunc: startJob,
+	Callbacks:   []specout.Callback{jobDone},
+})
+```
+
+Webhooks and callbacks take the same fields as a route, such as `Summary`,
+`Responses`, and `Request`. These rules are different from a route:
+
+- They stay out of the route checks and the status comparison, because your
+  API does not serve them.
+- They do not get `DefaultErrors`, because those errors come from your API.
+- They do not need `Auth` from `Config`. Set `Security` if your API uses one of
+  those schemes to send the request.
+
+### Links between operations
+
+A link tells a client how to use a response in a next request. The build fails
+if no operation has the operation ID in the link:
+
+```go
+routes.Post("/jobs", specout.Handler[StartJob, Job]{
+	HandlerFunc: startJob,
+	Responses: []specout.Response{{
+		Status: http.StatusOK,
+		Links: map[string]specout.Link{
+			"status": {
+				OperationID: "getJob",
+				Parameters:  map[string]string{"id": "$response.body#/id"},
+			},
+		},
+	}},
+})
+
+routes.Get("/jobs/{id}", specout.Get[Job]{HandlerFunc: getJob, OperationID: "getJob"})
+```
+
+### Form fields and servers
+
+Use `Request.Encoding` to describe the fields of a form or multipart request
+body. A wrong field name panics at registration:
+
+```go
+Request: specout.Request{
+	Encoding: map[string]specout.Encoding{
+		"avatar": {ContentType: "image/png"},
+		"labels": {Style: "pipeDelimited", Explode: new(false)},
+	},
+},
+```
+
+Use `Handler.Servers` when one route has a different base URL from the rest of
+the API.
 
 ### The whole API
 
@@ -273,17 +417,27 @@ when your API needs them:
 | `Auth` | Describe authentication. Your middleware must check the credentials. |
 | `ErrorType`, `DefaultErrors` | Describe a shared error body and its status codes. Your handlers write these responses. |
 | `ClosedSchemas` | Mark object schemas as closed to unknown fields. Your code must reject those fields. |
+| `JSONSchemaDialect` | Set the default JSON Schema dialect of the document. Most APIs do not need this. |
 
 ### Types with custom JSON
 
 specout builds a schema from the Go fields of a type. A type with its own
 `MarshalJSON` method can write a different shape, and specout cannot see that
-shape. Give the type a `JSONSchema()` method, which comes from
-[invopop/jsonschema](https://github.com/invopop/jsonschema):
+shape. Give the type a `JSONSchema()` method. `specout.Schema` is the schema type
+of [invopop/jsonschema](https://github.com/invopop/jsonschema):
 
 ```go
 // Money.MarshalJSON writes a string such as "12.50".
-func (Money) JSONSchema() *jsonschema.Schema { return &jsonschema.Schema{Type: "string"} }
+func (Money) JSONSchema() *specout.Schema { return &specout.Schema{Type: "string"} }
+```
+
+Use `specout.Enum` for a list of values that several fields share. Each field,
+parameter, and body of the type then gets the same list:
+
+```go
+type Status string
+
+func (Status) JSONSchema() *specout.Schema { return specout.Enum("todo", "doing", "done") }
 ```
 
 Schemas describe the output of `encoding/json`. `encoding/json/v2` writes some
@@ -322,12 +476,29 @@ if err := specoutgin.Adopt(doc, engine, specout.Skip("/openapi.json")); err != n
 }
 ```
 
+With chi, call `Adopt` on the outermost router before `Build`. Only that router
+knows the full path of each route in a group. `Route`, `Group`, and `With` work
+as they do in chi, and give the binder of the group:
+
+```go
+r := chi.NewRouter()
+routes := specout.Chi(doc, r)
+routes.Route("/v1", func(r *specout.ChiRouter) {
+	r.Get("/items/{id}", specout.Handler[GetItemRequest, Item]{HandlerFunc: getItem})
+})
+r.Handle("/openapi.json", doc)
+
+if err := routes.Adopt(); err != nil {
+	log.Fatal(err)
+}
+```
+
 The document shows each path in OpenAPI form, so `/items/:id` becomes
 `/items/{id}`. Your handler reads the value with `r.PathValue("id")` on every
 router.
 
-For another router, use `specout.Bind` to register and document each route. Use
-`specout.Document` when the router registers the handler and you only want the
+For another router, use `doc.Bind` to register and document each route. Use
+`doc.Document` when the router registers the handler and you only want the
 documentation. To request an adapter, open an
 [issue](https://github.com/happytoolin/specout/issues).
 
@@ -380,13 +551,52 @@ document, and you cannot add routes after a successful build.
 |---|---|
 | Bad `Config` | `specout.New` panics. |
 | Bad route data or bad path | The registration panics, and the router does not get the route. |
-| Failed build, with `WriteJSON` | `WriteJSON` returns the error. If the build panics, `WriteJSON` panics. |
+| Failed build, with `Build` or `WriteJSON` | The call returns an error that lists every problem. If the build panics, the call panics. |
 | Failed build, with `ServeHTTP` | `ServeHTTP` returns `500` without the error text. It logs the error once, and also the stack after a panic. |
+
+Call `doc.Build()` at startup or in a test, so that a bad document fails there
+and not on the first request:
+
+```go
+if err := doc.Build(); err != nil {
+	log.Fatal(err)
+}
+```
+
+Each message starts with the place of the problem, and it gives the fix when
+specout knows it:
+
+```text
+specout: POST /jobs: response 200: link "status": no operation has operationId "getJb"; set OperationID on the target route; did you mean "getJob"?
+```
+
+specout also panics on a `jsonschema` keyword that it does not know, such as
+`minLenght=1`. The tag parser ignores such a keyword, so the rule would be
+missing from the document.
+
+The document must stay valid OpenAPI 3.1 and JSON Schema 2020-12. Thus specout
+also stops on these values:
+
+| Value | Example |
+|---|---|
+| A `default` or `example` that its own schema rejects | `enum=en\|es,default=de` |
+| A schema keyword with a value that is not valid | `pattern=(a`, `multipleOf=0`, a repeated enum value |
+| A `jsonschema_extras` key with a checked form, or a 3.0 keyword | `required=true`, `nullable=true` |
+| A header parameter that OpenAPI ignores | `Accept`, `Content-Type`, `Authorization` |
+| A style that does not fit the parameter type | `style=deepObject` on a string |
+| A body that cannot carry its files, or a `TRACE` body | A `File` field with `application/json` |
+| A media type that is not `type/subtype`, or a repeated media type | `json` |
+| A path with a query, a fragment or a space | `/items?x=1` |
+| A `$ref` that points to nothing | `oneof_ref=#/$defs/Missing` |
+| A `Raw` value that breaks the object it replaces | A Raw response with no `description` |
+| A URL or an email address that is not valid | `Contact.Email: "nobody"` |
+
+A list default in a tag, such as `default=1` on a `[]int`, becomes `[1]`.
 
 A few path checks need the full path, and the router knows it only after it adds
 the route. In these cases, the router has the route when the panic occurs:
 
-- A path that a `specout.Bind` mount function returns.
+- A path that a `doc.Bind` mount function returns.
 - A gorilla/mux subrouter prefix or host.
 - An empty gorilla/mux path.
 
@@ -430,6 +640,11 @@ func TestStatuses(t *testing.T) {
 With Echo, Gin, and Fiber, use `recorder.New(nil)` and install the adapter's
 `Record` middleware.
 
+You can pass the production handler, with its middleware, to `recorder.New`.
+Middleware outside the router hides the route of a request, so `Verify` finds
+the route from the request path. A `401` from an auth middleware then counts for
+the route. A request for the document itself is not drift.
+
 A handler that hijacks the connection writes its own response. If the handler
 wrote no status and the request asks to switch protocols, as in a WebSocket
 handshake, the recorder records `101`. It records nothing for any other hijack
@@ -442,6 +657,7 @@ that wrote no status.
 - [Types and responses](skills/specout/references/types-and-responses.md)
 - [Routers and checks](skills/specout/references/routers-and-verification.md)
 - [Configuration and authentication](skills/specout/references/configuration.md)
+- [OpenAPI 3.1 field coverage](skills/specout/references/openapi-coverage.md)
 
 Coding agents can use the optional [specout skill](skills/specout/SKILL.md):
 

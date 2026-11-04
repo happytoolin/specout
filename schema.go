@@ -322,8 +322,11 @@ func validateStructEmbeddings(t reflect.Type, checked map[reflect.Type]bool) {
 		if f.Tag.Get("json") == "-" || parts0(f.Tag.Get("jsonschema")) == "-" || (f.PkgPath != "" && !f.Anonymous) {
 			continue
 		}
+		checkSchemaTag(fieldTagOwner(t, f), f.Tag.Get("jsonschema"))
+		checkExtrasTag(fieldTagOwner(t, f), f.Tag.Get("jsonschema_extras"))
 		if !promotes(f) && embedOption(f.Tag) {
-			panic("specout: explicit JSON embedding requires an anonymous struct field")
+			panic("specout: " + fieldTagOwner(t, f) +
+				": the inline or embed option of a json tag needs an anonymous struct field")
 		}
 		validateAnonymousEmbeddings(f.Type, checked)
 	}
@@ -417,8 +420,8 @@ func sanitizeName(t reflect.Type) string {
 
 // panicDuplicateName fails loud when two Go types claim one component name.
 func panicDuplicateName(name string, owner, t reflect.Type) {
-	panic("specout: duplicate component name " + name +
-		" (" + owner.String() + " vs " + t.String() + "), call SchemaName to disambiguate")
+	panic("specout: duplicate component name " + strconv.Quote(name) + ", from " + owner.String() + " and " + t.String() +
+		"; call doc.SchemaName[T] with another name for one of them")
 }
 
 // schemaObjs is the hoisted components.schemas object: the typed components

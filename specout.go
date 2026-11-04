@@ -1,11 +1,16 @@
-// Package specout generates OpenAPI 3.1 specifications from plain Go
-// http.HandlerFunc factories: metadata rides the generic Handler type,
-// the spec builds from the live router, and the output is
-// byte-deterministic.
+// Package specout generates an OpenAPI 3.1 document from Go types and plain
+// net/http handlers.
+//
+// A Handler[Req, Res] holds one route: its http.HandlerFunc, the Req type of
+// its parameters and body, the Res type of its success body, and the other
+// fields of the operation. Register it on your router with Std, Chi or
+// Gorilla, or with an adapter. The Generator then builds the document and
+// serves it. The output is the same for the same routes.
 package specout
 
 import (
 	"reflect"
+	"strconv"
 	"sync"
 )
 
@@ -20,6 +25,9 @@ type Generator struct {
 	// records, in registration order. Identity is the record itself, not
 	// the handler func pointer: one func on two routes is two records.
 	records []*routeRecord
+	// webhooks are requests the API sends. They are not routes, so they stay
+	// out of records and of every route check.
+	webhooks []webhook
 	// sources: every router the generator saw, walked once at build time.
 	sources []routeSource
 
@@ -34,6 +42,9 @@ type Generator struct {
 	inputs   int
 	buildErr error
 	errAt    int
+	// served holds each method and path where the generator served the
+	// document, so the recorder does not report the document route as drift.
+	served map[RouteKey]bool
 }
 
 // New returns a Generator that collects routes for cfg. It is safe for
@@ -54,7 +65,8 @@ func New(cfg Config) *Generator {
 // also clears a kept build error. Caller holds d.mu.
 func (d *Generator) mustBeOpen() {
 	if d.specJSON != nil {
-		panic("specout: registration after the spec was built")
+		panic("specout: cannot register after the spec was built; " +
+			"register all routes before the first ServeHTTP, WriteJSON or Build")
 	}
 	d.inputs++
 }
@@ -77,7 +89,8 @@ func (d *Generator) SchemaName[T any](name string) {
 	defer d.mu.Unlock()
 	d.mustBeOpen()
 	if name == "" || componentChars.MatchString(name) {
-		panic("specout: SchemaName must contain only ASCII letters, digits, dots, hyphens or underscores")
+		panic("specout: SchemaName " + strconv.Quote(name) +
+			" must contain only ASCII letters, digits, dots, hyphens or underscores")
 	}
 	d.nameOverrides[deref(reflect.TypeFor[T]())] = name
 }

@@ -5,45 +5,58 @@ import (
 	"maps"
 	"reflect"
 	"slices"
+	"strconv"
 
 	"github.com/invopop/jsonschema"
 )
 
-// requestBodyObj builds one operation's requestBody: always required, with the
-// media types the route declared or the single type the body schema prefers.
+// requestBodyObj builds one operation's requestBody, with the media types the
+// route declared or the single type the body schema prefers. It is required
+// unless the route says otherwise.
 func requestBodyObj(rec *routeRecord, body reflect.Type, sr *schemaRegistry) *obj {
 	ct, base := requestBodyFor(body, sr)
 	content := newObj()
-	types := rec.reqContentTypes
+	types := rec.body.ContentTypes
 	if len(types) == 0 {
 		types = []string{ct}
 	}
+	examples := encodeExamples(rec.label()+": Request", rec.body.Example, rec.body.Examples)
 	for _, c := range types {
+		form := formMedia(c)
 		schema := *base
-		if c == "multipart/form-data" || c == "application/x-www-form-urlencoded" {
+		if form {
 			schema = sr.formSchema(body, base)
 		}
 		if rec.req.Kind() == reflect.Pointer {
 			nullable(&schema)
 		}
 		sr.inline = append(sr.inline, &schema)
-		content.set(c, newObj().set("schema", &schema))
+		media := newObj().set("schema", &schema)
+		examples.set(media, requestExampleKeys(rec.req, body, form))
+		if takesEncoding(c) && len(rec.body.Encoding) > 0 {
+			media.set("encoding", encodingObjs(rec.body.Encoding, sr))
+		}
+		content.set(c, media)
 	}
-	return newObj().set("required", true).set("content", content)
+	return newObj().setIf("description", rec.body.Description).
+		set("required", !rec.body.Optional).set("content", content)
 }
 
-// checkRequestContentTypes checks that each RequestContentTypes entry names a
-// media type, and that Req carries a body for them to describe.
-func checkRequestContentTypes(rec *routeRecord) {
-	if len(rec.reqContentTypes) == 0 {
+// checkRequestBody checks that Req carries a body for the route's request
+// fields to describe, that each Request.ContentTypes entry names a media type,
+// that the examples can be written, and that the encodings fit the body.
+func checkRequestBody(rec *routeRecord) {
+	if !rec.describesRequestBody() {
 		return
 	}
-	if body, _ := requestBody(rec.req); body == nil {
-		panic("specout: " + rec.method + " " + rec.pattern + " sets RequestContentTypes, but Req has no request body")
+	body, _ := requestBody(rec.req)
+	if body == nil {
+		panic("specout: " + rec.label() + ": Handler.Request describes a body, but Req has no body; " +
+			"add a field with no path, query, header or cookie tag, or remove Handler.Request")
 	}
-	for _, c := range rec.reqContentTypes {
-		mediaType(c, "RequestContentTypes")
-	}
+	checkEncoding(rec, body)
+	checkExamples(rec.label()+": Request", rec.body.Example, rec.body.Examples, rec.req, body)
+	checkMediaTypes(rec.label()+": Request", rec.body.ContentTypes)
 }
 
 // formSchema copies the JSON component only when form tags change its names.
@@ -66,12 +79,17 @@ func (sr *schemaRegistry) formSchema(body reflect.Type, base *jsonschema.Schema)
 func formRenames(body reflect.Type) map[string]string {
 	renames := make(map[string]string)
 	for _, f := range jsonFields(body, false) {
-		name, form := fieldName(f), parts0(f.Tag.Get("form"))
-		if form != "" && form != name {
+		if name, form := fieldName(f), formName(f); form != name {
 			renames[name] = form
 		}
 	}
 	return renames
+}
+
+// formName is the name of a body field on a form: its form tag, or else its
+// JSON name. form:"-" gives "-", and form binders skip that field.
+func formName(f reflect.StructField) string {
+	return cmp.Or(parts0(f.Tag.Get("form")), fieldName(f))
 }
 
 // renamedSchema copies source with its property and required names renamed,
@@ -87,7 +105,7 @@ func renamedSchema(source *jsonschema.Schema, renames map[string]string) jsonsch
 		}
 		wireName := cmp.Or(renames[name], name)
 		if _, duplicate := form.Properties.Get(wireName); duplicate {
-			panic("specout: duplicate form field " + wireName)
+			panic("specout: two fields have the form name " + strconv.Quote(wireName) + "; change one form tag")
 		}
 		form.Properties.Set(wireName, source.Properties.Value(name))
 	}
@@ -102,14 +120,23 @@ func renamedSchema(source *jsonschema.Schema, renames map[string]string) jsonsch
 // is an octet-stream payload, a struct with a binary field is
 // multipart/form-data, anything else is JSON.
 func requestBodyFor(body reflect.Type, sr *schemaRegistry) (string, *jsonschema.Schema) {
+	ct := requestContentType(body)
 	if body == reflect.TypeFor[File]() {
-		return "application/octet-stream", binarySchema()
+		return ct, binarySchema()
 	}
-	schema := &jsonschema.Schema{Ref: sr.refFor(body)}
-	if hasBinaryField(body) {
-		return "multipart/form-data", schema
+	return ct, &jsonschema.Schema{Ref: sr.refFor(body)}
+}
+
+// requestContentType is the media type that a body type implies.
+func requestContentType(body reflect.Type) string {
+	switch {
+	case body == reflect.TypeFor[File]():
+		return "application/octet-stream"
+	case hasBinaryField(body):
+		return mediaMultipart
+	default:
+		return "application/json"
 	}
-	return "application/json", schema
 }
 
 // binarySchema is the schema of a raw byte payload.
@@ -123,16 +150,14 @@ func hasBinaryField(t reflect.Type) bool {
 	if t.Kind() != reflect.Struct {
 		return false
 	}
-	fileT := reflect.TypeFor[File]()
-	if t == fileT {
+	if t == reflect.TypeFor[File]() {
 		return true
 	}
 	for _, field := range jsonFields(t, false) {
 		if parts0(field.Tag.Get("jsonschema")) == "-" {
 			continue
 		}
-		ft := deref(field.Type)
-		if ft == fileT || (ft.Kind() == reflect.Slice && deref(ft.Elem()) == fileT) {
+		if isFileField(field) {
 			return true
 		}
 		if tagValue(field.Tag.Get("jsonschema"), "format") == formatBinary {

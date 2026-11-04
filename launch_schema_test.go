@@ -70,10 +70,10 @@ func TestLaunchUnionNameCollision(t *testing.T) {
 			d.Register[schemaEmail]("email")
 			d.Register[schemaSlack]("slack")
 			union := func() {
-				specout.Document(d, http.MethodGet, "/union", specout.Get[launchEnvelope]{HandlerFunc: noop})
+				d.Document(http.MethodGet, "/union", specout.Get[launchEnvelope]{HandlerFunc: noop})
 			}
 			other := func() {
-				specout.Document(d, http.MethodGet, "/other", specout.Get[launchEnvelopeVariant1]{HandlerFunc: noop})
+				d.Document(http.MethodGet, "/other", specout.Get[launchEnvelopeVariant1]{HandlerFunc: noop})
 			}
 			if reverse {
 				other()
@@ -194,9 +194,9 @@ func documentPointerCycle(t *testing.T, mode string) {
 	}()
 	d := newGen()
 	if mode == "request" {
-		specout.Document(d, http.MethodPost, "/x", specout.Handler[launchPointerCycle, string]{HandlerFunc: noop})
+		d.Document(http.MethodPost, "/x", specout.Handler[launchPointerCycle, string]{HandlerFunc: noop})
 	} else {
-		specout.Document(d, http.MethodGet, "/x", specout.Get[launchPointerCycle]{HandlerFunc: noop})
+		d.Document(http.MethodGet, "/x", specout.Get[launchPointerCycle]{HandlerFunc: noop})
 	}
 	if err := d.WriteJSON(io.Discard); err != nil {
 		t.Logf("recursive type rejected: %v", err)
@@ -231,7 +231,7 @@ func TestLaunchNullableHelperRejectsOrdinaryUnion(t *testing.T) {
 
 func TestLaunchFailedBuildCanBeRetried(t *testing.T) {
 	d := newGen()
-	specout.Document(d, http.MethodPost, "/x", specout.Handler[launchEnvelope, specout.NoContent]{HandlerFunc: noop})
+	d.Document(http.MethodPost, "/x", specout.Handler[launchEnvelope, specout.NoContent]{HandlerFunc: noop})
 	assert.Panics(t, func() { _ = d.WriteJSON(io.Discard) })
 	d.Register[schemaEmail]("email")
 	d.Register[schemaSlack]("slack")
@@ -243,7 +243,7 @@ func TestLaunchFailedBuildCanBeRetried(t *testing.T) {
 
 func TestLaunchConcurrentExportsAreStable(t *testing.T) {
 	d := newGen()
-	specout.Document(d, http.MethodGet, "/x", specout.Get[launchItem]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/x", specout.Get[launchItem]{HandlerFunc: noop})
 	var output [32]bytes.Buffer
 	var errors [32]error
 	var workers sync.WaitGroup

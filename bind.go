@@ -20,13 +20,13 @@ import (
 // front. A second route with the same method and path panics. mount runs
 // while d is locked, so it must not call d. The route's identity is its method
 // and returned path; CheckRoutes compares a live route table against it.
-func Bind[Req, Res any](d *Generator, method, pattern string, h Handler[Req, Res], mount func(http.Handler) string) {
+func (d *Generator) Bind[Req, Res any](method, pattern string, h Handler[Req, Res], mount func(http.Handler) string) {
 	if d == nil {
-		panic("specout: Bind needs a generator")
+		panic("specout: Bind needs a generator; make one with New")
 	}
-	checkMethod(method)
+	checkMethod(method, pattern)
 	if mount == nil {
-		panic("specout: Bind needs a mount func for " + method + " " + pattern)
+		panic("specout: " + method + " " + pattern + ": Bind needs a mount func")
 	}
 	rec := recOf(h)
 	rec.method, rec.pattern = method, pattern
@@ -34,7 +34,7 @@ func Bind[Req, Res any](d *Generator, method, pattern string, h Handler[Req, Res
 	d.addRoute(rec, func(rec *routeRecord) {
 		rec.full = mountRoute(method, pattern, mount, rec)
 		if err := cmp.Or(checkOpenAPIPath(rec.full), checkSegments(rec.full)); err != "" {
-			panic("specout: " + method + " " + pattern + " mounted at " + rec.full + ": " + err)
+			panic("specout: " + method + " " + pattern + ": mounted at " + rec.full + ": " + err)
 		}
 		// Some routers let a later route replace an earlier one (Echo's
 		// default) or never run it (Fiber), so a duplicate fails here, where
@@ -42,8 +42,8 @@ func Bind[Req, Res any](d *Generator, method, pattern string, h Handler[Req, Res
 		documented := docPath(canonicalPath(rec.full))
 		for _, other := range d.records {
 			if other.absolute && other.method == method && docPath(canonicalPath(other.full)) == documented {
-				panic("specout: duplicate route " + method + " " + documented + " (registered as " +
-					strconv.Quote(other.pattern) + " and " + strconv.Quote(pattern) + ")")
+				panic("specout: " + method + " " + documented + ": duplicate route, registered as " +
+					strconv.Quote(other.pattern) + " and " + strconv.Quote(pattern))
 			}
 		}
 	})
@@ -122,6 +122,9 @@ func checkOpenAPIPath(p string) string {
 // and chi matches them only as written, so the document would name a path
 // that differs from the one served. Parameter regexes may hold any of them.
 func checkSegments(p string) string {
+	if msg := pathCharProblem(docPath(p)); msg != "" {
+		return msg
+	}
 	p = strings.TrimSuffix(strings.TrimPrefix(docPath(p), "/"), "/")
 	if p == "" {
 		return ""
@@ -129,9 +132,9 @@ func checkSegments(p string) string {
 	for seg := range strings.SplitSeq(p, "/") {
 		switch seg {
 		case "":
-			return "the path has an empty segment (//)"
+			return "the path has an empty segment (//); remove the extra /"
 		case ".", "..":
-			return "the path has a dot segment (/" + seg + ")"
+			return "the path has a dot segment (/" + seg + "); remove it"
 		}
 	}
 	return ""

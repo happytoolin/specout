@@ -179,9 +179,9 @@ func TestInvalidParameterDeclarationsFail(t *testing.T) {
 		A string `header:"X-Id"`
 		B string `header:"x-id"`
 	}
-	assert.PanicsWithValue(t, "specout: empty or duplicate query parameter q", func() { docOf(t, "GET", "/x", specout.Handler[duplicate, string]{HandlerFunc: noop}) })
-	assert.PanicsWithValue(t, "specout: empty or duplicate header parameter x-id", func() { docOf(t, "GET", "/x", specout.Handler[duplicateHeader, string]{HandlerFunc: noop}) })
-	assert.PanicsWithValue(t, "specout: field A has invalid header parameter style=deepObject", func() { docOf(t, "GET", "/x", specout.Handler[badStyle, string]{HandlerFunc: noop}) })
+	assert.PanicsWithValue(t, "specout: GET /x: field B: query parameter name \"q\" is empty or repeated", func() { docOf(t, "GET", "/x", specout.Handler[duplicate, string]{HandlerFunc: noop}) })
+	assert.PanicsWithValue(t, "specout: GET /x: field B: header parameter name \"x-id\" is empty or repeated", func() { docOf(t, "GET", "/x", specout.Handler[duplicateHeader, string]{HandlerFunc: noop}) })
+	assert.PanicsWithValue(t, "specout: GET /x: field A: style \"deepObject\" is not valid on a header parameter; use simple", func() { docOf(t, "GET", "/x", specout.Handler[badStyle, string]{HandlerFunc: noop}) })
 }
 
 // invopop reads a backslash-escaped comma as part of the value; the parameter

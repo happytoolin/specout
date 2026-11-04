@@ -37,8 +37,8 @@ func TestStdExactAndSubtreeShareOnePath(t *testing.T) {
 		std := specout.Std(d, http.NewServeMux())
 		std.Get(order[0], nc(hit204))
 		std.Get(order[1], nc(hit204))
-		require.EqualError(t, d.WriteJSON(io.Discard), "specout: duplicate route GET /a/ (registered as "+
-			strconv.Quote(order[0])+" and "+strconv.Quote(order[1])+"): net/http serves both, but OpenAPI "+
+		require.EqualError(t, d.WriteJSON(io.Discard), "specout: GET /a/: duplicate route, registered as "+
+			strconv.Quote(order[0])+" and "+strconv.Quote(order[1])+": net/http serves both, but OpenAPI "+
 			"has one path for them; document one, register the other on the mux itself, and pass "+
 			"specout.Skip with its pattern to the recorder")
 	}
@@ -157,7 +157,10 @@ func TestChiUnmatchedMountStubIsNotAnOperation(t *testing.T) {
 	assert.Empty(t, verify(d, rec))
 }
 
-func TestVerifyNamesARouterHiddenByMiddleware(t *testing.T) {
+// A wrapper outside the router hides the route pattern, so Verify matches the
+// path against the document. A path that matches no documented route gets the
+// hint.
+func TestVerifyMatchesARouterHiddenByMiddleware(t *testing.T) {
 	d, r := gen(), chi.NewRouter()
 	b := specout.Chi(d, r)
 	b.Get("/x", nc(hit204))
@@ -165,12 +168,16 @@ func TestVerifyNamesARouterHiddenByMiddleware(t *testing.T) {
 	wrapped := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) { r.ServeHTTP(w, req) })
 	rec := recorder.New(wrapped)
 	serve(rec, http.MethodGet, "/x")
+	assert.Empty(t, verify(d, rec))
+
+	rec = recorder.New(http.StripPrefix("/api", r))
+	serve(rec, http.MethodGet, "/api/x")
 	assert.NotEmpty(t, findErr(verify(d, rec), "recorder matched no route in 1 requests"))
 }
 
 func TestObserveFeedsVerify(t *testing.T) {
 	d := gen()
-	specout.Document(d, http.MethodGet, "/items/{id}", nc(hit204))
+	d.Document(http.MethodGet, "/items/{id}", nc(hit204))
 	rec := recorder.New(nil, specout.Skip("/openapi.json"))
 	rec.Observe(http.MethodGet, "/items/{id}", http.StatusNoContent)
 	rec.Observe(http.MethodGet, "/openapi.json", http.StatusOK)

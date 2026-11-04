@@ -60,16 +60,16 @@ func TestEdgeCases(t *testing.T) {
 	}
 	cases := []testCase{
 		{name: "recursive", route: func(d *specout.Generator) {
-			specout.Document(d, http.MethodGet, "/tree", specout.Handler[struct{}, Node]{HandlerFunc: noop})
+			d.Document(http.MethodGet, "/tree", specout.Handler[struct{}, Node]{HandlerFunc: noop})
 		}},
 		{name: "maps", route: func(d *specout.Generator) {
-			specout.Document(d, http.MethodGet, "/m", specout.Handler[struct{}, MapWrap]{HandlerFunc: noop})
+			d.Document(http.MethodGet, "/m", specout.Handler[struct{}, MapWrap]{HandlerFunc: noop})
 		}},
 		{
 			name: "generic collision",
 			route: func(d *specout.Generator) {
-				specout.Document(d, http.MethodGet, "/a", specout.Handler[struct{}, Page[Alpha]]{HandlerFunc: noop})
-				specout.Document(d, http.MethodPost, "/b", specout.Handler[struct{}, Page[Beta]]{HandlerFunc: noop})
+				d.Document(http.MethodGet, "/a", specout.Handler[struct{}, Page[Alpha]]{HandlerFunc: noop})
+				d.Document(http.MethodPost, "/b", specout.Handler[struct{}, Page[Beta]]{HandlerFunc: noop})
 			},
 			check: func(t *testing.T, doc map[string]any) {
 				t.Helper()
@@ -80,25 +80,25 @@ func TestEdgeCases(t *testing.T) {
 			},
 		},
 		{name: "slice query params", route: func(d *specout.Generator) {
-			specout.Document(d, http.MethodGet, "/q", specout.Handler[SliceQueryReq, struct{}]{HandlerFunc: noop})
+			d.Document(http.MethodGet, "/q", specout.Handler[SliceQueryReq, struct{}]{HandlerFunc: noop})
 		}},
 		{name: "struct query param", route: func(d *specout.Generator) {
-			specout.Document(d, http.MethodGet, "/q", specout.Handler[StructQueryReq, struct{}]{HandlerFunc: noop})
+			d.Document(http.MethodGet, "/q", specout.Handler[StructQueryReq, struct{}]{HandlerFunc: noop})
 		}},
 		{name: "query+json both", route: func(d *specout.Generator) {
-			specout.Document(d, http.MethodPost, "/q", specout.Handler[BothTagReq, struct{}]{HandlerFunc: noop})
+			d.Document(http.MethodPost, "/q", specout.Handler[BothTagReq, struct{}]{HandlerFunc: noop})
 		}},
 		{name: "public without auth", route: func(d *specout.Generator) {
-			specout.Document(d, http.MethodGet, "/p", specout.Handler[struct{}, Alpha]{HandlerFunc: noop, Public: true})
+			d.Document(http.MethodGet, "/p", specout.Handler[struct{}, Alpha]{HandlerFunc: noop, Public: true})
 		}},
 		{name: "weird statuses", route: func(d *specout.Generator) {
-			specout.Document(d, http.MethodGet, "/s", specout.Handler[struct{}, Alpha]{
+			d.Document(http.MethodGet, "/s", specout.Handler[struct{}, Alpha]{
 				HandlerFunc: noop,
-				Responses:   []specout.Response{{Status: 304}, {Status: 599}, {Status: 0}},
+				Responses:   []specout.Response{{Status: 304}, {Status: 599}, {Key: "default"}},
 			})
 		}},
 		{name: "path wildcard param", route: func(d *specout.Generator) {
-			specout.Document(d, http.MethodGet, "/files/{path...}", specout.Handler[WildcardReq, struct{}]{HandlerFunc: noop})
+			d.Document(http.MethodGet, "/files/{path...}", specout.Handler[WildcardReq, struct{}]{HandlerFunc: noop})
 		}},
 		{
 			name: "duplicate param name",
@@ -106,7 +106,7 @@ func TestEdgeCases(t *testing.T) {
 				type DupReq struct {
 					ID string `query:"id"`
 				}
-				specout.Document(d, http.MethodGet, "/things/{id}", specout.Handler[DupReq, struct{}]{HandlerFunc: noop})
+				d.Document(http.MethodGet, "/things/{id}", specout.Handler[DupReq, struct{}]{HandlerFunc: noop})
 			},
 			check: func(t *testing.T, doc map[string]any) {
 				t.Helper()
@@ -132,6 +132,6 @@ func TestEdgeCases(t *testing.T) {
 
 func TestUnregisteredUnionFailsClearly(t *testing.T) {
 	d := newGen()
-	specout.Document(d, http.MethodPost, "/u", specout.Handler[UnregisteredUnionReq, struct{}]{HandlerFunc: noop})
-	assert.PanicsWithValue(t, "specout: union variant a is not registered", func() { buildDoc(t, d) })
+	d.Document(http.MethodPost, "/u", specout.Handler[UnregisteredUnionReq, struct{}]{HandlerFunc: noop})
+	assert.PanicsWithValue(t, "specout: union variant \"a\" is not registered; call doc.Register[T](\"a\")", func() { buildDoc(t, d) })
 }

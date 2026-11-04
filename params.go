@@ -32,7 +32,7 @@ func pathParams(pattern string) []string {
 // paramTag returns the parameter location and tag value of a Req field:
 // query, header, cookie or path.
 func paramTag(f reflect.StructField) (string, string) {
-	for _, l := range []string{"query", "header", "cookie", pathLocation} {
+	for _, l := range []string{InQuery, InHeader, InCookie, pathLocation} {
 		if t := f.Tag.Get(l); t != "" {
 			return l, t
 		}
@@ -91,9 +91,12 @@ func (sr *schemaRegistry) taggedParams(req reflect.Type) []any {
 			key = strings.ToLower(key)
 		}
 		if name == "" || seen[key] {
-			panic("specout: empty or duplicate " + loc + " parameter " + name)
+			panic("specout: field " + f.Name + ": " + loc + " parameter name " + strconv.Quote(name) + " is empty or repeated")
 		}
 		seen[key] = true
+		if loc == InHeader {
+			checkHeaderParam(f, name)
+		}
 		params = append(params, sr.parameter(name, loc, f))
 	}
 	return params
@@ -112,6 +115,7 @@ func (sr *schemaRegistry) parameter(name, loc string, f reflect.StructField) *ob
 	p := newObj().set("name", name).set("in", loc).
 		set("required", loc == pathLocation || requiredParam(f)).set("schema", schema)
 	applyParamStyle(p, f, loc)
+	applyParamFlags(p, f, loc)
 	if desc := tagValue(f.Tag.Get("jsonschema"), "description"); desc != "" {
 		schema.Description = ""
 		p.set("description", desc)
@@ -121,9 +125,9 @@ func (sr *schemaRegistry) parameter(name, loc string, f reflect.StructField) *ob
 
 var parameterStyles = map[string][]string{
 	pathLocation: {"matrix", "label", "simple"},
-	"header":     {"simple"},
-	"cookie":     {"form"},
-	"query":      {"form", "spaceDelimited", "pipeDelimited", "deepObject"},
+	InHeader:     {"simple"},
+	InCookie:     {"form"},
+	InQuery:      {"form", "spaceDelimited", "pipeDelimited", styleDeepObject},
 }
 
 // applyParamStyle copies style= and explode= onto the parameter object. They
@@ -133,16 +137,45 @@ func applyParamStyle(p *obj, f reflect.StructField, loc string) {
 	tag := f.Tag.Get("jsonschema")
 	if st := tagValue(tag, "style"); st != "" {
 		if !slices.Contains(parameterStyles[loc], st) {
-			panic("specout: field " + f.Name + " has invalid " + loc + " parameter style=" + st)
+			panic("specout: field " + f.Name + ": style " + strconv.Quote(st) + " is not valid on a " + loc +
+				" parameter; use " + strings.Join(parameterStyles[loc], ", "))
 		}
 		p.set("style", st)
 	}
+	var explode *bool
 	if ex := tagValue(tag, "explode"); ex != "" {
 		b, err := strconv.ParseBool(ex)
 		if err != nil {
-			panic("specout: field " + f.Name + " has explode=" + ex + ", must be true or false")
+			panic("specout: field " + f.Name + ": explode=" + ex + " is not valid; use true or false")
 		}
 		p.set("explode", b)
+		explode = &b
+	}
+	checkStyleKind(f, tagValue(tag, "style"), explode)
+}
+
+// applyParamFlags copies the parameter keywords of the jsonschema tag onto the
+// parameter object. deprecated goes on the parameter, not on its schema.
+// allowEmptyValue and allowReserved exist on query parameters only.
+func applyParamFlags(p *obj, f reflect.StructField, loc string) {
+	tag := f.Tag.Get("jsonschema")
+	if slices.Contains(tagParts(tag), keyDeprecated) || tagValue(tag, keyDeprecated) == "true" {
+		p.set("deprecated", true)
+	}
+	for _, key := range []string{"allowEmptyValue", "allowReserved"} {
+		value := tagValue(tag, key)
+		if value == "" {
+			continue
+		}
+		on, err := strconv.ParseBool(value)
+		if err != nil {
+			panic("specout: field " + f.Name + ": " + key + "=" + value + " is not valid; use true or false")
+		}
+		if loc != InQuery {
+			panic("specout: field " + f.Name + ": " + key + " works only on a query parameter, and this is a " +
+				loc + " parameter")
+		}
+		p.set(key, on)
 	}
 }
 
@@ -195,14 +228,17 @@ func (sr *schemaRegistry) pathParamObjs(pattern string, req reflect.Type) []any 
 
 // Parameters have their own wire names; json:"-" only hides a body property.
 func (sr *schemaRegistry) reflectParam(f reflect.StructField) *jsonschema.Schema {
+	checkSchemaTag("field "+f.Name, f.Tag.Get("jsonschema"))
+	checkExtrasTag("field "+f.Name, f.Tag.Get("jsonschema_extras"))
 	var tag strings.Builder
 	for _, key := range []string{"jsonschema", "jsonschema_description", "jsonschema_extras"} {
 		tag.WriteString(key + ":" + strconv.Quote(f.Tag.Get(key)) + " ")
 	}
 	s := sr.propSchema(f.Type, reflect.StructTag(tag.String()))
 	if s == nil {
-		panic("specout: field " + f.Name + " has no parameter schema")
+		panic("specout: field " + f.Name + `: this parameter has no schema; remove jsonschema:"-"`)
 	}
+	fixFieldValues("field "+f.Name, s)
 	return s
 }
 

@@ -73,7 +73,7 @@ func TestClosedNullableAnonymousObjects(t *testing.T) {
 		Empty *struct{} `json:"empty"`
 	}
 	d := specout.New(specout.Config{Title: "t", Version: "1", ClosedSchemas: true})
-	specout.Document(d, http.MethodGet, "/x", specout.Handler[struct{}, response]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/x", specout.Handler[struct{}, response]{HandlerFunc: noop})
 	p := props(t, buildDoc(t, d), "response")
 	for _, name := range []string{"detail", "empty"} {
 		s := p[name].(map[string]any)
@@ -138,16 +138,16 @@ func TestRepeatedAnonymousFieldsKeepFixups(t *testing.T) {
 
 func TestOmittedRoutesDoNotReserveOperationIDs(t *testing.T) {
 	d := newGen()
-	specout.Document(d, http.MethodGet, "/files/{path...}", okGet.WithOperationID("same"))
-	specout.Document(d, http.MethodGet, "/items", okGet.WithOperationID("same"))
+	d.Document(http.MethodGet, "/files/{path...}", okGet.WithOperationID("same"))
+	d.Document(http.MethodGet, "/items", okGet.WithOperationID("same"))
 	assert.Equal(t, []string{"/items"}, keys(docPaths(t, d)))
 }
 
 func TestDefaultResponseWithCoverageStatusAllowsOtherCodes(t *testing.T) {
 	d := newGen()
-	specout.Document(d, http.MethodGet, "/x", okGet.WithResponse(specout.Response{Key: "default", Status: 404}))
+	d.Document(http.MethodGet, "/x", okGet.WithResponse(specout.Response{Key: "default", Status: 404}))
 	key := specout.NewRouteKey(http.MethodGet, "/x")
-	assert.Equal(t, map[int]bool{404: true}, declaredStatuses(t, d)[key])
+	assert.Equal(t, map[int]bool{204: true, 404: true}, declaredStatuses(t, d)[key], "a default response keeps the 204")
 	assert.True(t, specStatuses(t, d)[key][0])
 	assert.Contains(t, opOf(t, buildDoc(t, d), "/x", "get")["responses"], "default")
 }
@@ -198,7 +198,7 @@ func TestNamedScalarCollectionKeepsSchemaName(t *testing.T) {
 	type labels []string
 	d := newGen()
 	d.SchemaName[labels]("Labels")
-	specout.Document(d, http.MethodGet, "/x", specout.Handler[struct{}, labels]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/x", specout.Handler[struct{}, labels]{HandlerFunc: noop})
 	s := componentsSchema(t, buildDoc(t, d), "Labels")
 	assert.Equal(t, "array", s["type"])
 	assert.Equal(t, map[string]any{"type": "string"}, s["items"])
@@ -268,24 +268,20 @@ func TestMisusedResponseFieldsFail(t *testing.T) {
 		h          specout.Handler[errBody, specout.NoContent]
 	}{
 		{
-			"both content type fields", "specout: Response sets both ContentType and ContentTypes; set one",
-			post.WithResponse(specout.Response{Status: 200, Type: errBody{}, ContentType: "application/pdf", ContentTypes: []string{"application/xml"}}),
-		},
-		{
-			"empty response media type", "specout: Response.ContentTypes has an empty media type",
+			"empty response media type", "specout: POST /x: response 200: ContentTypes has an empty media type",
 			post.WithResponse(specout.Response{Status: 200, Type: errBody{}, ContentTypes: []string{""}}),
 		},
-		{"empty request media type", "specout: RequestContentTypes has an empty media type", post.WithRequestContentTypes("")},
+		{"empty request media type", "specout: POST /x: Request: ContentTypes has an empty media type", post.WithRequest(specout.Request{ContentTypes: []string{""}})},
 		{
-			"empty header name", `specout: empty or duplicate response header ""`,
+			"empty header name", `specout: POST /x: response 204: a Header needs a Name`,
 			post.WithResponse(specout.Response{Status: 204, Headers: []specout.Header{{}}}),
 		},
 		{
-			"duplicate header name", `specout: empty or duplicate response header "x-id"`,
+			"duplicate header name", `specout: POST /x: response 204: header "x-id" is repeated; header names ignore case`,
 			post.WithResponse(specout.Response{Status: 204, Headers: []specout.Header{{Name: "X-Id"}, {Name: "x-id"}}}),
 		},
 		{
-			"reflect.Type as a Type", "specout: a Type field takes a value such as Error{}, not a reflect.Type",
+			"reflect.Type as a Type", "specout: POST /x: response 404: a Type field takes a value such as Problem{}, not a reflect.Type",
 			post.WithResponse(specout.Response{Status: 404, Type: reflect.TypeFor[errBody]()}),
 		},
 	} {
@@ -307,7 +303,7 @@ func TestNullableAnonymousUnion(t *testing.T) {
 		d := specout.New(specout.Config{Title: "t", Version: "1", ClosedSchemas: closed})
 		d.Register[unionEmail]("email")
 		d.Register[unionSlack]("slack")
-		specout.Document(d, http.MethodGet, "/x", specout.Handler[struct{}, nullableUnionHolder]{HandlerFunc: noop})
+		d.Document(http.MethodGet, "/x", specout.Handler[struct{}, nullableUnionHolder]{HandlerFunc: noop})
 		event := props(t, buildDoc(t, d), "nullableUnionHolder")["event"].(map[string]any)
 		assert.Contains(t, event["oneOf"], map[string]any{"type": "null"})
 		assert.NotContains(t, event, "type")
@@ -329,7 +325,7 @@ func TestRecursiveParameterUsesResolvableComponents(t *testing.T) {
 	}
 	d := newGen()
 	d.SchemaName[recursiveParameter]("FilterNode")
-	specout.Document(d, http.MethodGet, "/x", specout.Handler[request, specout.NoContent]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/x", specout.Handler[request, specout.NoContent]{HandlerFunc: noop})
 	doc := buildDoc(t, d)
 	for _, ref := range componentRefs(doc) {
 		assert.Contains(t, schemas(t, doc), strings.TrimPrefix(ref, "#/components/schemas/"))
@@ -383,9 +379,9 @@ type swappedFormFields struct {
 func TestFormRenamesPreserveSharedFields(t *testing.T) {
 	d := newGen()
 	handler := specout.Handler[swappedFormFields, swappedFormFields]{HandlerFunc: noop}.
-		WithRequestContentTypes("application/json", "application/x-www-form-urlencoded")
-	specout.Document(d, http.MethodPost, "/a", handler)
-	specout.Document(d, http.MethodPost, "/b", handler)
+		WithRequest(specout.Request{ContentTypes: []string{"application/json", "application/x-www-form-urlencoded"}})
+	d.Document(http.MethodPost, "/a", handler)
+	d.Document(http.MethodPost, "/b", handler)
 	doc := buildDoc(t, d)
 	for _, path := range []string{"/a", "/b"} {
 		content := opOf(t, doc, path, "post")["requestBody"].(map[string]any)["content"].(map[string]any)
@@ -409,9 +405,9 @@ func TestDuplicateFormNamesFail(t *testing.T) {
 		A string `form:"value" json:"a"`
 		B int    `form:"value" json:"b"`
 	}
-	assert.PanicsWithValue(t, "specout: duplicate form field value", func() {
+	assert.PanicsWithValue(t, "specout: POST /x: two fields have the form name \"value\"; change one form tag", func() {
 		docOf(t, http.MethodPost, "/x", specout.Handler[request, specout.NoContent]{HandlerFunc: noop}.
-			WithRequestContentTypes("application/x-www-form-urlencoded"))
+			WithRequest(specout.Request{ContentTypes: []string{"application/x-www-form-urlencoded"}}))
 	})
 }
 
@@ -422,7 +418,7 @@ func TestFormDashFieldLeavesTheFormSchema(t *testing.T) {
 		Secret string `form:"-"    json:"secret"`
 	}
 	doc := docOf(t, http.MethodPost, "/x", specout.Handler[request, specout.NoContent]{HandlerFunc: noop}.
-		WithRequestContentTypes("application/json", "application/x-www-form-urlencoded"))
+		WithRequest(specout.Request{ContentTypes: []string{"application/json", "application/x-www-form-urlencoded"}}))
 	content := opOf(t, doc, "/x", "post")["requestBody"].(map[string]any)["content"].(map[string]any)
 	form := content["application/x-www-form-urlencoded"].(map[string]any)["schema"].(map[string]any)
 	assert.Equal(t, []string{"name"}, keys(form["properties"].(map[string]any)))
@@ -472,7 +468,7 @@ func TestSchemaNamePointerOverridesAreDeterministic(t *testing.T) {
 		d := newGen()
 		d.SchemaName[recursiveParameter]("Previous")
 		d.SchemaName[*recursiveParameter]("Current")
-		specout.Document(d, http.MethodGet, "/x", specout.Handler[struct{}, recursiveParameter]{HandlerFunc: noop})
+		d.Document(http.MethodGet, "/x", specout.Handler[struct{}, recursiveParameter]{HandlerFunc: noop})
 		doc := buildDoc(t, d)
 		assert.Contains(t, schemas(t, doc), "Current")
 		assert.NotContains(t, schemas(t, doc), "Previous")
@@ -497,8 +493,8 @@ func TestServeKeepsBuildErrorAndHidesIt(t *testing.T) {
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 		assert.NotContains(t, w.Body.String(), "secret")
 	}
-	assert.Equal(t, 1, strings.Count(logs.String(), "never resolved"), "one build, one log line: %s", logs.String())
-	wantBuildErr(t, d, "never resolved")
+	assert.Equal(t, 1, strings.Count(logs.String(), "without Adopt"), "one build, one log line: %s", logs.String())
+	wantBuildErr(t, d, "cannot read the full path of a chi route without Adopt")
 
 	require.NoError(t, specout.Chi(d, r).Adopt())
 	w := serve()
@@ -510,10 +506,10 @@ func TestServeKeepsBuildErrorAndHidesIt(t *testing.T) {
 // request gets a 500 without the panic text, the log gets it once with its
 // stack, and the build does not run again. WriteJSON still panics.
 func TestServeKeepsBuildPanic(t *testing.T) {
-	const want = "specout: union variant a is not registered"
+	const want = "specout: union variant \"a\" is not registered; call doc.Register[T](\"a\")"
 	logs := captureLog(t)
 	d := newGen()
-	specout.Document(d, http.MethodPost, "/u", specout.Handler[UnregisteredUnionReq, struct{}]{HandlerFunc: noop})
+	d.Document(http.MethodPost, "/u", specout.Handler[UnregisteredUnionReq, struct{}]{HandlerFunc: noop})
 	for range 3 {
 		w := httptest.NewRecorder()
 		require.NotPanics(t, func() {
@@ -573,4 +569,232 @@ func TestAdoptAcceptsUncomparableChiRouter(t *testing.T) {
 		require.NoError(t, specout.Chi(d, other).Adopt())
 	})
 	assert.ElementsMatch(t, []string{"/x", "/y"}, keys(docPaths(t, d)))
+}
+
+// The tag parser does not trim spaces, so a keyword next to ", " would drop
+// its rule with no message. A known keyword with no value also panics.
+func TestSchemaTagSpacesAndMissingValuesPanic(t *testing.T) {
+	type spaced struct {
+		Age int `json:"age" jsonschema:"required, minimum=1"`
+	}
+	type bare struct {
+		Name string `json:"name" jsonschema:"minLength"`
+	}
+	assert.Contains(t, panicMessage(t, func() {
+		docOf(t, http.MethodPost, "/x", specout.Handler[spaced, job]{HandlerFunc: noop})
+	}), `jsonschema keyword " minimum" starts or ends with a space; remove the space`)
+	assert.Contains(t, panicMessage(t, func() {
+		docOf(t, http.MethodPost, "/x", specout.Handler[bare, job]{HandlerFunc: noop})
+	}), `jsonschema keyword "minLength" has no value; write minLength=<value>`)
+}
+
+// A Req with parameter fields has a body type that specout builds. A tag
+// problem names the user's type and field, not the built type.
+func TestSplitBodyTagErrorNamesTheUserType(t *testing.T) {
+	type mixed struct {
+		ID   string `path:"id"`
+		Name string `json:"name" jsonschema:"minLenght=1"`
+	}
+	msg := panicMessage(t, func() {
+		docOf(t, http.MethodPost, "/x/{id}", specout.Handler[mixed, job]{HandlerFunc: noop})
+	})
+	assert.Contains(t, msg, `specout_test.mixed field Name: jsonschema keyword "minLenght" is not known`)
+	assert.NotContains(t, msg, "Field1")
+}
+
+// A request example has the shape of the body on each media type: no
+// parameter fields, no File fields, and form names on a form.
+func TestRequestExamplesMatchTheBodySchema(t *testing.T) {
+	type lamp struct {
+		ID   string `path:"id"`
+		Q    string `query:"q"`
+		Name string `json:"name"`
+	}
+	doc := docOf(t, http.MethodPost, "/items/{id}", specout.Handler[lamp, job]{
+		HandlerFunc: noop, Request: specout.Request{Example: lamp{ID: "1", Q: "z", Name: "Lamp"}},
+	})
+	media := child(t, opOf(t, doc, "/items/{id}", "post"), "requestBody", "content", "application/json")
+	assert.Equal(t, map[string]any{"name": "Lamp"}, media["example"])
+
+	type upload struct {
+		Name   string       `form:"display_name" json:"name"`
+		Secret string       `form:"-"            json:"secret"`
+		Avatar specout.File `json:"avatar"`
+	}
+	value := upload{Name: "Lamp", Secret: "s"}
+	doc = docOf(t, http.MethodPost, "/upload", specout.Handler[upload, job]{
+		HandlerFunc: noop, Request: specout.Request{
+			ContentTypes: []string{"multipart/form-data", "multipart/mixed"},
+			Examples:     map[string]specout.Example{"one": {Value: value}},
+		},
+	})
+	content := child(t, opOf(t, doc, "/upload", "post"), "requestBody", "content")
+	assert.Equal(t, map[string]any{"display_name": "Lamp"}, child(t, content, "multipart/form-data", "examples", "one")["value"])
+	assert.Equal(t, map[string]any{"name": "Lamp", "secret": "s"}, child(t, content, "multipart/mixed", "examples", "one")["value"])
+
+	assert.Contains(t, panicMessage(t, func() {
+		newGen().Document(http.MethodPost, "/x", specout.Handler[job, job]{
+			HandlerFunc: noop, Request: specout.Request{Examples: map[string]specout.Example{"a": {Summary: "nothing"}}},
+		})
+	}), `example "a" has no value; set Value or ExternalValue`)
+}
+
+// A form media type with parameters is still a form. Another multipart type
+// names its fields by their JSON names, so its encoding does too.
+func TestEncodingFollowsTheMediaType(t *testing.T) {
+	type note struct {
+		Name string `form:"title" json:"name"`
+	}
+	form := "application/x-www-form-urlencoded; charset=utf-8"
+	doc := docOf(t, http.MethodPost, "/x", specout.Handler[note, job]{HandlerFunc: noop, Request: specout.Request{
+		ContentTypes: []string{form}, Encoding: map[string]specout.Encoding{"title": {Style: "form"}},
+	}})
+	media := child(t, opOf(t, doc, "/x", "post"), "requestBody", "content", form)
+	assert.Contains(t, child(t, media, "encoding"), "title")
+
+	mixed := func(name string) func() {
+		return func() {
+			docOf(t, http.MethodPost, "/x", specout.Handler[note, job]{HandlerFunc: noop, Request: specout.Request{
+				ContentTypes: []string{"multipart/mixed"}, Encoding: map[string]specout.Encoding{name: {ContentType: "text/plain"}},
+			}})
+		}
+	}
+	assert.NotPanics(t, mixed("name"))
+	assert.Contains(t, panicMessage(t, mixed("title")), `"title": the multipart/mixed body has no such field, only name`)
+}
+
+// An escaped comma belongs to the value, so it cannot set a flag.
+func TestEscapedCommasDoNotSetFlags(t *testing.T) {
+	type flags struct {
+		Q    string `jsonschema:"description=Not\\,deprecated" query:"q"`
+		Name string `json:"name"                               jsonschema:"description=Not\\,deprecated"`
+		Size int    `json:"size"                               jsonschema:"description=Use\\,enum=1|2"`
+	}
+	doc := docOf(t, http.MethodPost, "/x", specout.Handler[flags, job]{HandlerFunc: noop})
+	q := paramsOf(t, opOf(t, doc, "/x", "post"))["q"]
+	assert.NotContains(t, q, "deprecated")
+	assert.Equal(t, "Not,deprecated", q["description"])
+	properties := componentsSchema(t, doc, "flagsBody")["properties"].(map[string]any)
+	assert.NotContains(t, properties["name"], "deprecated")
+	assert.NotContains(t, properties["size"], "enum")
+}
+
+// Each server variable fills a placeholder of the URL, and each placeholder
+// needs a variable. An empty Default is valid.
+func TestServerVariablesMatchTheURL(t *testing.T) {
+	config := func(s specout.Server) func() {
+		return func() { specout.New(specout.Config{Title: "t", Version: "1", Servers: []specout.Server{s}}) }
+	}
+	url := "https://{region}.example.com"
+	assert.Contains(t, panicMessage(t, config(specout.Server{URL: url, Variables: map[string]specout.ServerVariable{
+		"regoin": {Default: "eu"},
+	}})), "the URL has {region}, but Variables does not declare it")
+	assert.Contains(t, panicMessage(t, config(specout.Server{URL: url, Variables: map[string]specout.ServerVariable{
+		"region": {Default: "eu"}, "regoin": {},
+	}})), `variable "regoin" has no {regoin} in the URL; did you mean "region"?`)
+
+	d := specout.New(specout.Config{Title: "t", Version: "1", Servers: []specout.Server{{
+		URL: "https://api.example.com{basePath}", Variables: map[string]specout.ServerVariable{"basePath": {}},
+	}}})
+	d.Document(http.MethodGet, "/x", okGet)
+	server := buildDoc(t, d)["servers"].([]any)[0].(map[string]any)
+	assert.Equal(t, map[string]any{"basePath": map[string]any{"default": ""}}, server["variables"])
+}
+
+// An oauth2 scope must be declared by a flow of its scheme. Other types take
+// any scopes, because they are roles. A scheme field that the Type does not use
+// panics.
+func TestSecurityScopesAndSchemeFieldsAreChecked(t *testing.T) {
+	oauth := specout.OAuth2("oauth", map[string]specout.OAuth2Flow{
+		"clientCredentials": {TokenURL: coverageFlowURL, Scopes: map[string]string{"read": "Read access"}},
+	})
+	oidc := specout.OpenIDConnect("oidc", "https://example.com/.well-known/openid-configuration")
+	d := specout.New(specout.Config{Title: "t", Version: "1", Auth: []specout.AuthScheme{oauth, oidc}})
+	assert.Contains(t, panicMessage(t, func() {
+		d.Document(http.MethodGet, "/x", specout.Get[job]{HandlerFunc: noop, Security: []specout.Security{oauth.Require("raed")}})
+	}), `Security asks for scope "raed" of scheme "oauth", but no flow of it declares that scope; did you mean "read"?`)
+	d.Document(http.MethodGet, "/y", specout.Get[job]{HandlerFunc: noop, Security: []specout.Security{oidc.Require("admin")}})
+	buildDoc(t, d)
+
+	for want, a := range map[string]specout.AuthScheme{
+		`Config.Auth "k": BearerFormat is for type http, and this scheme is apiKey; remove BearerFormat`: {
+			Name: "k", Type: "apiKey", Key: "X-Key", In: specout.InHeader, BearerFormat: "JWT",
+		},
+		`Config.Auth "m": Scheme is for type http, and this scheme is mutualTLS; remove Scheme`: {
+			Name: "m", Type: "mutualTLS", Scheme: "basic",
+		},
+	} {
+		assert.Contains(t, panicMessage(t, func() {
+			specout.New(specout.Config{Title: "t", Version: "1", Auth: []specout.AuthScheme{a}})
+		}), want)
+	}
+}
+
+// Raw applies last, so a Raw key that replaces a typed field that is also set
+// would drop the typed value with no message.
+func TestRawCannotReplaceATypedField(t *testing.T) {
+	d := specout.New(specout.Config{Title: "t", Version: "1", Auth: []specout.AuthScheme{specout.Bearer}})
+	for want, h := range map[string]specout.Handler[job, job]{
+		`Raw key "security" replaces Security or Public; set one of them`: {
+			Security: []specout.Security{specout.Bearer.Require()}, Raw: map[string]any{"security": []any{}},
+		},
+		`Raw key "requestBody" replaces Request; set one of them`: {
+			Request: specout.Request{Description: "d"}, Raw: map[string]any{"requestBody": map[string]any{}},
+		},
+		`Raw key "summary" replaces Summary; set one of them`: {Summary: "s", Raw: map[string]any{"summary": "t"}},
+		`response 200: Raw key "content" replaces ContentTypes, Example or Examples; set one of them`: {
+			Responses: []specout.Response{{Status: http.StatusOK, Example: job{ID: "1"}, Raw: map[string]any{"content": map[string]any{}}}},
+		},
+	} {
+		h.HandlerFunc = noop
+		assert.Contains(t, panicMessage(t, func() { d.Document(http.MethodPost, "/x", h) }), want)
+	}
+}
+
+// A build reports one problem once, and a link waits for the routes that did
+// not resolve: their operationIds are not known yet.
+func TestBuildReportsEachProblemOnce(t *testing.T) {
+	d := newGen()
+	d.Document(http.MethodGet, "/x", specout.Get[job]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/x", specout.Get[job]{HandlerFunc: noop})
+	err := d.Build()
+	require.ErrorContains(t, err, "GET /x: duplicate route")
+	assert.NotContains(t, err.Error(), "duplicate operationId")
+
+	d = newGen()
+	specout.Chi(d, chi.NewRouter()).Get("/jobs/{id}", specout.Get[job]{HandlerFunc: noop})
+	d.Document(http.MethodPost, "/jobs", specout.Get[job]{HandlerFunc: noop, Responses: []specout.Response{{
+		Status: http.StatusOK, Links: map[string]specout.Link{"status": {OperationID: "getJobsId"}},
+	}}})
+	err = d.Build()
+	require.ErrorContains(t, err, "GET /jobs/{id}: specout cannot read the full path of a chi route without Adopt")
+	assert.NotContains(t, err.Error(), "no operation has operationId")
+}
+
+// A callback message names the route that the callback belongs to. One
+// Callback value with an OperationID cannot go on two routes, and the message
+// names both.
+func TestCallbackMessagesNameTheRoute(t *testing.T) {
+	url := "{$request.body#/url}"
+	bad := specout.NewCallback(http.MethodPost, "done", url, specout.Event[job]{Security: []specout.Security{{Scheme: "nope"}}})
+	assert.Contains(t, panicMessage(t, func() {
+		newGen().Document(http.MethodPost, "/a", specout.Get[job]{HandlerFunc: noop, Callbacks: []specout.Callback{bad}})
+	}), `specout: POST /a: POST callback done: Security names scheme "nope"`)
+
+	type unencodable struct {
+		Ch chan int `json:"ch"`
+	}
+	d := newGen()
+	d.Document(http.MethodPost, "/a", specout.Get[job]{HandlerFunc: noop, Callbacks: []specout.Callback{
+		specout.NewCallback(http.MethodPost, "done", url, specout.Event[unencodable]{}),
+	}})
+	assert.Equal(t, `specout: POST /a: POST callback done: JSON cannot encode chan int; tag its field json:"-"`,
+		panicMessage(t, func() { _ = d.Build() }))
+
+	shared := specout.NewCallback(http.MethodPost, "done", url, specout.Event[job]{OperationID: "onDone"})
+	d = newGen()
+	d.Document(http.MethodPost, "/a", specout.Get[job]{HandlerFunc: noop, Callbacks: []specout.Callback{shared}})
+	d.Document(http.MethodPost, "/b", specout.Get[job]{HandlerFunc: noop, Callbacks: []specout.Callback{shared}})
+	wantBuildErr(t, d, `specout: POST /b: POST callback done: duplicate operationId "onDone", also on POST /a: `+
+		`POST callback done; a Callback on several routes cannot set OperationID`)
 }

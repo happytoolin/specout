@@ -80,9 +80,9 @@ func TestLaunchFormUnionAndParameterUnion(t *testing.T) {
 	d := newGen()
 	d.Register[schemaEmail]("email")
 	d.Register[schemaSlack]("slack")
-	specout.Document(d, http.MethodPost, "/form", specout.Handler[form, form]{HandlerFunc: noop}.
-		WithRequestContentTypes("application/x-www-form-urlencoded"))
-	specout.Document(d, http.MethodGet, "/query", specout.Handler[request, specout.NoContent]{HandlerFunc: noop})
+	d.Document(http.MethodPost, "/form", specout.Handler[form, form]{HandlerFunc: noop}.
+		WithRequest(specout.Request{ContentTypes: []string{"application/x-www-form-urlencoded"}}))
+	d.Document(http.MethodGet, "/query", specout.Handler[request, specout.NoContent]{HandlerFunc: noop})
 	doc := buildDoc(t, d)
 	body := opOf(t, doc, "/form", "post")["requestBody"].(map[string]any)["content"].(map[string]any)["application/x-www-form-urlencoded"].(map[string]any)["schema"]
 	parameter := paramsOf(t, opOf(t, doc, "/query", "get"))["filter"]["schema"]
@@ -112,7 +112,7 @@ func TestLaunchRawStatusRangesAndDefaults(t *testing.T) {
 		map[string]map[string]string{"201": {"description": "created"}, "4XX": {"description": "client error"}, "default": {"description": "other"}},
 	} {
 		d := specout.New(specout.Config{Title: "t", Version: "1", ErrorType: launchItem{}, DefaultErrors: []int{500}})
-		specout.Document(d, http.MethodGet, "/x", specout.Get[string]{HandlerFunc: noop, Raw: map[string]any{"responses": raw}})
+		d.Document(http.MethodGet, "/x", specout.Get[string]{HandlerFunc: noop, Raw: map[string]any{"responses": raw}})
 		doc := buildDoc(t, d)
 		assert.Len(t, opOf(t, doc, "/x", "get")["responses"], 3)
 		key := specout.NewRouteKey(http.MethodGet, "/x")
@@ -131,8 +131,8 @@ func TestLaunchRawStatusRangesAndDefaults(t *testing.T) {
 func TestLaunchRawResponseMustBeAnObject(t *testing.T) {
 	d := newGen()
 	raw := map[string]any{"200": "ok"}
-	assert.PanicsWithValue(t, "specout: Raw.responses 200 must be a Response object", func() {
-		specout.Document(d, http.MethodGet, "/x", specout.Get[string]{HandlerFunc: noop, Raw: map[string]any{"responses": raw}})
+	assert.PanicsWithValue(t, "specout: GET /x: Raw.responses: 200 must be a Response object", func() {
+		d.Document(http.MethodGet, "/x", specout.Get[string]{HandlerFunc: noop, Raw: map[string]any{"responses": raw}})
 	})
 }
 
@@ -143,20 +143,20 @@ func TestLaunchOperationsThatBreakTheDocument(t *testing.T) {
 		h          specout.Get[string]
 	}{
 		{
-			"every response omitted", "specout: GET /x omits every response; declare at least one",
+			"every response omitted", "specout: GET /x: every response is omitted; declare at least one",
 			get.WithResponse(specout.Response{Status: http.StatusOK, Omit: true}),
 		},
 		{
-			"unknown operation Raw key", `specout: Raw key "securitySchemes" is not an OpenAPI field or an x- extension`,
+			"unknown operation Raw key", `specout: GET /x: Raw key "securitySchemes" is not allowed here; start an extension with x-`,
 			get.WithRaw(map[string]any{"securitySchemes": []any{}}),
 		},
 		{
-			"unknown response Raw key", `specout: Raw key "foo" is not an OpenAPI field or an x- extension`,
+			"unknown response Raw key", `specout: GET /x: response 200: Raw key "foo" is not allowed here; start an extension with x-`,
 			get.WithResponse(specout.Response{Status: http.StatusOK, Raw: map[string]any{"foo": 1}}),
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.PanicsWithValue(t, tc.want, func() { specout.Document(newGen(), http.MethodGet, "/x", tc.h) })
+			assert.PanicsWithValue(t, tc.want, func() { newGen().Document(http.MethodGet, "/x", tc.h) })
 		})
 	}
 }
@@ -169,7 +169,7 @@ func TestBadRouteDataFailsAtRegistration(t *testing.T) {
 	bad := specout.Get[string]{HandlerFunc: noop}.WithResponse(specout.Response{
 		Status: http.StatusOK, Headers: []specout.Header{{Name: "X-Id"}, {Name: "x-id"}},
 	})
-	assert.PanicsWithValue(t, `specout: empty or duplicate response header "x-id"`, func() {
+	assert.PanicsWithValue(t, `specout: GET /x: response 200: header "x-id" is repeated; header names ignore case`, func() {
 		specout.Std(d, mux).Get("/x", bad)
 	})
 	rr := httptest.NewRecorder()
@@ -181,9 +181,9 @@ func TestBadRouteDataFailsAtRegistration(t *testing.T) {
 
 func TestLaunchRawOperationIDMustBeUnique(t *testing.T) {
 	d := newGen()
-	specout.Document(d, http.MethodGet, "/a", specout.Get[string]{HandlerFunc: noop, Raw: map[string]any{"operationId": "getB"}})
-	specout.Document(d, http.MethodGet, "/b", specout.Get[string]{HandlerFunc: noop})
-	wantBuildErr(t, d, "specout: duplicate operationId getB (GET /a and GET /b)")
+	d.Document(http.MethodGet, "/a", specout.Get[string]{HandlerFunc: noop, Raw: map[string]any{"operationId": "getB"}})
+	d.Document(http.MethodGet, "/b", specout.Get[string]{HandlerFunc: noop})
+	wantBuildErr(t, d, `specout: GET /b: duplicate operationId "getB", also on GET /a`)
 }
 
 func TestLaunchUnionNameCollisionWithNestedComponent(t *testing.T) {
@@ -193,8 +193,8 @@ func TestLaunchUnionNameCollisionWithNestedComponent(t *testing.T) {
 	d := newGen()
 	d.Register[schemaEmail]("email")
 	d.Register[schemaSlack]("slack")
-	specout.Document(d, http.MethodGet, "/union", specout.Get[launchEnvelope]{HandlerFunc: noop})
-	specout.Document(d, http.MethodGet, "/nested", specout.Get[response]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/union", specout.Get[launchEnvelope]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/nested", specout.Get[response]{HandlerFunc: noop})
 	doc := buildDoc(t, d)
 	schema := launchResponseSchema(t, doc, "/union", "get")
 	exportLaunchSamples(t, doc,

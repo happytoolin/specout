@@ -64,7 +64,7 @@ func (b *Router) Handle[Req, Res any](method, p string, h specout.Handler[Req, R
 	// until Bind returns: a registration that panics serves nothing, even
 	// when the caller recovers.
 	var bound atomic.Bool
-	specout.Bind(b.d, method, p, h, func(next http.Handler) string {
+	b.d.Bind(method, p, h, func(next http.Handler) string {
 		chain := make([]any, 0, len(m)+1)
 		for _, mw := range m {
 			chain = append(chain, mw)

@@ -1,6 +1,8 @@
 package specout
 
 import (
+	"cmp"
+	"errors"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -23,26 +25,31 @@ type routeSource interface {
 // patterns (chi groups) resolve to full at build time; absolute sources set
 // full at registration and are never touched by a walk.
 type routeRecord struct {
-	method          string
-	pattern         string // as passed at registration
-	full            string // resolved canonical path; absolute sources set it here
-	absolute        bool   // std mux, gorilla, Bind, Document: full is final
-	literalStars    bool   // std mux, gorilla and Bind treat stars outside parameters literally
-	byPath          bool   // Bind: the router table shows method and path, never the handler
-	catchAll        bool   // gorilla: a parameter regex can match a slash
-	req, res        reflect.Type
-	responses       []Response
-	tags            []string
-	summary         string
-	operationID     string
-	description     string
-	externalDocs    *ExternalDocs
-	reqContentTypes []string
-	raw             map[string]any
-	deprecated      bool
-	public          bool
-	fn              http.HandlerFunc
-	owner           *Generator // non-nil when the record is also the registered handler
+	method       string
+	pattern      string // as passed at registration
+	full         string // resolved canonical path; absolute sources set it here
+	absolute     bool   // std mux, gorilla, Bind, Document: full is final
+	literalStars bool   // std mux, gorilla and Bind treat stars outside parameters literally
+	byPath       bool   // Bind: the router table shows method and path, never the handler
+	catchAll     bool   // gorilla: a parameter regex can match a slash
+	req, res     reflect.Type
+	body         Request
+	responses    []Response
+	tags         []string
+	summary      string
+	operationID  string
+	description  string
+	externalDocs *ExternalDocs
+	security     []Security
+	servers      []Server
+	callbacks    []Callback
+	raw          map[string]any
+	deprecated   bool
+	public       bool
+	outgoing     bool         // webhook or callback: the API sends it, nothing serves it
+	parent       *routeRecord // callback: the operation that it belongs to
+	fn           http.HandlerFunc
+	owner        *Generator // non-nil when the record is also the registered handler
 }
 
 // ServeHTTP preserves the original handler while giving each registration a
@@ -53,7 +60,8 @@ func (rec *routeRecord) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (d *Generator) addRoute(rec routeRecord, bind func(*routeRecord)) {
 	if rec.fn == nil {
-		panic("specout: nil HandlerFunc registered for " + rec.method + " " + rec.pattern)
+		panic("specout: " + rec.label() +
+			": HandlerFunc is nil; set it, or use Webhook or NewCallback for a request that your API sends")
 	}
 	// Config cannot change after New, so the check needs no lock.
 	d.checkRoute(&rec)
@@ -117,9 +125,34 @@ func recOf[Req, Res any](h Handler[Req, Res]) routeRecord {
 		req: reflect.TypeFor[Req](), res: reflect.TypeFor[Res](),
 		responses: h.Responses, tags: h.Tags, summary: h.Summary,
 		operationID: h.OperationID, description: h.Description,
-		externalDocs: h.ExternalDocs, reqContentTypes: h.RequestContentTypes,
-		raw:        h.Raw,
+		externalDocs: h.ExternalDocs, body: h.Request, security: h.Security,
+		servers: h.Servers, callbacks: h.Callbacks, raw: h.Raw,
 		deprecated: h.Deprecated, public: h.Public, fn: h.HandlerFunc,
+	}
+}
+
+// describesRequestBody reports whether the route sets any request body field.
+func (rec *routeRecord) describesRequestBody() bool {
+	b := rec.body
+	return len(b.ContentTypes) > 0 || b.Description != "" || b.Optional ||
+		b.Example != nil || len(b.Examples) > 0 || len(b.Encoding) > 0
+}
+
+// label names the record in a message: its method, and its path or its name.
+// A callback also names the operation that it belongs to.
+func (rec *routeRecord) label() string {
+	own := rec.method + " " + cmp.Or(rec.full, rec.pattern)
+	if rec.parent != nil {
+		return rec.parent.label() + ": " + own
+	}
+	return own
+}
+
+// namePanic adds rec's label to the recovered panic v, when there is one. The
+// label is built only for a panic.
+func (rec *routeRecord) namePanic(v any) {
+	if v != nil {
+		addContext(rec.label(), v)
 	}
 }
 
@@ -152,6 +185,7 @@ func (d *Generator) walkHits(sources []routeSource) map[*routeRecord][]string {
 // mount added after a query must not silently leave the earlier path in place.
 func (d *Generator) pairPaths() error {
 	hits := d.walkHits(d.sources)
+	var errs []error
 	for _, rec := range d.records {
 		if rec.absolute {
 			continue
@@ -165,48 +199,48 @@ func (d *Generator) pairPaths() error {
 			rec.full = paths[0]
 		default:
 			slices.Sort(paths)
-			return fmt.Errorf(
-				"specout: %s %s is served at multiple paths: %s; adopt only the "+
+			errs = append(errs, fmt.Errorf(
+				"specout: %s %s: served at multiple paths: %s; adopt only the "+
 					"outermost router, or register each path with Document",
 				rec.method, rec.pattern, strings.Join(paths, ", "),
-			)
+			))
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
-// validateRecords checks the resolved records. First problem wins.
+// validateRecords checks the resolved records, and returns every problem.
 func (d *Generator) validateRecords() error {
 	claims := pathClaims{operations: map[string]string{}, templates: map[string]string{}}
+	var errs []error
+	var notAdopted []string
 	for _, rec := range d.records {
-		if err := d.checkResolved(rec); err != nil {
-			return err
-		}
-		if err := checkPathParams(rec); err != nil {
-			return err
-		}
-		if err := claims.claim(rec); err != nil {
-			return err
+		switch err := d.checkResolved(rec); {
+		case rec.full == "" && len(d.sources) == 0:
+			notAdopted = append(notAdopted, rec.method+" "+rec.pattern)
+		case err != nil:
+			errs = append(errs, err)
+		default:
+			errs = append(errs, checkPathParams(rec), claims.claim(rec))
 		}
 	}
-	return nil
+	if len(notAdopted) > 0 {
+		errs = append(errs, fmt.Errorf("specout: %s: specout cannot read the full path of a chi route without Adopt; "+
+			"call Adopt on the outermost chi router before Build", strings.Join(notAdopted, ", ")))
+	}
+	return errors.Join(errs...)
 }
 
-// checkResolved names a record that no router walk gave a full path.
+// checkResolved names a record that the walk of an adopted router did not
+// find. validateRecords reports the records of a generator with no adopted
+// router together.
 func (d *Generator) checkResolved(rec *routeRecord) error {
-	if rec.full != "" {
+	if rec.full != "" || len(d.sources) == 0 {
 		return nil
 	}
-	if len(d.sources) > 0 {
-		return fmt.Errorf(
-			"specout: %s %q is not served by any adopted router; a later route with the "+
-				"same method and path replaced it, or its router is not under the one passed to Adopt",
-			rec.method, rec.pattern,
-		)
-	}
 	return fmt.Errorf(
-		"specout: %s %q never resolved; adopt the outermost router "+
-			"(Adopt) or use Document",
+		"specout: %s %s: no adopted router serves it; a later route with the "+
+			"same method and path replaced it, or its router is not under the one passed to Adopt",
 		rec.method, rec.pattern,
 	)
 }
@@ -219,22 +253,24 @@ func checkPathParams(rec *routeRecord) error {
 	// an empty parameter name (/{} ) is not a legal OpenAPI path template.
 	// chi accepts the route, so fail here instead of emitting a broken path.
 	if strings.Contains(docPath(rec.full), "{}") {
-		return fmt.Errorf("specout: %s %q has an empty path parameter {}; give it a name", rec.method, rec.pattern)
+		return fmt.Errorf("specout: %s %s: empty path parameter {}; give it a name", rec.method, rec.pattern)
 	}
 	// /x/{{id}} and /x/{a{b}} balance their braces, and chi and gorilla accept
 	// them, but a template parameter name holds no brace.
 	if strings.ContainsAny(templateParamRe.ReplaceAllString(docPath(rec.full), ""), "{}") {
-		return fmt.Errorf("specout: %s %q has a brace inside a path parameter name", rec.method, rec.pattern)
+		return fmt.Errorf("specout: %s %s: a path parameter name has a brace in it; remove the brace",
+			rec.method, rec.pattern)
 	}
 	// one name for two segments gives the handler one value: chi returns the
 	// last, Fiber the first. chi rejects it in one pattern, not across Mount.
 	if name, ok := repeatedParam(docPath(rec.full)); ok {
-		return fmt.Errorf("specout: %s %q names the path parameter %q twice", rec.method, rec.pattern, name)
+		return fmt.Errorf("specout: %s %s: path parameter %q appears twice; give each one a different name",
+			rec.method, rec.pattern, name)
 	}
 	// chi reads {x*} as one segment named x*, not as a wildcard, but a * in
 	// the path would drop the route as a catch-all.
 	if name, ok := starredParam(docPath(rec.full)); ok {
-		return fmt.Errorf("specout: %s %q has a * in the path parameter name %q; "+
+		return fmt.Errorf("specout: %s %s: path parameter %q has a * in its name; "+
 			"it is not a wildcard there, so remove it", rec.method, rec.pattern, name)
 	}
 	// a Req field tagged path:"name" with no {name} in the pattern is a
@@ -242,12 +278,11 @@ func checkPathParams(rec *routeRecord) error {
 	// string.
 	if name, ok := strayPathField(rec.req, rec.full); ok {
 		return fmt.Errorf(
-			"specout: %s %q has a Req field tagged path:%q, but the pattern "+
-				"has no {%s}",
-			rec.method, rec.pattern, name, name,
+			"specout: %s %s: Req has a field tagged path:%q, but the pattern has no {%s}%s",
+			rec.method, rec.pattern, name, name, didYouMean(name, pathParams(rec.full)),
 		)
 	}
-	return nil
+	return checkRawParameters(rec)
 }
 
 // starredParam returns a path parameter name of p that holds a *. A
@@ -296,8 +331,8 @@ func (c *pathClaims) claim(rec *routeRecord) error {
 		hierarchy := pathParamRe.ReplaceAllString(documented, "{}")
 		if first, dup := c.templates[hierarchy]; dup && first != documented {
 			return fmt.Errorf(
-				"specout: equivalent templated paths %s and %s use different parameter names",
-				first, documented,
+				"specout: %s %s: path %s is the same path to OpenAPI, with other parameter names; use one name in both",
+				rec.method, documented, first,
 			)
 		}
 		c.templates[hierarchy] = documented
@@ -309,7 +344,7 @@ func (c *pathClaims) claim(rec *routeRecord) error {
 	key := documented + "|" + rec.method
 	if first, dup := c.operations[key]; dup {
 		return fmt.Errorf(
-			"specout: duplicate route %s %s (registered as %q and %q)%s",
+			"specout: %s %s: duplicate route, registered as %q and %q%s",
 			rec.method, documented, first, rec.pattern, endAnchorHint(first, rec.pattern),
 		)
 	}

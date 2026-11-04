@@ -16,7 +16,7 @@ import (
 func op[Req, Res any](id, summary, description string, tags []string, public bool, requestTypes []string, fn http.HandlerFunc, responses ...specout.Response) specout.Handler[Req, Res] {
 	return specout.Handler[Req, Res]{
 		OperationID: id, Summary: summary, Description: description, Tags: tags, Public: public,
-		RequestContentTypes: requestTypes, HandlerFunc: fn, Responses: append(responses, unexpected),
+		Request: specout.Request{ContentTypes: requestTypes}, HandlerFunc: fn, Responses: append(responses, unexpected),
 	}
 }
 
@@ -195,7 +195,7 @@ func userRoutes(b *specout.ChiRouter, s *store) {
 			writeJSON(w, 200, "logged in user session: "+name)
 		},
 		specout.Response{
-			Status: 200, ContentTypes: jsonOrXML, Raw: map[string]any{"description": "successful operation"},
+			Status: 200, ContentTypes: jsonOrXML, Description: "successful operation",
 			Headers: []specout.Header{
 				{Name: "X-Rate-Limit", Type: int32(0)},
 				{Name: "X-Expires-After", Type: time.Time{}},
