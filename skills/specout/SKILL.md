@@ -71,8 +71,9 @@ register documented endpoints through `specout.Std`. Use `doc.Bind` or
 
 ## Finish
 
-Run `go test ./...`. Run the repository's existing lint and OpenAPI validation
-commands. Add recorder verification only when tests already exercise live HTTP
+Call `doc.Build()` in a test, so that a bad document fails the test and not the
+first request. Run `go test ./...`. Run the repository's existing lint and
+OpenAPI validation commands. Add recorder verification only when tests already exercise live HTTP
 handlers. Do not add a new validator or snapshot system only for this change.
 
 Use the [project README](https://github.com/happytoolin/specout/blob/main/README.md)
