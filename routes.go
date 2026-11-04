@@ -46,7 +46,8 @@ type routeRecord struct {
 	raw          map[string]any
 	deprecated   bool
 	public       bool
-	outgoing     bool // webhook or callback: the API sends it, nothing serves it
+	outgoing     bool         // webhook or callback: the API sends it, nothing serves it
+	parent       *routeRecord // callback: the operation that it belongs to
 	fn           http.HandlerFunc
 	owner        *Generator // non-nil when the record is also the registered handler
 }
@@ -138,7 +139,22 @@ func (rec *routeRecord) describesRequestBody() bool {
 }
 
 // label names the record in a message: its method, and its path or its name.
-func (rec *routeRecord) label() string { return rec.method + " " + cmp.Or(rec.full, rec.pattern) }
+// A callback also names the operation that it belongs to.
+func (rec *routeRecord) label() string {
+	own := rec.method + " " + cmp.Or(rec.full, rec.pattern)
+	if rec.parent != nil {
+		return rec.parent.label() + ": " + own
+	}
+	return own
+}
+
+// namePanic adds rec's label to the recovered panic v, when there is one. The
+// label is built only for a panic.
+func (rec *routeRecord) namePanic(v any) {
+	if v != nil {
+		addContext(rec.label(), v)
+	}
+}
 
 // resolveLocked assigns every record a full path, then checks the result.
 // Caller holds d.mu.

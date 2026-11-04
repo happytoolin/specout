@@ -19,7 +19,7 @@ func desc(code int, description string) specout.Response {
 }
 
 func def(description string) specout.Response {
-	return specout.Response{Key: "default", Description: description}
+	return specout.Response{Key: "default", Type: struct{}{}, Description: description}
 }
 
 var (

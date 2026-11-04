@@ -3,6 +3,7 @@ package specout
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 )
@@ -61,22 +62,28 @@ func linkObj(where string, l Link) *obj {
 }
 
 // checkLinks fails when a link names an operationId that no operation has. It
-// runs at build, because the target can register after the link.
-func (d *Generator) checkLinks() error {
-	var ids []string
-	for rec := range d.operations() {
-		if id := emittedOperationID(rec); id != "" {
-			ids = append(ids, id)
-		}
+// runs at build, because the target can register after the link. ids holds the
+// operation of each operationId. A route that did not resolve has no derived
+// id, so a link to a missing id is not an error while such a route exists: the
+// resolve error comes first.
+func (d *Generator) checkLinks(ids map[string]*routeRecord) error {
+	if slices.ContainsFunc(d.records, func(rec *routeRecord) bool {
+		return rec.full == "" && emittedOperationID(rec) == ""
+	}) {
+		return nil
 	}
+	names := slices.Collect(maps.Keys(ids))
 	var errs []error
 	for rec := range d.operations() {
-		errs = append(errs, d.checkLinkTargets(rec, ids))
+		if slices.ContainsFunc(rec.responses, func(r Response) bool { return len(r.Links) > 0 }) {
+			errs = append(errs, d.checkLinkTargets(rec, names))
+		}
 	}
 	return errors.Join(errs...)
 }
 
-// checkLinkTargets checks the links of one operation's responses.
+// checkLinkTargets checks that each link of rec's responses names one of the
+// operationIds in ids.
 func (d *Generator) checkLinkTargets(rec *routeRecord, ids []string) error {
 	var errs []error
 	for _, e := range d.responsePlan(rec, false) {

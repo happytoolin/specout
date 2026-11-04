@@ -146,8 +146,9 @@ h := specout.Handler[importRequest, importResult]{
 ```
 
 Use `Request.Encoding` to describe the fields of a form or multipart body. Each key
-is a field name on the form, so a `form` tag replaces the JSON name. A key that is
-not a field panics, and so does a body that is not a form:
+is a field name on the form, so a `form` tag replaces the JSON name. Other
+multipart types, such as `multipart/mixed`, use the JSON names. A key that is not
+a field panics, and so does a body that is not a form:
 
 ```go
 h := specout.Handler[uploadRequest, uploadResult]{
@@ -222,8 +223,12 @@ h := specout.Handler[createRequest, item]{
 }
 ```
 
-An `Example` sets `Value` or `ExternalValue`, not both. For a parameter, use the
+An `Example` sets one of `Value` and `ExternalValue`. For a parameter, use the
 schema example: `jsonschema:"example=42"`.
+
+A request example can be a `Req` value. Each media type then gets the example in
+the shape of its body. specout drops the parameter fields and the `File` fields,
+and a form media type uses the `form` names.
 
 ## Binary and multiple response media types
 
@@ -267,7 +272,9 @@ specout.Response{
 ```
 
 Use `Response.Raw` for `x-` extensions, or to replace a whole field that specout
-writes:
+writes. `Raw` panics when the response also sets the typed form of that field:
+`Description`, `Headers`, or for `content` the `ContentTypes`, `Example` and
+`Examples` fields.
 
 ```go
 specout.Response{

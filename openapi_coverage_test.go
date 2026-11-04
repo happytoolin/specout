@@ -345,17 +345,17 @@ func TestBadCoverageDataPanics(t *testing.T) {
 		}
 	}
 	for want, call := range map[string]func(){
-		"sets both URL and Identifier":  config(specout.Config{License: &specout.License{Name: "a", URL: "u", Identifier: "i"}}),
-		"needs a Default":               config(specout.Config{Servers: []specout.Server{{URL: "u", Variables: map[string]specout.ServerVariable{"a": {}}}}}),
-		"Enum does not hold":            config(specout.Config{Servers: []specout.Server{{URL: "u", Variables: map[string]specout.ServerVariable{"a": {Default: "x", Enum: []string{"y"}}}}}}),
-		"http needs a Scheme":           config(specout.Config{Auth: []specout.AuthScheme{{Name: "a", Type: "http"}}}),
-		"BearerFormat needs the scheme": config(specout.Config{Auth: []specout.AuthScheme{{Name: "a", Type: "http", Scheme: "basic", BearerFormat: "JWT"}}}),
-		`Raw key "paths"`:               config(specout.Config{Raw: map[string]any{"paths": 1}}),
-		"does not declare":              route(specout.Handler[coverageItem, coverageItem]{Security: []specout.Security{{Scheme: "other"}}}),
-		"both Public and Security":      route(specout.Handler[coverageItem, coverageItem]{Public: true, Security: []specout.Security{{Scheme: "bearerAuth"}}}),
-		"sets both Example":             route(specout.Handler[coverageItem, coverageItem]{Request: specout.Request{Example: 1, Examples: map[string]specout.Example{"a": {}}}}),
-		"both Value and ExternalValue":  route(specout.Handler[coverageItem, coverageItem]{Request: specout.Request{Examples: map[string]specout.Example{"a": {Value: 1, ExternalValue: "u"}}}}),
-		"cannot be encoded":             route(specout.Handler[coverageItem, coverageItem]{Request: specout.Request{Example: make(chan int)}}),
+		"sets both URL and Identifier":       config(specout.Config{License: &specout.License{Name: "a", URL: "u", Identifier: "i"}}),
+		`variable "a" has no {a} in the URL`: config(specout.Config{Servers: []specout.Server{{URL: "u", Variables: map[string]specout.ServerVariable{"a": {}}}}}),
+		"Enum does not hold":                 config(specout.Config{Servers: []specout.Server{{URL: "u{a}", Variables: map[string]specout.ServerVariable{"a": {Default: "x", Enum: []string{"y"}}}}}}),
+		"http needs a Scheme":                config(specout.Config{Auth: []specout.AuthScheme{{Name: "a", Type: "http"}}}),
+		"BearerFormat needs the scheme":      config(specout.Config{Auth: []specout.AuthScheme{{Name: "a", Type: "http", Scheme: "basic", BearerFormat: "JWT"}}}),
+		`Raw key "paths"`:                    config(specout.Config{Raw: map[string]any{"paths": 1}}),
+		"does not declare":                   route(specout.Handler[coverageItem, coverageItem]{Security: []specout.Security{{Scheme: "other"}}}),
+		"both Public and Security":           route(specout.Handler[coverageItem, coverageItem]{Public: true, Security: []specout.Security{{Scheme: "bearerAuth"}}}),
+		"sets both Example":                  route(specout.Handler[coverageItem, coverageItem]{Request: specout.Request{Example: 1, Examples: map[string]specout.Example{"a": {}}}}),
+		"both Value and ExternalValue":       route(specout.Handler[coverageItem, coverageItem]{Request: specout.Request{Examples: map[string]specout.Example{"a": {Value: 1, ExternalValue: "u"}}}}),
+		"cannot be encoded":                  route(specout.Handler[coverageItem, coverageItem]{Request: specout.Request{Example: make(chan int)}}),
 		"sets an example, but this response has no body": route(specout.Handler[coverageItem, coverageItem]{
 			Responses: []specout.Response{{Status: http.StatusNoContent, Example: 1}},
 		}),

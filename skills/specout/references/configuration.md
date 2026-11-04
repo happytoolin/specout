@@ -58,7 +58,7 @@ doc := specout.New(specout.Config{
 | `TermsOfService` | Adds the terms URL. |
 | `Contact` | Adds contact name, URL, and email when set. |
 | `License` | Adds license name, and a URL or an SPDX `Identifier`. |
-| `Servers` | Publishes the ordered server list. `Variables` fills `{name}` placeholders in a URL. |
+| `Servers` | Publishes the ordered server list. `Variables` fills `{name}` placeholders in a URL. Each placeholder needs a variable, and each variable needs a placeholder. |
 | `Tags` | Declares top-level tags and optional tag documentation. |
 | `ExternalDocs` | Links the whole API to external documentation. Its URL is required. |
 | `ErrorType` | Sets the schema used by shared error responses. |
@@ -148,7 +148,9 @@ h := specout.Get[health]{HandlerFunc: healthcheck}.WithPublic()
 
 Give one route its own requirement with `Security`. It replaces the global
 requirement. Each entry names a scheme from `Auth`, and any one entry satisfies
-the requirement. A route cannot set both `Public` and `Security`:
+the requirement. A route cannot set both `Public` and `Security`. For an
+`oauth2` scheme, each scope must be in one of its flows. For other types, the
+scopes are roles, and any value is allowed:
 
 ```go
 oauth := specout.OAuth2("oauth", flows)
@@ -206,7 +208,9 @@ h.Raw = map[string]any{
 Raw values replace fields with the same key. Keep security-sensitive and
 required OpenAPI fields in the typed configuration when possible. `Raw` panics
 on `callbacks`, `servers`, `links`, `webhooks`, and `jsonSchemaDialect`. The
-message names the typed field to use.
+message names the typed field to use. `Raw` also panics when the route sets
+the typed form of the same field, such as `Summary` and `Raw["summary"]`, or
+`Request` and `Raw["requestBody"]`. Set one of them.
 
 ## Webhooks and callbacks
 

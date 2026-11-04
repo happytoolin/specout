@@ -486,7 +486,9 @@ func TestChiInnerAdoptFailsUnderUndeclaredMount(t *testing.T) {
 		{nil, http.StatusInternalServerError},
 		{[]specout.Server{{URL: "https://example.com/api/"}}, http.StatusOK},
 		{[]specout.Server{{URL: "/v1"}}, http.StatusInternalServerError},
-		{[]specout.Server{{URL: "{scheme}://example.com"}}, http.StatusOK},
+		{[]specout.Server{{
+			URL: "{scheme}://example.com", Variables: map[string]specout.ServerVariable{"scheme": {Default: "https"}},
+		}}, http.StatusOK},
 	} {
 		captureLog(t)
 		d := specout.New(specout.Config{Title: "t", Version: "1", Servers: tc.servers})

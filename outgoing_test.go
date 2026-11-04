@@ -235,7 +235,7 @@ func TestBadLinksPanic(t *testing.T) {
 		"set one of OperationID": link(specout.Link{}),
 		`link "a": set one of`:   link(specout.Link{OperationID: "x", OperationRef: "y"}),
 		"cannot be encoded":      link(specout.Link{OperationID: "x", RequestBody: make(chan int)}),
-		"needs a Default":        link(specout.Link{OperationID: "x", Server: &specout.Server{URL: "u", Variables: map[string]specout.ServerVariable{"a": {}}}}),
+		"has no {a} in the URL":  link(specout.Link{OperationID: "x", Server: &specout.Server{URL: "u", Variables: map[string]specout.ServerVariable{"a": {}}}}),
 	} {
 		assert.Contains(t, panicMessage(t, call), want)
 	}
@@ -284,10 +284,10 @@ func TestBadRequestEncodingPanics(t *testing.T) {
 		}
 	}
 	for want, call := range map[string]func(){
-		`"tags": the request body has no such field, only avatar, labels`: route(map[string]specout.Encoding{"tags": {}}),
-		`"hidden": the request body has no such field`:                    route(map[string]specout.Encoding{"hidden": {}}),
-		`Style "matrix" is not valid`:                                     route(map[string]specout.Encoding{"labels": {Style: "matrix"}}),
-		"a Header needs a Name":                                           route(map[string]specout.Encoding{"avatar": {Headers: []specout.Header{{}}}}),
+		`"tags": the multipart/form-data body has no such field, only avatar, labels`: route(map[string]specout.Encoding{"tags": {}}),
+		`"hidden": the multipart/form-data body has no such field`:                    route(map[string]specout.Encoding{"hidden": {}}),
+		`Style "matrix" is not valid`:                                                 route(map[string]specout.Encoding{"labels": {Style: "matrix"}}),
+		"a Header needs a Name":                                                       route(map[string]specout.Encoding{"avatar": {Headers: []specout.Header{{}}}}),
 		"the request body is not a form; set Request.ContentTypes": func() {
 			newGen().Document(http.MethodPost, "/x", specout.Handler[job, job]{
 				HandlerFunc: noop, Request: specout.Request{Encoding: map[string]specout.Encoding{"id": {}}},
@@ -315,7 +315,7 @@ func TestOperationServers(t *testing.T) {
 		newGen().Document(http.MethodGet, "/x", specout.Get[job]{
 			HandlerFunc: noop, Servers: []specout.Server{{URL: "u", Variables: map[string]specout.ServerVariable{"a": {}}}},
 		})
-	}), "needs a Default")
+	}), `variable "a" has no {a} in the URL`)
 }
 
 // A field with a typed form has one way to write it, and the panic names it.

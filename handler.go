@@ -66,9 +66,10 @@ type Security struct {
 }
 
 // With* methods are the fluent form of the metadata fields: each returns a
-// copy of h with the field set, so chains never mutate. Tags and Responses
-// append; the rest replace. Field assignment stays equally valid — one
-// vocabulary, two spellings.
+// copy of h with the field set, so chains never mutate. The list fields
+// append: Tags, Responses, Servers, Callbacks and Security. The rest
+// replace. Field assignment stays equally valid — one vocabulary, two
+// spellings.
 
 // WithSummary sets the operation summary.
 func (h Handler[Req, Res]) WithSummary(summary string) Handler[Req, Res] {

@@ -21,6 +21,9 @@ func (sr *schemaRegistry) bodyType(req reflect.Type) (reflect.Type, string) {
 	if !split {
 		return body, ""
 	}
+	// The reified body renames its fields to Field1 and so on. Check Req
+	// itself first, so that a message names the user's type and field.
+	validateAnonymousEmbeddings(req, make(map[reflect.Type]bool))
 	return body, sr.nameFor(deref(req)) + "Body"
 }
 

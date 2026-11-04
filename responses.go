@@ -216,7 +216,10 @@ func (d *Generator) checkDefaultErrors() {
 	}
 	valueType("Config.ErrorType", d.cfg.ErrorType)
 	for _, code := range d.cfg.DefaultErrors {
-		responseKey("Config.DefaultErrors", code, "")
+		if code != 0 && !isStatus(code) {
+			panic("specout: Config.DefaultErrors: status " + strconv.Itoa(code) +
+				" is not valid; use 100-599, or 0 for the default response")
+		}
 		if bodyless(code) {
 			panic("specout: Config.DefaultErrors: status " + strconv.Itoa(code) +
 				" has no body, so it cannot carry ErrorType; remove it")
@@ -284,6 +287,14 @@ func checkResponse(where string, e respEntry) {
 	checkHeaders(where, resp.Headers)
 	linkObjs(where, resp.Links)
 	checkRawKeys(where, resp.Raw, responseFields)
+	checkRawReplaces(where, resp.Raw, []replacedField{
+		{keyDescription, "Description", resp.Description != ""},
+		{"headers", "Headers", len(resp.Headers) > 0},
+		{
+			"content", "ContentTypes, Example or Examples",
+			len(resp.ContentTypes) > 0 || resp.Example != nil || len(resp.Examples) > 0,
+		},
+	})
 }
 
 // checkResponseExamples checks that examples can be written, and that the
@@ -360,12 +371,13 @@ func setDeclaredContent(body *obj, e respEntry, sr *schemaRegistry) {
 // setResponseExamples writes the examples of resp on each of its media types.
 func setResponseExamples(body *obj, resp *Response) {
 	content, ok := body.get("content").(*obj)
-	if !ok {
+	if !ok || (resp.Example == nil && len(resp.Examples) == 0) {
 		return
 	}
+	examples := encodeExamples("response", resp.Example, resp.Examples)
 	for _, ct := range content.keys {
 		if media, isObj := content.get(ct).(*obj); isObj {
-			setExamples(media, "response", resp.Example, resp.Examples)
+			examples.set(media, nil)
 		}
 	}
 }
@@ -424,10 +436,9 @@ func hasBody(t reflect.Type) bool {
 }
 
 // responseKey names a response object key: Key when the caller set one
-// (default or an NXX range), else the status number. Status 0 means the
-// OpenAPI "default" response: real published specs (petstore, MS Graph,
-// GitHub) carry one on most operations, and OpenAPI 3.1 requires a numeric
-// code or "default" — "0" is neither, so it validates against nothing. Any
+// (default or an NXX range), else the status number. A Response with Status 0
+// needs a Key, and responsePlan checks that first. Status 0 alone comes only
+// from Config.DefaultErrors, and there it means the "default" response. Any
 // other code outside 100-599 is a typo, not a status.
 func responseKey(where string, code int, key string) string {
 	if code != 0 && !isStatus(code) {
@@ -485,6 +496,25 @@ func mergeRaw(base *obj, raw map[string]any) *obj {
 		base.set(k, raw[k])
 	}
 	return base
+}
+
+// replacedField is a field that the caller set in its typed form, and the Raw key
+// that would replace it.
+type replacedField struct {
+	key, field string
+	set        bool
+}
+
+// checkRawReplaces panics when Raw replaces a field that is also set in its
+// typed form. Raw applies last, so the typed value would vanish with no
+// message. where names the object.
+func checkRawReplaces(where string, raw map[string]any, fields []replacedField) {
+	for _, f := range fields {
+		if _, ok := raw[f.key]; ok && f.set {
+			panic("specout: " + where + ": Raw key " + strconv.Quote(f.key) + " replaces " + f.field +
+				"; set one of them")
+		}
+	}
 }
 
 // checkRawKeys panics on a Raw key that the object cannot carry. fields lists

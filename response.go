@@ -10,7 +10,10 @@ package specout
 // or a whole field that replaces what specout writes, into the response object.
 type Response struct {
 	Status int
-	Type   any
+	// Type is the body. With no Type, the response has the body of Res,
+	// unless its status has no body. Set Type: struct{}{} for a response with
+	// no body, such as an error that only has a description.
+	Type any
 	// Description replaces the status text, such as "Not Found".
 	Description string
 	Headers     []Header

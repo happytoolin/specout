@@ -82,7 +82,7 @@ func TestUnknownSchemaKeywordsPanic(t *testing.T) {
 	}), `field Name: jsonschema keyword "minLenght" is not known; did you mean "minLength"?`)
 	assert.Contains(t, panicMessage(t, func() {
 		docOf(t, http.MethodGet, "/x", specout.Get[comma]{HandlerFunc: noop})
-	}), `jsonschema keyword "two" is not known; it needs a value such as minLength=1, and a comma inside a value is written \\,`)
+	}), `jsonschema keyword " two" starts or ends with a space; remove the space, and write a comma inside a value as \\,`)
 	assert.Contains(t, panicMessage(t, func() {
 		docOf(t, http.MethodGet, "/x", specout.Handler[param, job]{HandlerFunc: noop})
 	}), `GET /x: field Limit: jsonschema keyword "maximun" is not known; did you mean "maximum"?`)
@@ -128,7 +128,7 @@ func TestMessagesSuggestTheNearestName(t *testing.T) {
 		`Raw key "summry" is not allowed here; start an extension with x-; did you mean "summary"?`: func() {
 			newGen().Document(http.MethodGet, "/x", specout.Get[job]{HandlerFunc: noop, Raw: map[string]any{"summry": "x"}})
 		},
-		`"avtar": the request body has no such field, only avatar, labels; did you mean "avatar"?`: func() {
+		`"avtar": the multipart/form-data body has no such field, only avatar, labels; did you mean "avatar"?`: func() {
 			newGen().Document(http.MethodPost, "/x", specout.Handler[uploadForm, job]{
 				HandlerFunc: noop, Request: specout.Request{Encoding: map[string]specout.Encoding{"avtar": {}}},
 			})
@@ -160,7 +160,7 @@ func TestFileIsABinaryBody(t *testing.T) {
 
 func TestAuthConstructorsAndRequire(t *testing.T) {
 	oauth := specout.OAuth2("oauth", map[string]specout.OAuth2Flow{
-		"clientCredentials": {TokenURL: coverageFlowURL},
+		"clientCredentials": {TokenURL: coverageFlowURL, Scopes: map[string]string{"read": "Read access"}},
 	})
 	d := specout.New(specout.Config{Title: "t", Version: "1", Auth: []specout.AuthScheme{
 		specout.Bearer, specout.Basic, oauth,

@@ -200,8 +200,8 @@ The `schema` object is JSON Schema 2020-12. specout builds it from Go types and
 
 | Field | Status | How |
 |---|---|---|
-| `example` | Yes | `Response.Example` or `Request.Example`. |
-| `examples` | Yes | `Response.Examples` or `Request.Examples`. |
+| `example` | Yes | `Response.Example` or `Request.Example`, on media types only. Parameters and headers cannot set it. |
+| `examples` | Yes | `Response.Examples` or `Request.Examples`, on media types only. Parameters and headers cannot set it. |
 
 ## link
 

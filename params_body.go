@@ -20,9 +20,11 @@ func requestBodyObj(rec *routeRecord, body reflect.Type, sr *schemaRegistry) *ob
 	if len(types) == 0 {
 		types = []string{ct}
 	}
+	examples := encodeExamples(rec.label()+": Request", rec.body.Example, rec.body.Examples)
 	for _, c := range types {
+		form := formMedia(c)
 		schema := *base
-		if c == mediaMultipart || c == mediaForm {
+		if form {
 			schema = sr.formSchema(body, base)
 		}
 		if rec.req.Kind() == reflect.Pointer {
@@ -30,7 +32,7 @@ func requestBodyObj(rec *routeRecord, body reflect.Type, sr *schemaRegistry) *ob
 		}
 		sr.inline = append(sr.inline, &schema)
 		media := newObj().set("schema", &schema)
-		setExamples(media, rec.label(), rec.body.Example, rec.body.Examples)
+		examples.set(media, requestExampleKeys(rec.req, body, form))
 		if takesEncoding(c) && len(rec.body.Encoding) > 0 {
 			media.set("encoding", encodingObjs(rec.body.Encoding, sr))
 		}
@@ -79,12 +81,17 @@ func (sr *schemaRegistry) formSchema(body reflect.Type, base *jsonschema.Schema)
 func formRenames(body reflect.Type) map[string]string {
 	renames := make(map[string]string)
 	for _, f := range jsonFields(body, false) {
-		name, form := fieldName(f), parts0(f.Tag.Get("form"))
-		if form != "" && form != name {
+		if name, form := fieldName(f), formName(f); form != name {
 			renames[name] = form
 		}
 	}
 	return renames
+}
+
+// formName is the name of a body field on a form: its form tag, or else its
+// JSON name. form:"-" gives "-", and form binders skip that field.
+func formName(f reflect.StructField) string {
+	return cmp.Or(parts0(f.Tag.Get("form")), fieldName(f))
 }
 
 // renamedSchema copies source with its property and required names renamed,
@@ -145,16 +152,14 @@ func hasBinaryField(t reflect.Type) bool {
 	if t.Kind() != reflect.Struct {
 		return false
 	}
-	fileT := reflect.TypeFor[File]()
-	if t == fileT {
+	if t == reflect.TypeFor[File]() {
 		return true
 	}
 	for _, field := range jsonFields(t, false) {
 		if parts0(field.Tag.Get("jsonschema")) == "-" {
 			continue
 		}
-		ft := deref(field.Type)
-		if ft == fileT || (ft.Kind() == reflect.Slice && deref(ft.Elem()) == fileT) {
+		if isFileField(field) {
 			return true
 		}
 		if tagValue(field.Tag.Get("jsonschema"), "format") == formatBinary {

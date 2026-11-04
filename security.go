@@ -17,7 +17,30 @@ func securitySchemeObj(a AuthScheme) *obj {
 		panic("specout: Config.Auth: scheme name " + strconv.Quote(a.Name) +
 			" must contain only ASCII letters, digits, dots, hyphens or underscores")
 	}
-	return schemeOfType(a).setIf("description", a.Description)
+	scheme := schemeOfType(a)
+	checkSchemeFields(a)
+	return scheme.setIf("description", a.Description)
+}
+
+// checkSchemeFields panics on an AuthScheme field that its Type does not use.
+// The document would drop the value with no message.
+func checkSchemeFields(a AuthScheme) {
+	for _, f := range []struct {
+		name, typ string
+		set       bool
+	}{
+		{"Scheme", authHTTP, a.Scheme != ""},
+		{"BearerFormat", authHTTP, a.BearerFormat != ""},
+		{"Key", authAPIKey, a.Key != ""},
+		{"In", authAPIKey, a.In != ""},
+		{"URL", authOpenIDConnect, a.URL != ""},
+		{"Flows", authOAuth2, len(a.Flows) > 0},
+	} {
+		if f.set && a.Type != f.typ {
+			panic("specout: " + authWhere(a) + ": " + f.name + " is for type " + f.typ + ", and this scheme is " +
+				a.Type + "; remove " + f.name)
+		}
+	}
 }
 
 // schemeOfType builds the fields that a scheme's Type selects.
@@ -62,7 +85,8 @@ func httpScheme(a AuthScheme) *obj {
 }
 
 // checkSecurity panics when a route's Security names a scheme that Config.Auth
-// does not declare, or when a Public route also sets it.
+// does not declare, or a scope that its oauth2 flows do not declare, or when a
+// Public route also sets it. Other types take any scopes: they are roles.
 func (d *Generator) checkSecurity(rec *routeRecord) {
 	if rec.public && len(rec.security) > 0 {
 		panic("specout: " + rec.label() + ": sets both Public and Security; set one")
@@ -72,9 +96,31 @@ func (d *Generator) checkSecurity(rec *routeRecord) {
 		names = append(names, a.Name)
 	}
 	for _, sec := range rec.security {
-		if !slices.Contains(names, sec.Scheme) {
+		i := slices.Index(names, sec.Scheme)
+		if i < 0 {
 			panic("specout: " + rec.label() + ": Security names scheme " + strconv.Quote(sec.Scheme) +
 				", but Config.Auth does not declare it" + didYouMean(sec.Scheme, names))
+		}
+		if a := d.cfg.Auth[i]; a.Type == authOAuth2 {
+			checkScopes(rec.label(), a, sec.Scopes)
+		}
+	}
+}
+
+// checkScopes panics on a scope that no flow of the oauth2 scheme a declares.
+func checkScopes(where string, a AuthScheme, scopes []string) {
+	var declared []string
+	for _, flow := range a.Flows {
+		for scope := range flow.Scopes {
+			if !slices.Contains(declared, scope) {
+				declared = append(declared, scope)
+			}
+		}
+	}
+	for _, scope := range scopes {
+		if !slices.Contains(declared, scope) {
+			panic("specout: " + where + ": Security asks for scope " + strconv.Quote(scope) + " of scheme " +
+				strconv.Quote(a.Name) + ", but no flow of it declares that scope" + didYouMean(scope, declared))
 		}
 	}
 }

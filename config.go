@@ -16,7 +16,8 @@ type Config struct {
 	ExternalDocs   *ExternalDocs
 	Tags           []Tag
 	// ErrorType and DefaultErrors add one error body to each operation, at
-	// each status of DefaultErrors. DefaultErrors needs ErrorType.
+	// each status of DefaultErrors. DefaultErrors needs ErrorType. The status 0
+	// adds the default response.
 	ErrorType     any
 	DefaultErrors []int
 	ClosedSchemas bool
@@ -47,12 +48,13 @@ type License struct {
 type Server struct {
 	URL         string
 	Description string
-	// Variables fills the {name} placeholders of URL.
+	// Variables fills the {name} placeholders of URL, one variable for each.
 	Variables map[string]ServerVariable
 }
 
-// ServerVariable is one {name} placeholder of a server URL. Default is
-// required. When Enum is set, it must hold Default.
+// ServerVariable is one {name} placeholder of a server URL. Default is the value
+// that a client uses when it has no other, and it can be empty. When Enum is
+// set, it must hold Default.
 type ServerVariable struct {
 	Default     string
 	Enum        []string

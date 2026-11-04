@@ -170,7 +170,7 @@ func TestGapConfigThatBreaksTheDocument(t *testing.T) {
 			specout.Config{ErrorType: reflect.TypeFor[gapRes](), DefaultErrors: []int{http.StatusInternalServerError}},
 		},
 		{
-			"error status out of range", "specout: Config.DefaultErrors: status 600 is not valid; use 100-599, or Key: \"default\"",
+			"error status out of range", "specout: Config.DefaultErrors: status 600 is not valid; use 100-599, or 0 for the default response",
 			specout.Config{ErrorType: gapRes{}, DefaultErrors: []int{600}},
 		},
 		{

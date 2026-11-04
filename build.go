@@ -2,6 +2,7 @@ package specout
 
 import (
 	"errors"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -10,8 +11,10 @@ import (
 // buildDoc assembles the OpenAPI document: resolve the routes, reflect schemas,
 // emit operations in path order.
 func (d *Generator) buildDoc() (*obj, error) {
-	err := errors.Join(d.resolveLocked(), d.checkChiMount(), checkOperationIDs(d.operations()), d.checkLinks())
-	if err != nil {
+	resolveErr := d.resolveLocked()
+	chiErr := d.checkChiMount()
+	ids, idErr := checkOperationIDs(d.operations())
+	if err := errors.Join(resolveErr, chiErr, idErr, d.checkLinks(ids)); err != nil {
 		return nil, err
 	}
 
@@ -150,20 +153,35 @@ func serverObj(where string, s Server) *obj {
 		panic("specout: " + where + ": a server needs a URL")
 	}
 	server := newObj().set("url", s.URL).setIf("description", s.Description)
-	if len(s.Variables) > 0 {
-		server.set("variables", serverVariableObjs(where+" "+strconv.Quote(s.URL), s))
+	if vars := serverVariableObjs(where+" "+strconv.Quote(s.URL), s); len(vars.keys) > 0 {
+		server.set("variables", vars)
 	}
 	return server
 }
 
+// serverVarRe matches one {name} placeholder of a server URL.
+var serverVarRe = regexp.MustCompile(`{([^{}]*)}`)
+
 // serverVariableObjs is the variables object of one server. A Go map has no
-// order, so the names are sorted.
+// order, so the names are sorted. Each variable fills a {name} placeholder of
+// the URL, and each placeholder needs a variable, or no tool can resolve the
+// URL.
 func serverVariableObjs(where string, s Server) *obj {
+	matches := serverVarRe.FindAllStringSubmatch(s.URL, -1)
+	placeholders := make([]string, 0, len(matches))
+	for _, m := range matches {
+		placeholders = append(placeholders, m[1])
+		if _, ok := s.Variables[m[1]]; !ok {
+			panic("specout: " + where + ": the URL has {" + m[1] + "}, but Variables does not declare it; " +
+				"add it with its Default")
+		}
+	}
 	vars := newObj()
 	for _, name := range sortedKeys(s.Variables) {
 		v := s.Variables[name]
-		if v.Default == "" {
-			panic("specout: " + where + ": variable " + strconv.Quote(name) + " needs a Default")
+		if !slices.Contains(placeholders, name) {
+			panic("specout: " + where + ": variable " + strconv.Quote(name) + " has no {" + name + "} in the URL" +
+				didYouMean(name, placeholders))
 		}
 		o := newObj().set("default", v.Default)
 		if len(v.Enum) > 0 {

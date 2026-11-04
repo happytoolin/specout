@@ -49,7 +49,8 @@ type Callback struct {
 // identifies the callback. url is where the request goes, usually a runtime
 // expression that reads the original request, such as
 // "{$request.body#/callbackUrl}". h describes the request as Webhook does. One
-// Callback value can go on several routes.
+// Callback value can go on several routes when h sets no OperationID: an
+// operationId names one operation of the whole document.
 func NewCallback[Req, Res any](name, method, url string, h Handler[Req, Res]) Callback {
 	if name == "" || url == "" {
 		panic("specout: NewCallback needs a name and a url")
@@ -76,8 +77,10 @@ func outgoingRecord[Req, Res any](where, method string, h Handler[Req, Res]) rou
 }
 
 // checkCallbacks panics on a route's callbacks when they would break the
-// document. Each one is checked as a route is.
+// document. Each one is checked as a route is, and its messages name rec. The
+// list is copied first, because one Callback value can go on several routes.
 func (d *Generator) checkCallbacks(rec *routeRecord) {
+	rec.callbacks = slices.Clone(rec.callbacks)
 	seen := make(map[string]bool, len(rec.callbacks))
 	for i := range rec.callbacks {
 		cb := &rec.callbacks[i]
@@ -89,6 +92,7 @@ func (d *Generator) checkCallbacks(rec *routeRecord) {
 			panic("specout: " + rec.label() + ": Callbacks repeats " + cb.rec.method + " callback " + strconv.Quote(cb.name))
 		}
 		seen[key] = true
+		cb.rec.parent = rec
 		d.checkRoute(&cb.rec)
 	}
 }

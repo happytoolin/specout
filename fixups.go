@@ -284,7 +284,7 @@ func (sr *schemaRegistry) addDashProperty(s *jsonschema.Schema, f reflect.Struct
 // applyKeywordTags applies the bare readonly, writeonly and deprecated
 // keywords, which the reflector misses.
 func applyKeywordTags(p *jsonschema.Schema, tag reflect.StructTag) {
-	for part := range strings.SplitSeq(tag.Get("jsonschema"), ",") {
+	for _, part := range tagParts(tag.Get("jsonschema")) {
 		switch part {
 		case "readonly", "readOnly=true":
 			p.ReadOnly = true
@@ -298,7 +298,8 @@ func applyKeywordTags(p *jsonschema.Schema, tag reflect.StructTag) {
 
 // requiredField reports whether a field's tags make its property required:
 // the json tag has no omitempty or omitzero, or the jsonschema tag says
-// required.
+// required. The reflector finds required with a plain split on commas, even
+// after an escaped comma, so this does too.
 func requiredField(tag reflect.StructTag) bool {
 	return !optionalTag(tag.Get("json")) || slices.Contains(strings.Split(tag.Get("jsonschema"), ","), "required")
 }
@@ -372,7 +373,7 @@ func applyNumberEnumTag(p *jsonschema.Schema, t reflect.Type, tag reflect.Struct
 func numberEnum(tag reflect.StructTag, reflected []any) []any {
 	var values []any
 	listed := false
-	for item := range strings.SplitSeq(tag.Get("jsonschema"), ",") {
+	for _, item := range tagParts(tag.Get("jsonschema")) {
 		value, isEnum := strings.CutPrefix(item, "enum=")
 		if !isEnum {
 			continue
@@ -404,7 +405,7 @@ func jsonNumber(s string) (jsonv1.Number, bool) {
 // repeats. It reports false when a value is not a bool.
 func boolEnum(tag reflect.StructTag) ([]any, bool) {
 	var values []any
-	for item := range strings.SplitSeq(tag.Get("jsonschema"), ",") {
+	for _, item := range tagParts(tag.Get("jsonschema")) {
 		value, ok := strings.CutPrefix(item, "enum=")
 		if !ok {
 			continue

@@ -65,7 +65,7 @@ func addContext(where string, v any) {
 		return
 	}
 	if msg, ok := v.(string); ok {
-		if rest, cut := strings.CutPrefix(msg, "specout: "); cut {
+		if rest, cut := strings.CutPrefix(msg, "specout: "); cut && !strings.HasPrefix(rest, where+": ") {
 			panic("specout: " + where + ": " + rest)
 		}
 	}

@@ -112,7 +112,7 @@ func (sr *schemaRegistry) parameter(name, loc string, f reflect.StructField) *ob
 	p := newObj().set("name", name).set("in", loc).
 		set("required", loc == pathLocation || requiredParam(f)).set("schema", schema)
 	applyParamStyle(p, f, loc)
-	applyParamFlags(p, f, loc, schema)
+	applyParamFlags(p, f, loc)
 	if desc := tagValue(f.Tag.Get("jsonschema"), "description"); desc != "" {
 		schema.Description = ""
 		p.set("description", desc)
@@ -149,13 +149,11 @@ func applyParamStyle(p *obj, f reflect.StructField, loc string) {
 }
 
 // applyParamFlags copies the parameter keywords of the jsonschema tag onto the
-// parameter object. deprecated is a keyword of the parameter, so it moves there
-// from the schema. allowEmptyValue and allowReserved exist on query parameters
-// only.
-func applyParamFlags(p *obj, f reflect.StructField, loc string, schema *jsonschema.Schema) {
+// parameter object. deprecated goes on the parameter, not on its schema.
+// allowEmptyValue and allowReserved exist on query parameters only.
+func applyParamFlags(p *obj, f reflect.StructField, loc string) {
 	tag := f.Tag.Get("jsonschema")
-	if slices.Contains(strings.Split(tag, ","), "deprecated") || tagValue(tag, "deprecated") == "true" {
-		schema.Deprecated = false
+	if slices.Contains(tagParts(tag), keyDeprecated) || tagValue(tag, keyDeprecated) == "true" {
 		p.set("deprecated", true)
 	}
 	for _, key := range []string{"allowEmptyValue", "allowReserved"} {
