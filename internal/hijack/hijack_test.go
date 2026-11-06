@@ -1,7 +1,6 @@
 package hijack_test
 
 import (
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -36,24 +35,39 @@ func TestStatus(t *testing.T) {
 	}
 }
 
-// Wrap keeps the interfaces that chi's WrapResponseWriter and handlers test
-// for, and leaves a writer that cannot hijack as it is.
 func TestWrapKeepsInterfaces(t *testing.T) {
-	w := httptest.NewRecorder()
-	got, watch := hijack.Wrap(w)
-	assert.Same(t, w, got)
-	assert.False(t, watch.Hijacked())
+	got, _ := hijack.Wrap(httptest.NewRecorder())
+	assert.Implements(t, (*http.Flusher)(nil), got)
+	assert.NotImplements(t, (*http.Hijacker)(nil), got)
 
 	var full struct {
 		http.ResponseWriter
 		http.Flusher
 		http.Hijacker
-		io.ReaderFrom
 	}
-	got, watch = hijack.Wrap(full)
+	got, watch := hijack.Wrap(full)
 	assert.False(t, watch.Hijacked())
 	assert.Implements(t, (*http.Flusher)(nil), got)
 	assert.Implements(t, (*http.Hijacker)(nil), got)
-	assert.Implements(t, (*io.ReaderFrom)(nil), got)
 	assert.Implements(t, (*interface{ Unwrap() http.ResponseWriter })(nil), got)
+}
+
+func TestWrapSeesStatus(t *testing.T) {
+	for name, tc := range map[string]struct {
+		write func(w http.ResponseWriter)
+		want  int
+	}{
+		"nothing":       {func(http.ResponseWriter) {}, 0},
+		"body":          {func(w http.ResponseWriter) { _, _ = w.Write([]byte("x")) }, http.StatusOK},
+		"status":        {func(w http.ResponseWriter) { w.WriteHeader(http.StatusTeapot) }, http.StatusTeapot},
+		"early hints":   {func(w http.ResponseWriter) { w.WriteHeader(http.StatusEarlyHints); w.WriteHeader(http.StatusCreated) }, http.StatusCreated},
+		"flush":         {func(w http.ResponseWriter) { w.(http.Flusher).Flush() }, http.StatusOK},
+		"second status": {func(w http.ResponseWriter) { w.WriteHeader(http.StatusAccepted); w.WriteHeader(http.StatusOK) }, http.StatusAccepted},
+	} {
+		w, watch := hijack.Wrap(httptest.NewRecorder())
+		tc.write(w)
+		status, ok := watch.Result(nil)
+		assert.True(t, ok, name)
+		assert.Equal(t, tc.want, status, name)
+	}
 }

@@ -43,7 +43,7 @@ doc := specout.New(specout.Config{
 	ClosedSchemas: true,
 	Auth: []specout.AuthScheme{
 		specout.Bearer,
-		specout.APIKey("apiKey", "X-API-Key", specout.InHeader),
+		specout.APIKey("apiKey", "X-API-Key", "header"),
 	},
 })
 ```
@@ -65,7 +65,6 @@ doc := specout.New(specout.Config{
 | `DefaultErrors` | Adds shared status codes to each operation when `ErrorType` is set. |
 | `ClosedSchemas` | Emits `additionalProperties: false` for object schemas while preserving map values. |
 | `Auth` | Publishes documentation-only security schemes and top-level requirements. |
-| `JSONSchemaDialect` | Sets the default JSON Schema dialect of the document. Most APIs do not need it. |
 | `Raw` | Adds `x-` extensions to the document root. Any other key panics. |
 
 Each URL in `Config`, in `ExternalDocs` and in an auth scheme must be a URL.
@@ -108,9 +107,9 @@ API keys can use a header, query parameter, or cookie:
 
 ```go
 Auth: []specout.AuthScheme{
-	specout.APIKey("headerKey", "X-API-Key", specout.InHeader),
-	specout.APIKey("queryKey", "api_key", specout.InQuery),
-	specout.APIKey("cookieKey", "session", specout.InCookie),
+	specout.APIKey("headerKey", "X-API-Key", "header"),
+	specout.APIKey("queryKey", "api_key", "query"),
+	specout.APIKey("cookieKey", "session", "cookie"),
 }
 ```
 
@@ -150,7 +149,7 @@ scheme. They do not mean that every scheme is required together.
 Mark a route that does not inherit global authentication as public:
 
 ```go
-h := specout.Get[health]{HandlerFunc: healthcheck}.WithPublic()
+h := specout.Handler[struct{}, health]{HandlerFunc: healthcheck, Public: true}
 ```
 
 Give one route its own requirement with `Security`. It replaces the global
@@ -162,26 +161,28 @@ scopes are roles, and any value is allowed:
 ```go
 oauth := specout.OAuth2("oauth", flows)
 
-h := specout.Get[report]{HandlerFunc: getReport}.WithSecurity(
-	oauth.Require("reports:read"),
-)
+h := specout.Handler[struct{}, report]{
+	HandlerFunc: getReport,
+	Security:    []specout.Security{oauth.Require("reports:read")},
+}
 ```
 
 ## Operation metadata
 
-`Handler` fields and their `With*` methods are equivalent. Use the form that is
-already common in the project.
+Set operation metadata with the fields of `Handler`:
 
 ```go
-h := specout.Handler[createRequest, item]{HandlerFunc: createItem}.
-	WithSummary("Create an item").
-	WithDescription("Creates one inventory item.").
-	WithOperationID("createInventoryItem").
-	WithTags("inventory").
-	WithExternalDocs(&specout.ExternalDocs{
+h := specout.Handler[createRequest, item]{
+	HandlerFunc: createItem,
+	Summary:     "Create an item",
+	Description: "Creates one inventory item.",
+	OperationID: "createInventoryItem",
+	Tags:        []string{"inventory"},
+	ExternalDocs: &specout.ExternalDocs{
 		URL: "https://docs.example.com/inventory/create",
-	}).
-	WithDeprecated()
+	},
+	Deprecated: true,
+}
 ```
 
 Available operation metadata is:
@@ -191,7 +192,7 @@ Available operation metadata is:
 - `Public` to emit `security: []` when global auth exists.
 - `Security` for an authentication requirement on this route.
 - `Request` for the request body: `ContentTypes`, `Description`, `Optional`,
-  `Example`, `Examples`, and `Encoding`.
+  `Examples`, and `Encoding`.
 - `Responses` for status-specific contracts.
 - `Servers` when this operation has a different base URL.
 - `Callbacks` for the requests that your API sends because of this operation.
@@ -214,7 +215,7 @@ h.Raw = map[string]any{
 
 Raw values replace fields with the same key. Keep security-sensitive and
 required OpenAPI fields in the typed configuration when possible. `Raw` panics
-on `callbacks`, `servers`, `links`, `webhooks`, and `jsonSchemaDialect`. The
+on `callbacks`, `servers`, `links`, and `webhooks`. The
 message names the typed field to use. `Raw` also panics when the route sets
 the typed form of the same field, such as `Summary` and `Raw["summary"]`, or
 `Request` and `Raw["requestBody"]`. Set one of them.
@@ -223,17 +224,17 @@ the typed form of the same field, such as `Summary` and `Raw["summary"]`, or
 
 A webhook or callback is a request that the API sends. Describe it with a
 `Handler` that has no `HandlerFunc`. `Req` is what the API sends, and `Res` is
-what the receiver answers. `specout.Event[T]` is short for
-`specout.Handler[T, specout.NoContent]`.
+what the receiver answers. Use `specout.NoContent` as `Res` when the receiver
+answers `204` with no body.
 
 ```go
-doc.Webhook(http.MethodPost, "orderCreated", specout.Event[OrderCreated]{
+doc.Webhook(http.MethodPost, "orderCreated", specout.Handler[OrderCreated, specout.NoContent]{
 	Summary: "An order was created",
 })
 
 jobDone := specout.NewCallback(
 	http.MethodPost, "jobDone", "{$request.body#/callbackUrl}",
-	specout.Event[JobResult]{Summary: "The job finished"},
+	specout.Handler[JobResult, specout.NoContent]{Summary: "The job finished"},
 )
 routes.Post("/jobs", specout.Handler[StartJob, Job]{
 	HandlerFunc: startJob,

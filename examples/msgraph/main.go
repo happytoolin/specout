@@ -1,5 +1,5 @@
 // Command msgraph serves eight operations of the published Microsoft Graph
-// v1.0 OpenAPI description — the user resource plus /me — with specout types
+// v1.0 OpenAPI description, the user resource and /me, with specout types
 // and gorilla/mux. Summaries, descriptions, operationIds, parameter names and
 // response codes are the published ones; examples/README.md lists deviations.
 package main
@@ -10,15 +10,17 @@ import (
 	"github.com/gorilla/mux"
 
 	"github.com/happytoolin/specout"
+	"github.com/happytoolin/specout/adapters/specoutgorilla"
 	"github.com/happytoolin/specout/internal/examplekit"
 )
 
-// graphDescription is info.description of the published document.
 const graphDescription = "This OData service is located at https://graph.microsoft.com/v1.0"
 
 // New builds the generator and the router. The published document declares no
 // securitySchemes, though Graph takes a bearer token.
-func New() (*specout.Generator, http.Handler) {
+// The router runs mw on every matched route, so a test can add the recorder
+// middleware.
+func New(mw ...mux.MiddlewareFunc) (*specout.Generator, http.Handler) {
 	d := specout.New(specout.Config{
 		Title:       "OData Service for namespace microsoft.graph",
 		Version:     "v1.0",
@@ -29,10 +31,11 @@ func New() (*specout.Generator, http.Handler) {
 
 	s := newStore()
 	r := mux.NewRouter()
-	b := specout.Gorilla(d, r)
+	r.Use(mw...)
+	b := specout.Bind(d, specoutgorilla.New(r))
 	routes(b, s)
-	r.Handle("/openapi.json", d).Methods(http.MethodGet, http.MethodHead)
-	if err := b.Adopt(); err != nil {
+	r.Handle("/openapi.json", examplekit.Spec(d)).Methods(http.MethodGet, http.MethodHead)
+	if err := specout.Check(d, specoutgorilla.New(r), "/openapi.json"); err != nil {
 		panic(err)
 	}
 	return d, r
@@ -41,7 +44,7 @@ func New() (*specout.Generator, http.Handler) {
 // Handler serves the demo: Swagger UI at / and the spec at /openapi.json. The
 // published server URL is absolute, so "try it out" aims at real Graph.
 func Handler(r http.Handler) http.Handler {
-	return examplekit.Page(examplekit.SwaggerPage("specout example — Microsoft Graph subset", "/openapi.json"), r)
+	return examplekit.Page(examplekit.SwaggerPage("specout example: Microsoft Graph subset", "/openapi.json"), r)
 }
 
 func main() {

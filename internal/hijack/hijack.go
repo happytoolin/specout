@@ -7,14 +7,17 @@ package hijack
 import (
 	"bufio"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"strings"
 )
 
-// Watch notes a successful Hijack through the writer that Wrap returned.
-type Watch struct{ hijacked bool }
+// Watch notes the status that a handler writes through the writer that Wrap
+// returned, and a successful Hijack.
+type Watch struct {
+	status   int
+	hijacked bool
+}
 
 // Hijacked reports whether a handler hijacked the connection. A nil Watch
 // saw no Hijack.
@@ -31,23 +34,33 @@ func (w *Watch) Hijack(hj http.Hijacker) (net.Conn, *bufio.ReadWriter, error) {
 	return conn, rw, nil
 }
 
-// Wrap returns w wrapped so that a Hijack sets the returned Watch. The
-// wrapper keeps the http.Flusher and io.ReaderFrom of w, which handlers and
-// chi's middleware.WrapResponseWriter test for, and Unwrap, which
-// http.ResponseController follows. A w that cannot hijack, such as an HTTP/2
-// writer, is returned as it is, with a nil Watch.
-func Wrap(w http.ResponseWriter) (http.ResponseWriter, *Watch) {
-	hj, ok := w.(http.Hijacker)
-	if !ok {
-		return w, nil
+// Result returns the status to record for the request with header h, as
+// Status does.
+func (w *Watch) Result(h http.Header) (int, bool) {
+	return Status(h, w.status, w.status != 0, w.hijacked)
+}
+
+// wrote notes code as the status, unless a status came first. An
+// informational code other than 101 is no final status.
+func (w *Watch) wrote(code int) {
+	if w.status == 0 && (code >= http.StatusOK || code == http.StatusSwitchingProtocols) {
+		w.status = code
 	}
+}
+
+// Wrap returns w wrapped so that the returned Watch sees the status and a
+// Hijack. The wrapper keeps the http.Flusher and http.Hijacker of w, which
+// handlers test for, and Unwrap, which http.ResponseController follows.
+func Wrap(w http.ResponseWriter) (http.ResponseWriter, *Watch) {
 	watch := &Watch{}
-	base := &writer{ResponseWriter: w, hj: hj, watch: watch}
+	base := &writer{ResponseWriter: w, watch: watch}
+	hj, hijacks := w.(http.Hijacker)
 	fl, flushes := w.(http.Flusher)
-	rf, readsFrom := w.(io.ReaderFrom)
 	switch {
-	case flushes && readsFrom:
-		return fancyWriter{flushWriter{base, fl}, rf}, watch
+	case hijacks && flushes:
+		return hijackFlushWriter{hijackWriter{base, hj}, fl}, watch
+	case hijacks:
+		return hijackWriter{base, hj}, watch
 	case flushes:
 		return flushWriter{base, fl}, watch
 	default:
@@ -88,28 +101,55 @@ func asksUpgrade(h http.Header) bool {
 	return false
 }
 
-// writer is a hijacking http.ResponseWriter that notes a Hijack.
 type writer struct {
 	http.ResponseWriter
 
-	hj    http.Hijacker
 	watch *Watch
 }
 
-func (w *writer) Hijack() (net.Conn, *bufio.ReadWriter, error) { return w.watch.Hijack(w.hj) }
+func (w *writer) WriteHeader(code int) {
+	w.watch.wrote(code)
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *writer) Write(b []byte) (int, error) {
+	w.watch.wrote(http.StatusOK)
+	n, err := w.ResponseWriter.Write(b)
+	if err != nil {
+		return n, fmt.Errorf("write: %w", err)
+	}
+	return n, nil
+}
 
 // Unwrap returns the wrapped writer, for http.ResponseController.
 func (w *writer) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
-// flushWriter adds Flush for a writer that flushes.
-type flushWriter struct {
+type hijackWriter struct {
 	*writer
-	http.Flusher
+
+	hj http.Hijacker
 }
 
-// fancyWriter adds ReadFrom for a writer that also reads from a reader, as
-// net/http's HTTP/1 writer does.
-type fancyWriter struct {
-	flushWriter
-	io.ReaderFrom
+func (w hijackWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) { return w.watch.Hijack(w.hj) }
+
+type flushWriter struct {
+	*writer
+
+	fl http.Flusher
+}
+
+func (w flushWriter) Flush() {
+	w.watch.wrote(http.StatusOK)
+	w.fl.Flush()
+}
+
+type hijackFlushWriter struct {
+	hijackWriter
+
+	fl http.Flusher
+}
+
+func (w hijackFlushWriter) Flush() {
+	w.watch.wrote(http.StatusOK)
+	w.fl.Flush()
 }

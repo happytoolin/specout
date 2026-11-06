@@ -4,34 +4,29 @@ import (
 	"cmp"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/happytoolin/specout/internal/bridge"
 )
 
-// Bind registers h on a router that has no binder in this package. The Echo,
-// Gin and Fiber adapter packages build on it, and so can a binder for any
-// other router. mount adds the live route: it receives the
-// handler the router must run and returns the full path the router serves,
-// in OpenAPI syntax: {name} for a parameter, {name...} for a catch-all.
+// bind registers rec on a router through mount, for a Binder. mount adds the
+// live route: it receives the handler that the router must run and returns
+// the full path that the router serves, in OpenAPI syntax.
 //
-// Bind checks the method and the freeze before mount runs, and records h only
-// after mount returns, so a router that panics on a bad pattern leaves no
-// record. Such a panic is raised again with the method and pattern in
-// front. A second route with the same method and path panics. mount runs
-// while d is locked, so it must not call d. The route's identity is its method
-// and returned path; CheckRoutes compares a live route table against it.
-func (d *Generator) Bind[Req, Res any](method, pattern string, h Handler[Req, Res], mount func(http.Handler) string) {
-	if d == nil {
-		panic("specout: Bind needs a generator; make one with New")
-	}
+// bind records rec only after mount returns, so a router that panics on a bad
+// pattern leaves no record. Such a panic is raised again with the method and
+// pattern in front. A second route with the same method and path panics.
+// mount runs while g is locked, so it must not call g.
+func (g *Generator) bind(method, pattern string, rec routeRecord, mount func(http.Handler) string) {
 	checkMethod(method, pattern)
 	if mount == nil {
-		panic("specout: " + method + " " + pattern + ": Bind needs a mount func")
+		panic("specout: " + method + " " + pattern + ": bind needs a mount func")
 	}
-	rec := recOf(h)
 	rec.method, rec.pattern = method, pattern
-	rec.absolute, rec.literalStars, rec.byPath = true, true, true
-	d.addRoute(rec, func(rec *routeRecord) {
+	rec.literalStars = true
+	g.addRoute(rec, func(rec *routeRecord) {
 		rec.full = mountRoute(method, pattern, mount, rec)
 		if err := cmp.Or(checkOpenAPIPath(rec.full), checkSegments(rec.full)); err != "" {
 			panic("specout: " + method + " " + pattern + ": mounted at " + rec.full + ": " + err)
@@ -40,8 +35,8 @@ func (d *Generator) Bind[Req, Res any](method, pattern string, h Handler[Req, Re
 		// default) or never run it (Fiber), so a duplicate fails here, where
 		// the stack names the second registration.
 		documented := docPath(canonicalPath(rec.full))
-		for _, other := range d.records {
-			if other.absolute && other.method == method && docPath(canonicalPath(other.full)) == documented {
+		for _, other := range g.records {
+			if other.method == method && docPath(canonicalPath(other.full)) == documented {
 				panic("specout: " + method + " " + documented + ": duplicate route, registered as " +
 					strconv.Quote(other.pattern) + " and " + strconv.Quote(pattern))
 			}
@@ -62,7 +57,6 @@ func mountRoute(method, pattern string, mount func(http.Handler) string, h http.
 	return mount(h)
 }
 
-// routePanic adds the route to the panic value v.
 func routePanic(route string, v any) any {
 	switch v := v.(type) {
 	case error:
@@ -77,17 +71,28 @@ func routePanic(route string, v any) any {
 	}
 }
 
-// CheckRoutes reports the routes of a live router table that specout cannot
-// document: a route that no Bind or Document call covers, and a route with an
-// empty Method, which serves every method and so is no single operation.
-// Paths use OpenAPI syntax, as Bind returns them. The error is a *StrayError.
-// Router binders built on Bind call it from their Adopt.
-func (d *Generator) CheckRoutes(routes []RouteKey, skips ...SkipRule) error {
-	s := strayScan{d: d, skips: skips}
+// checkRoutes reports the routes of a live router table that specout cannot
+// document: a route that no registration covers, and a route with an empty
+// Method, which serves every method and so is no single operation. The paths
+// use OpenAPI syntax.
+func (g *Generator) checkRoutes(routes []Route, skips []string) error {
+	var strays []string
 	for _, r := range routes {
-		s.collect(r.Path, r.Method, nil)
+		switch {
+		case bridge.Skipped(skips, r.Path):
+		case r.Method == "":
+			strays = append(strays, "? "+r.Path+" (no method constraint)")
+		case !g.lookup(r.Method, r.Path):
+			strays = append(strays, r.Method+" "+r.Path)
+		}
 	}
-	return s.err()
+	if len(strays) == 0 {
+		return nil
+	}
+	// Router tables list the methods of one path in map order, and can list
+	// one route twice.
+	slices.Sort(strays)
+	return &bridge.StrayError{Routes: slices.Compact(strays)}
 }
 
 // checkOpenAPIPath returns why p is not an absolute OpenAPI path template, or

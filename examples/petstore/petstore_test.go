@@ -8,16 +8,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/happytoolin/specout"
+	"github.com/happytoolin/specout/adapters/specoutchi"
+	"github.com/happytoolin/specout/internal/adaptertest"
 	"github.com/happytoolin/specout/internal/examplekit/exampletest"
 	"github.com/happytoolin/specout/recorder"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// published is the path -> method -> operationId map of the live document
-// (petstore.swagger.io/v3/openapi.json, 3.0.4). The example must emit it
-// exactly; every deviation is listed in examples/README.md.
 var published = map[string]map[string]string{
 	"/pet":                     {"put": "updatePet", "post": "addPet"},
 	"/pet/findByStatus":        {"get": "findPetsByStatus"},
@@ -34,14 +32,12 @@ var published = map[string]map[string]string{
 	"/user/{username}":         {"get": "getUserByName", "put": "updateUser", "delete": "deleteUser"},
 }
 
-// spec builds the example and returns its document.
 func spec(t *testing.T) map[string]any {
 	t.Helper()
 	d, _ := New()
 	return exampletest.Spec(t, d)
 }
 
-// dig walks a decoded document by key path: the shared example walker.
 var dig = exampletest.Dig
 
 func TestSpecMatchesPublishedDocument(t *testing.T) {
@@ -53,7 +49,6 @@ func TestSpecMatchesPublishedDocument(t *testing.T) {
 			continue
 		}
 		assert.Len(t, item, len(methods), "%s operations", p)
-		// the 19 published operationIds, no more, no fewer, on the right route
 		for m, wantID := range methods {
 			op, hasOp := item[m].(map[string]any)
 			if !assert.True(t, hasOp, "missing %s %s", m, p) {
@@ -64,55 +59,38 @@ func TestSpecMatchesPublishedDocument(t *testing.T) {
 	}
 }
 
-// TestSpecKeepsPublishedShapes pins the shapes the example exists to prove:
-// typed path params, response headers, an inlined map body, security opt-out,
-// and the answer to the two bugs the example found (leaked File component,
-// required carrying the Go field name).
 func TestSpecKeepsPublishedShapes(t *testing.T) {
 	doc := spec(t)
 
-	// int64 path param with its published description
 	param := dig(t, doc, "paths", "/pet/{petId}", "get", "parameters").([]any)[0].(map[string]any)
 	assert.Equal(t, "petId", param["name"])
 	assert.Equal(t, "integer", dig(t, param, "schema", "type"), "petId param")
 	assert.Equal(t, "int64", dig(t, param, "schema", "format"), "petId param")
 
-	// response headers, scalar and time
 	headers := dig(t, doc, "paths", "/user/login", "get", "responses", "200", "headers").(map[string]any)
 	assert.Equal(t, "integer", dig(t, headers, "X-Rate-Limit", "schema", "type"))
 	assert.Equal(t, "date-time", dig(t, headers, "X-Expires-After", "schema", "format"))
 
-	// map[string]int32 body is inlined, not $ref'd
 	inv := dig(t, doc, "paths", "/store/inventory", "get", "responses", "200", "content", "application/json", "schema").(map[string]any)
 	assert.Equal(t, "object", inv["type"], "inventory schema")
 	assert.NotNil(t, inv["additionalProperties"], "inventory schema")
 
-	// security opt-out on a published public operation, none on a protected one
 	assert.Contains(t, dig(t, doc, "paths", "/user/logout", "get").(map[string]any), "security", "logout should carry security: []")
 	assert.NotContains(t, dig(t, doc, "paths", "/pet/{petId}", "get").(map[string]any), "security", "getPetById should inherit the global requirement")
 
-	// uploadImage: multipart with the renamed, required file field
 	content := dig(t, doc, "paths", "/pet/{petId}/uploadImage", "post", "requestBody", "content").(map[string]any)
 	require.Contains(t, content, "multipart/form-data", "uploadImage content")
 
-	// the File marker must not leak into components, and required must name
-	// the property, not the Go field
 	schemas := dig(t, doc, "components", "schemas").(map[string]any)
 	assert.NotContains(t, schemas, "File", "File marker leaked into components.schemas")
 	req := dig(t, content, "multipart/form-data", "schema").(map[string]any)
 	assert.Equal(t, []any{"file"}, req["required"], "uploadImageReq required")
 	assert.Contains(t, dig(t, req, "properties", "file").(map[string]any), "format")
 
-	// Tag and Category are reached only through Pet, so invopop hoists them
-	// without a Go-type entry: the property fixups must follow the $ref into
-	// the nested component. Regression — the format= tag used to survive on
-	// Pet but vanish on Tag.
 	for _, name := range []string{"Pet", "Tag", "Category"} {
 		assert.Equal(t, "int64", dig(t, schemas, name, "properties", "id", "format"), "%s.id format", name)
 	}
 
-	// each "default" response is the published description alone. With no
-	// Type, it would show the success body of its operation.
 	for p, item := range dig(t, doc, "paths").(map[string]any) {
 		for m, op := range item.(map[string]any) {
 			responses := dig(t, op, "responses").(map[string]any)
@@ -123,19 +101,10 @@ func TestSpecKeepsPublishedShapes(t *testing.T) {
 	}
 }
 
-// captureT collects failures so a test can assert on one drift category
-// without the other failing it.
-type captureT = exampletest.CaptureT
-
-// TestDemoServesEveryRouteAndNoUndocumentedCode drives the served demo over
-// real HTTP, then checks the drift direction that must hold: every code a
-// handler wrote is declared for that route. The other direction (declared but
-// not produced) cannot hold here: the example mirrors a published document
-// whose error codes an in-memory demo has no path to reach.
 func TestDemoServesEveryRouteAndNoUndocumentedCode(t *testing.T) {
-	d, r := New()
-	rec := recorder.New(r, specout.Skip("/openapi.json"))
-	srv := httptest.NewServer(Handler(rec))
+	rec := recorder.New(nil, "/openapi.json")
+	d, r := New(specoutchi.Record(rec))
+	srv := httptest.NewServer(Handler(r))
 	defer srv.Close()
 
 	send := func(req *http.Request, want int) {
@@ -174,15 +143,10 @@ func TestDemoServesEveryRouteAndNoUndocumentedCode(t *testing.T) {
 	do("GET", "/user/u1", "", 200)
 	do("PUT", "/user/u1", `{"username":"u1","email":"e@x"}`, 200)
 	do("DELETE", "/user/u1", "", 200)
-	// chi answers HEAD on a GET-only route with 405: not an operation, so
-	// the recorder must key nothing for it (no drift either way)
 	do("HEAD", "/pet/2", "", 405)
-	// the spec is served under the declared server prefix
 	do("GET", "/openapi.json", "", 200)
-	// an unmatched path is not drift: the recorder keys nothing for it
 	do("GET", "/nope", "", 404)
 
-	// multipart upload: the one body the example does not send as JSON
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 	fw, err := mw.CreateFormFile("file", "pet.png")
@@ -195,12 +159,22 @@ func TestDemoServesEveryRouteAndNoUndocumentedCode(t *testing.T) {
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	send(req, 200)
 
-	ft := &captureT{}
-	recorder.Verify(ft, d, rec)
-	for _, e := range ft.Errs {
+	errs := adaptertest.Errs(recorder.Verify(d, rec))
+	for _, e := range errs {
 		assert.NotContains(t, e, "but spec does not declare it", "drift")
 	}
-	if len(ft.Errs) == 0 {
+	if len(errs) == 0 {
 		t.Log("no drift at all: the demo produced every declared code")
+	}
+}
+
+func TestMalformedBodyCannotRunAction(t *testing.T) {
+	for _, body := range []string{`{"name":"changed"}{}`, `{"name":"changed"}null`, `{"name":"changed"} garbage`, ""} {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/pet", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		called := false
+		withBody(w, r, "invalid JSON", func(map[string]any) { called = true })
+		assert.False(t, called, "invalid bodies must not reach the store action")
+		assert.Equal(t, http.StatusBadRequest, w.Code)
 	}
 }

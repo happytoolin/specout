@@ -2,12 +2,12 @@ package specout
 
 import "strings"
 
-// Document records an already-registered handler at an absolute pattern:
-// the escape hatch for a router without a binder. The handler must already
+// Document records an already-registered handler at an absolute pattern, for
+// a router that has no adapter. The handler must already
 // be registered with the real router; specout only records the metadata.
 // The pattern uses OpenAPI syntax: /items/{id}, not /items/:id.
-func (d *Generator) Document[Req, Res any](method, pattern string, h Handler[Req, Res]) {
-	if d == nil {
+func (g *Generator) Document[Req, Res any](method, pattern string, h Handler[Req, Res]) {
+	if g == nil {
 		panic("specout: Document needs a generator; make one with New")
 	}
 	where := method + " " + pattern
@@ -32,6 +32,5 @@ func (d *Generator) Document[Req, Res any](method, pattern string, h Handler[Req
 	rec := recOf(h)
 	rec.method, rec.pattern = method, pattern
 	rec.full = pattern
-	rec.absolute = true
-	d.addRoute(rec, nil)
+	g.addRoute(rec, nil)
 }

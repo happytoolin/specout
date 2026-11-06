@@ -56,7 +56,6 @@ func (sr *schemaRegistry) reflectAllVariants() {
 	}
 }
 
-// reflectVariants reflects the variants of each union in s.
 func (sr *schemaRegistry) reflectVariants(s *jsonschema.Schema) {
 	walkSchema(s, func(x *jsonschema.Schema) {
 		if u, ok := declaredUnion(x); ok {
@@ -71,7 +70,7 @@ func (sr *schemaRegistry) reflectVariants(s *jsonschema.Schema) {
 func (sr *schemaRegistry) variantType(name string) reflect.Type {
 	t, ok := sr.variants[name]
 	if !ok {
-		panic("specout: union variant " + strconv.Quote(name) + ` is not registered; call doc.Register[T]("` + name + `")`)
+		panic("specout: union variant " + strconv.Quote(name) + ` is not registered; call doc.Variant[T]("` + name + `")`)
 	}
 	return t
 }
@@ -306,7 +305,6 @@ func (sr *schemaRegistry) unionBranchName(owner string, index int) string {
 	return name
 }
 
-// findVariantProperty returns the property name of the discriminator field.
 func findVariantProperty(s *jsonschema.Schema) string {
 	if s.Properties == nil {
 		return ""

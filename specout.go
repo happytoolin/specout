@@ -3,9 +3,9 @@
 //
 // A Handler[Req, Res] holds one route: its http.HandlerFunc, the Req type of
 // its parameters and body, the Res type of its success body, and the other
-// fields of the operation. Register it on your router with Std, Chi or
-// Gorilla, or with an adapter. The Generator then builds the document and
-// serves it. The output is the same for the same routes.
+// fields of the operation. Register it on a router with Bind and the adapter
+// of the router, or record it with Document. Build then builds the document.
+// The output is the same for the same routes.
 package specout
 
 import (
@@ -14,9 +14,9 @@ import (
 	"sync"
 )
 
-// Generator assembles and serves an OpenAPI 3.1 document built from the
-// routes registered on it. The spec builds lazily on first serve and freezes;
-// registering after the freeze panics.
+// Generator assembles an OpenAPI 3.1 document from the routes registered on
+// it. Build builds the spec and freezes it; registering after the freeze
+// panics.
 type Generator struct {
 	cfg Config
 
@@ -28,69 +28,55 @@ type Generator struct {
 	// webhooks are requests the API sends. They are not routes, so they stay
 	// out of records and of every route check.
 	webhooks []webhook
-	// sources: every router the generator saw, walked once at build time.
-	sources []routeSource
 
 	variants      map[string]reflect.Type
 	nameOverrides map[reflect.Type]string
 
 	specJSON []byte
-	// outer is the outermost chi router of a spec request, for checkChiMount.
-	outer routeSource
-	// inputs counts changes to what a build reads. A failed build keeps its
-	// error, and the count it ran at, until the next change.
-	inputs   int
-	buildErr error
-	errAt    int
-	// served holds each method and path where the generator served the
-	// document, so the recorder does not report the document route as drift.
-	served map[RouteKey]bool
 }
 
 // New returns a Generator that collects routes for cfg. It is safe for
-// concurrent registration; the spec freezes on first read. A cfg that would
+// concurrent registration; the spec freezes on the first Build. A cfg that would
 // make the document invalid panics here.
 func New(cfg Config) *Generator {
-	d := &Generator{
+	g := &Generator{
 		cfg:           cfg,
 		variants:      make(map[string]reflect.Type),
 		nameOverrides: make(map[reflect.Type]string),
 	}
-	d.checkConfig()
-	return d
+	g.checkConfig()
+	return g
 }
 
-// mustBeOpen panics when the spec was already built, so no registration can
-// slip into a frozen document. Every caller then changes a build input, so it
-// also clears a kept build error. Caller holds d.mu.
-func (d *Generator) mustBeOpen() {
-	if d.specJSON != nil {
+// beginChange panics when the spec was already built, so no registration can
+// change a frozen document. Caller holds g.mu.
+func (g *Generator) beginChange() {
+	if g.specJSON != nil {
 		panic("specout: cannot register after the spec was built; " +
-			"register all routes before the first ServeHTTP, WriteJSON or Build")
+			"register all routes before Build")
 	}
-	d.inputs++
 }
 
-// Register declares T a union variant under name, for oneof_type tags on
-// Variant discriminator fields. Call before building the spec.
-func (d *Generator) Register[T any](name string) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.mustBeOpen()
-	d.variants[name] = reflect.TypeFor[T]()
+// Variant declares T a union variant under name, for the oneof_type tag of a
+// discriminator field. Call it before the spec is built.
+func (g *Generator) Variant[T any](name string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.beginChange()
+	g.variants[name] = reflect.TypeFor[T]()
 }
 
-// SchemaName overrides the component name generated for T — the fix when two
-// packages own types with the same name. Call before building the spec.
+// SchemaName overrides the component name generated for T. Use it when two
+// packages have types with the same name. Call before building the spec.
 // Names must be nonempty and contain only letters, digits, dots, hyphens or
 // underscores. T and *T name the same component; the last override wins.
-func (d *Generator) SchemaName[T any](name string) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.mustBeOpen()
+func (g *Generator) SchemaName[T any](name string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.beginChange()
 	if name == "" || componentChars.MatchString(name) {
 		panic("specout: SchemaName " + strconv.Quote(name) +
 			" must contain only ASCII letters, digits, dots, hyphens or underscores")
 	}
-	d.nameOverrides[deref(reflect.TypeFor[T]())] = name
+	g.nameOverrides[deref(reflect.TypeFor[T]())] = name
 }

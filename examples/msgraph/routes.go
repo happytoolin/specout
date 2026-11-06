@@ -19,8 +19,7 @@ func op[Req, Res any](summary, description, id, tag, docs string, responses []sp
 	return handler
 }
 
-// routes registers the eight published operations on b.
-func routes(b *specout.GorillaRouter, s *store) {
+func routes(b *specout.Binder, s *store) {
 	b.Get("/me", op[getMeReq, User]("Get a user", "Retrieve the properties and relationships of user object.",
 		"me.user.GetUser", "me.user", "user-get", ok("Retrieved entity"), s.getMe))
 	b.Get("/users", op[listUsersReq, UserCollectionResponse]("List users", "Retrieve a list of user objects.",

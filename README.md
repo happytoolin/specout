@@ -42,6 +42,7 @@ import (
 	"net/http"
 
 	"github.com/happytoolin/specout"
+	"github.com/happytoolin/specout/adapters/specoutstd"
 )
 
 // GreetRequest describes the request parameters.
@@ -78,14 +79,22 @@ func greet(w http.ResponseWriter, r *http.Request) {
 func main() {
 	doc := specout.New(specout.Config{Title: "Hello API", Version: "1.0.0"})
 	mux := http.NewServeMux()
-	routes := specout.Std(doc, mux)
+	routes := specout.Bind(doc, specoutstd.New(mux))
 
 	routes.Get("/hello/{name}", specout.Handler[GreetRequest, Greeting]{
 		HandlerFunc: greet,
 		Summary:     "Say hello",
 		Responses:   []specout.Response{{Status: http.StatusBadRequest, Type: Problem{}}},
 	})
-	mux.Handle("GET /openapi.json", doc)
+
+	spec, err := doc.Build() // after all routes; a bad document fails here
+	if err != nil {
+		log.Fatal(err)
+	}
+	mux.HandleFunc("GET /openapi.json", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(spec)
+	})
 
 	log.Fatal(http.ListenAndServe("localhost:8080", mux))
 }
@@ -168,26 +177,26 @@ documentation, and it compares the statuses in your HTTP tests with the document
 | Decodes and validates requests | No, your handlers do | Yes | Yes | No |
 | **OpenAPI** | | | | |
 | Document version | 3.1.0 | 3.1.0, and also 3.0.3 | 3.1.0 | 2.0, or 3.1.0 with `--v3.1` on v2 RC |
-| Cookie parameters | Yes | Yes | Yes | — |
-| Discriminated unions | Yes, from Go types | Yes, with a handwritten schema | — | Yes, with `@Discriminator` on v2 RC |
-| Callbacks | Yes, from Go types | Yes, with a handwritten object | — | — |
+| Cookie parameters | Yes | Yes | Yes | No |
+| Discriminated unions | Yes, from Go types | Yes, with a handwritten schema | No | Yes, with `@Discriminator` on v2 RC |
+| Callbacks | Yes, from Go types | Yes, with a handwritten object | No | No |
 | **Checks** | | | | |
-| Find routes with no documentation | Yes | — | — | — |
-| Compare test statuses with the document | Yes | — | — | — |
+| Find routes with no documentation | Yes | No | No | No |
+| Compare test statuses with the document | Yes | No | No | No |
 
 Router support:
 
 | Router | specout | Huma | Fuego |
 |---|---|---|---|
 | `http.ServeMux` | Yes | Yes | Yes |
-| chi v5 | Yes | Yes | — |
+| chi v5 | Yes | Yes | No |
 | gorilla/mux | Yes | Yes | Yes |
-| Echo v5 | Yes | Yes | — |
+| Echo v5 | Yes | Yes | No |
 | Echo v4 | Yes | Yes | Yes |
 | Gin | Yes | Yes | Yes |
-| Fiber v3 | Yes | Yes | — |
-| Fiber v2 | No, Fiber deprecated it | Yes | — |
-| httprouter, BunRouter, Flow | — | Yes | — |
+| Fiber v3 | Yes | Yes | No |
+| Fiber v2 | No, Fiber deprecated it | Yes | No |
+| httprouter, BunRouter, Flow | No | Yes | No |
 
 swag reads comments, so it works with any router.
 
@@ -276,7 +285,7 @@ routes.Post("/items", specout.Handler[CreateItem, Item]{
 	},
 })
 
-routes.Delete("/items/{id}", specout.Delete{
+routes.Delete("/items/{id}", specout.Handler[struct{}, specout.NoContent]{
 	HandlerFunc: deleteItem,
 	Responses:   []specout.Response{{Status: http.StatusNotFound}},
 })
@@ -299,13 +308,13 @@ a response with no body. Set `Omit: true` to remove a response, such as a status
 from `DefaultErrors`. A route with `Public: true` does not get the `401` and
 `403` from `DefaultErrors`.
 
-Use `specout.Get[Item]` for a route with no request data. Use
+Use `struct{}` as the request type for a route with no request data. Use
 `specout.NoContent` as the response type for a route with no response body. Use
 `specout.File` as the type of a binary body, and `ContentTypes` for its media
 types:
 
 ```go
-routes.Get("/report", specout.Get[specout.File]{
+routes.Get("/report", specout.Handler[struct{}, specout.File]{
 	HandlerFunc: getReport,
 	Responses:   []specout.Response{{Status: http.StatusOK, ContentTypes: []string{"application/pdf"}}},
 })
@@ -316,9 +325,14 @@ Use `Request` to describe the request body, in the same way:
 ```go
 routes.Post("/items", specout.Handler[CreateItem, Item]{
 	HandlerFunc: createItem,
-	Request:     specout.Request{Description: "The new item", Example: CreateItem{Name: "Lamp"}},
+	Request: specout.Request{
+		Description: "The new item",
+		Examples:    map[string]specout.Example{"lamp": {Value: CreateItem{Name: "Lamp"}}},
+	},
 })
 ```
+
+`Examples` gives each example a name. `Response` has the same `Examples` field.
 
 ### Requests your API sends
 
@@ -332,12 +346,13 @@ type OrderCreated struct {
 	OrderID   string `json:"orderId"`
 }
 
-doc.Webhook(http.MethodPost, "orderCreated", specout.Event[OrderCreated]{
+doc.Webhook(http.MethodPost, "orderCreated", specout.Handler[OrderCreated, specout.NoContent]{
 	Summary: "An order was created",
 })
 ```
 
-`specout.Event[T]` means that the receiver answers `204` with no body. Add
+The response type `specout.NoContent` means that the receiver answers `204`
+with no body. Add
 `Responses` if the receiver can answer in another way. A declared success
 response replaces the `204`. For example, use `Key: "2XX"` for any success
 status.
@@ -348,7 +363,7 @@ usually a runtime expression that reads the original request:
 ```go
 jobDone := specout.NewCallback(
 	http.MethodPost, "jobDone", "{$request.body#/callbackUrl}",
-	specout.Event[JobResult]{Summary: "The job finished"},
+	specout.Handler[JobResult, specout.NoContent]{Summary: "The job finished"},
 )
 
 routes.Post("/jobs", specout.Handler[StartJob, Job]{
@@ -385,7 +400,7 @@ routes.Post("/jobs", specout.Handler[StartJob, Job]{
 	}},
 })
 
-routes.Get("/jobs/{id}", specout.Get[Job]{HandlerFunc: getJob, OperationID: "getJob"})
+routes.Get("/jobs/{id}", specout.Handler[struct{}, Job]{HandlerFunc: getJob, OperationID: "getJob"})
 ```
 
 ### Form fields and servers
@@ -419,7 +434,6 @@ when your API needs them:
 | `Auth` | Describe authentication. Your middleware must check the credentials. |
 | `ErrorType`, `DefaultErrors` | Describe a shared error body and its status codes. Your handlers write these responses. |
 | `ClosedSchemas` | Mark object schemas as closed to unknown fields. Your code must reject those fields. |
-| `JSONSchemaDialect` | Set the default JSON Schema dialect of the document. Most APIs do not need this. |
 
 ### Types with custom JSON
 
@@ -450,58 +464,67 @@ and a nil slice or map as an empty value instead of `null`.
 
 | Router | Function | Package |
 |---|---|---|
-| `http.ServeMux` | `specout.Std` | `github.com/happytoolin/specout` |
-| chi | `specout.Chi` | `github.com/happytoolin/specout` |
-| gorilla/mux | `specout.Gorilla` | `github.com/happytoolin/specout` |
+| `http.ServeMux` | `specoutstd.New` | `github.com/happytoolin/specout/adapters/specoutstd` |
+| chi | `specoutchi.New` | `github.com/happytoolin/specout/adapters/specoutchi` |
+| gorilla/mux | `specoutgorilla.New` | `github.com/happytoolin/specout/adapters/specoutgorilla` |
 | Echo v5 | `specoutecho.New` | `github.com/happytoolin/specout/adapters/specoutecho` |
 | Echo v4 | `specoutechov4.New` | `github.com/happytoolin/specout/adapters/specoutechov4` |
 | Gin | `specoutgin.New` | `github.com/happytoolin/specout/adapters/specoutgin` |
 | Fiber v3 | `specoutfiber.New` | `github.com/happytoolin/specout/adapters/specoutfiber` |
 
-Your build includes Echo, Gin, or Fiber only when you import its adapter.
+`specoutstd` is part of the core module. Each other adapter is a separate Go
+module, so the core module does not depend on a router. Add the adapter for
+your router:
 
-The Echo, Gin, and Fiber adapters work the same way. This example uses Gin:
+```sh
+go get github.com/happytoolin/specout/adapters/specoutgin@latest
+```
+
+`specout.Bind` takes the adapter of your router, and the code after it is the
+same on every router. This example uses Gin:
 
 ```go
 doc := specout.New(specout.Config{Title: "Inventory API", Version: "1.0.0"})
 engine := gin.New()
 
-routes := specoutgin.New(doc, engine.Group("/v1"))
+routes := specout.Bind(doc, specoutgin.New(engine.Group("/v1")))
 routes.Get("/items/:id", specout.Handler[GetItemRequest, Item]{
 	HandlerFunc: getItem,
 	Summary:     "Get an item",
 })
-engine.GET("/openapi.json", gin.WrapH(doc))
 
-if err := specoutgin.Adopt(doc, engine, specout.Skip("/openapi.json")); err != nil {
+if err := specout.Check(doc, specoutgin.New(engine), "/openapi.json"); err != nil {
 	log.Fatal(err)
 }
 ```
 
-With chi, call `Adopt` on the outermost router before `Build`. Only that router
-knows the full path of each route in a group. `Route`, `Group`, and `With` work
-as they do in chi, and give the binder of the group:
+The routes use the syntax of the router, such as `:id` on Gin. For another
+router, change only the adapter, as in `specoutchi.New(r)` or
+`specoutecho.New(e.Group("/v1"))`. Put route middleware on a router group, and
+make the adapter from that group, as in `engine.Group("/admin", requireAdmin)`.
+
+A chi router does not know the prefix where it is routed or mounted. Pass the
+prefix to `specoutchi.New`:
 
 ```go
 r := chi.NewRouter()
-routes := specout.Chi(doc, r)
-routes.Route("/v1", func(r *specout.ChiRouter) {
-	r.Get("/items/{id}", specout.Handler[GetItemRequest, Item]{HandlerFunc: getItem})
+r.Route("/v1", func(r chi.Router) {
+	routes := specout.Bind(doc, specoutchi.New(r, "/v1"))
+	routes.Get("/items/{id}", specout.Handler[GetItemRequest, Item]{HandlerFunc: getItem})
 })
-r.Handle("/openapi.json", doc)
-
-if err := routes.Adopt(); err != nil {
-	log.Fatal(err)
-}
 ```
+
+If the prefix is wrong, `Check` on the root router reports the real path as
+undocumented.
 
 The document shows each path in OpenAPI form, so `/items/:id` becomes
 `/items/{id}`. Your handler reads the value with `r.PathValue("id")` on every
 router.
 
-For another router, use `doc.Bind` to register and document each route. Use
-`doc.Document` when the router registers the handler and you only want the
-documentation. To request an adapter, open an
+For another router, write an adapter: a type with the two methods of
+`specout.Router`. Or register the handler on the router, and call
+`doc.Document` to record its documentation. The `Document` path uses OpenAPI
+syntax, such as `/items/{id}`. To request an adapter, open an
 [issue](https://github.com/happytoolin/specout/issues).
 
 ### Encoded path values
@@ -510,9 +533,10 @@ A request for `/users/a%40b` gives one of these values:
 
 | Router | Value of `r.PathValue` | To get `a@b` |
 |---|---|---|
-| `http.ServeMux`, gorilla/mux, Echo v4, Gin, Fiber | `a@b` | No action. |
+| `http.ServeMux`, gorilla/mux, Gin | `a@b` | No action. |
 | Echo v5 | `a%40b` | Set `UnescapePathParamValues` in `echo.RouterConfig`. |
-| chi | `a%40b` | Call `url.PathUnescape` on the value. |
+| Fiber | `a%40b` | Set `UnescapePath` in `fiber.Config`. |
+| Echo v4, chi | `a%40b` | Call `url.PathUnescape` on the value. |
 
 Two router settings keep the value encoded:
 
@@ -524,46 +548,40 @@ Two router settings keep the value encoded:
 - A path with an empty segment (`//`) or a dot segment (`/.`, `/..`) panics when
   you register it. Clients remove those segments, so the document would show a
   different path.
-- The document leaves out catch-all routes. A chi parameter is a catch-all when
-  its regex can match a `/` before more text, as in `/files/{name:.+}.json`.
+- The document leaves out catch-all routes, such as `/files/*` in chi or
+  `/files/{path...}` in `http.ServeMux`. A chi or gorilla/mux parameter with a
+  regex, such as `/files/{name:.+}.json`, is a normal path parameter in the
+  document, also when the regex can match a `/`.
 - `http.ServeMux` serves `/a/{$}` for `/a/` only, and `/a/` for every path below
-  it. OpenAPI has one path for both, so the build fails if `specout.Std`
-  registers both. Register one of them with `specout.Std`, and the other on the
-  mux. Give the recorder a skip rule for the second one, as in
-  `recorder.New(mux, specout.Skip("/a/"))`.
+  it. The document shows `/a/{$}` as `/a/`. It leaves out `/a/`, because
+  OpenAPI has no form for a path that serves every path below it.
 
 ## Serve or export the document
 
-`Generator` is an `http.Handler`, so you can serve it on any route. Use
-`WriteJSON` to write the document to a file or a buffer:
+`Build` returns the document as indented JSON. Serve the bytes on a route of
+your router, or write them to a file:
 
 ```go
-var out bytes.Buffer
-if err := doc.WriteJSON(&out); err != nil {
+spec, err := doc.Build()
+if err != nil {
 	return err
 }
+engine.GET("/openapi.json", func(c *gin.Context) { c.Data(200, "application/json", spec) })
 ```
 
-Register all routes first. The first `ServeHTTP` or `WriteJSON` call builds the
-document, and you cannot add routes after a successful build.
+Register all routes first. You cannot add routes after a successful build.
 
 ### When something is wrong
 
 | Problem | Result |
 |---|---|
 | Bad `Config` | `specout.New` panics. |
-| Bad route data or bad path | The registration panics, and the router does not get the route. |
-| Failed build, with `Build` or `WriteJSON` | The call returns an error that lists every problem. If the build panics, the call panics. |
-| Failed build, with `ServeHTTP` | `ServeHTTP` returns `500` without the error text. It logs the error once, and also the stack after a panic. |
+| Bad route data | The registration panics, and the router does not get the route. |
+| Bad path | The registration panics. A router adapter checks the full path after the router adds the route, so the router has the route. |
+| Failed build, with `Build` | The call returns an error that lists every problem. If the build panics, the call panics. |
 
-Call `doc.Build()` at startup or in a test, so that a bad document fails there
-and not on the first request:
-
-```go
-if err := doc.Build(); err != nil {
-	log.Fatal(err)
-}
-```
+Call `doc.Build()` at startup or in a test, so that a bad document fails
+there.
 
 Each message starts with the place of the problem, and it gives the fix when
 specout knows it:
@@ -595,34 +613,28 @@ also stops on these values:
 
 A list default in a tag, such as `default=1` on a `[]int`, becomes `[1]`.
 
-A few path checks need the full path, and the router knows it only after it adds
-the route. In these cases, the router has the route when the panic occurs:
-
-- A path that a `doc.Bind` mount function returns.
-- A gorilla/mux subrouter prefix or host.
-- An empty gorilla/mux path.
+Some path checks need the full path, and the router knows it only after it
+adds the route. Thus `Bind` checks the path after the router adds the route,
+and the router has the route when the panic occurs.
 
 ## Check your documentation
 
 ### Find routes without documentation
 
-`Adopt` returns an error that names each route with no documentation. It works
-with chi, gorilla/mux, Echo, Gin, and Fiber. Use `RequireDocumented` to make the
-same check in a test:
+`specout.Check` returns an error that names each route with no documentation.
+It works with chi, gorilla/mux, Echo, Gin, and Fiber. Give `Check` the adapter
+of the root router and the paths to skip, such as the path of the document
+itself. Use the same check in a test:
 
 ```go
 func TestRoutesAreDocumented(t *testing.T) {
-	specoutgin.RequireDocumented(t, doc, engine, specout.Skip("/openapi.json"))
+	require.NoError(t, specout.Check(doc, specoutgin.New(engine), "/openapi.json"))
 }
 ```
 
-With chi, call `Adopt` on the outermost router after you register the routes.
-This also gives specout the full paths of route groups and mounted routers. If
-chi serves the document, the build fails when an adopted router is mounted under
-a prefix that no server URL declares.
-
-`http.ServeMux` cannot list its routes. Register each route that needs
-documentation with `specout.Std`.
+Call `Check` after you register the routes. `http.ServeMux` cannot list its
+routes, so `Check` returns an error for it. Use the recorder to find its routes
+that have no documentation.
 
 ### Compare response statuses with your tests
 
@@ -632,17 +644,22 @@ document declares each status that occurred. It does not check response bodies.
 
 ```go
 func TestStatuses(t *testing.T) {
-	rec := recorder.New(mux)
+	rec := recorder.New(mux, "/openapi.json")
 	rec.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/hello/Ada", nil))
 	rec.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/hello/Ada?language=fr", nil))
-	recorder.Verify(t, doc, rec)
+	require.NoError(t, recorder.Verify(doc, rec))
 }
 ```
 
-With Echo, Gin, and Fiber, use `recorder.New(nil)` and install the adapter's
-`Record` middleware.
+`recorder.Verify` returns an error that lists each problem on one line.
 
-You can pass the production handler, with its middleware, to `recorder.New`.
+With chi, gorilla/mux, Echo, Gin, and Fiber, use `recorder.New(nil)` and
+install the adapter's `Record` middleware. With chi, register it before the
+routes, as in `r.Use(specoutchi.Record(rec))`. Give `recorder.New` the paths to
+skip, as in `recorder.New(nil, "/openapi.json")`.
+
+For `http.ServeMux`, the recorder reads the pattern of the route that ran. You
+can pass the production handler, with its middleware, to `recorder.New`.
 Middleware outside the router hides the route of a request, so `Verify` finds
 the route from the request path. A `401` from an auth middleware then counts for
 the route. A request for the document itself is not drift.

@@ -68,6 +68,12 @@ func operation[Req, Res any](summary string, fn http.HandlerFunc, responses ...s
 	return specout.Handler[Req, Res]{HandlerFunc: fn, Summary: summary, Tags: []string{"onboarding"}, Responses: responses}
 }
 
+// public marks an operation that needs no credentials.
+func public[Req, Res any](h specout.Handler[Req, Res]) specout.Handler[Req, Res] {
+	h.Public = true
+	return h
+}
+
 func invalid(w http.ResponseWriter, field, message string) {
 	examplekit.WriteJSON(w, http.StatusUnprocessableEntity, validationError{[]fieldProblem{{Field: field, Message: message}}})
 }
@@ -102,18 +108,18 @@ func upsert(s *store, id func(*http.Request) string) http.HandlerFunc {
 	}
 }
 
-func routes(b *specout.ChiRouter, s *store) {
-	b.Get("/onboarding", operation[listRequest, page]("List onboarding records", func(w http.ResponseWriter, _ *http.Request) {
+func routes(b *specout.Binder, s *store) {
+	b.Get("/onboarding", public(operation[listRequest, page]("List onboarding records", func(w http.ResponseWriter, _ *http.Request) {
 		examplekit.WriteJSON(w, http.StatusOK, page{Items: s.list()})
-	}).WithPublic())
-	b.Get("/onboarding/{id}", operation[struct{}, onboarding]("Fetch one onboarding record", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	b.Get("/onboarding/{id}", public(operation[struct{}, onboarding]("Fetch one onboarding record", func(w http.ResponseWriter, r *http.Request) {
 		item, ok := s.get(chi.URLParam(r, "id"))
 		if !ok {
 			writeProblem(w, http.StatusNotFound, "not found")
 			return
 		}
 		examplekit.WriteJSON(w, http.StatusOK, item)
-	}).WithPublic())
+	})))
 	b.Post("/onboarding", operation[upsertRequest, onboarding]("Create an onboarding record", upsert(s, func(r *http.Request) string {
 		if r.URL.Query().Has("existing") {
 			return "onb_4f9x"

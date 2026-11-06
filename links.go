@@ -66,17 +66,17 @@ func linkObj(where string, l Link) *obj {
 // operation of each operationId. A route that did not resolve has no derived
 // id, so a link to a missing id is not an error while such a route exists: the
 // resolve error comes first.
-func (d *Generator) checkLinks(ids map[string]*routeRecord) error {
-	if slices.ContainsFunc(d.records, func(rec *routeRecord) bool {
+func (g *Generator) checkLinks(ids map[string]*routeRecord) error {
+	if slices.ContainsFunc(g.records, func(rec *routeRecord) bool {
 		return rec.full == "" && emittedOperationID(rec) == ""
 	}) {
 		return nil
 	}
 	names := slices.Collect(maps.Keys(ids))
 	var errs []error
-	for rec := range d.operations() {
+	for rec := range g.operations() {
 		if slices.ContainsFunc(rec.responses, func(r Response) bool { return len(r.Links) > 0 }) {
-			errs = append(errs, d.checkLinkTargets(rec, names))
+			errs = append(errs, g.checkLinkTargets(rec, names))
 		}
 	}
 	return errors.Join(errs...)
@@ -84,9 +84,9 @@ func (d *Generator) checkLinks(ids map[string]*routeRecord) error {
 
 // checkLinkTargets checks that each link of rec's responses names one of the
 // operationIds in ids.
-func (d *Generator) checkLinkTargets(rec *routeRecord, ids []string) error {
+func (g *Generator) checkLinkTargets(rec *routeRecord, ids []string) error {
 	var errs []error
-	for _, e := range d.responsePlan(rec, false) {
+	for _, e := range g.responsePlan(rec, false) {
 		if e.resp == nil {
 			continue
 		}

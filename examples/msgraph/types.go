@@ -74,7 +74,6 @@ type (
 		Select           []string `jsonschema:"description=Select properties to be returned" query:"$select,omitempty"`
 		Expand           []string `jsonschema:"description=Expand related entities"          query:"$expand,omitempty"`
 	}
-	// listUsersReq is users.user.ListUser, in published order.
 	listUsersReq struct {
 		ConsistencyLevel string   `header:"ConsistencyLevel,omitempty"                                       jsonschema:"description=Indicates the requested consistency level."`
 		Top              int32    `jsonschema:"description=Show only the first n items,minimum=0,example=50" query:"$top,omitempty"`

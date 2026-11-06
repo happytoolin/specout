@@ -2,7 +2,6 @@ package specout
 
 import "reflect"
 
-// deref strips pointer levels. A nil type stays nil.
 func deref(t reflect.Type) reflect.Type {
 	seen := make(map[reflect.Type]bool)
 	for t != nil && t.Kind() == reflect.Pointer {

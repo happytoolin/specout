@@ -12,7 +12,7 @@ import (
 //
 // Req is path+query+body together, so a $ref to the whole struct would list a
 // path or query parameter as a body property: reify the struct without its
-// parameter fields instead. Any other Req is itself the body — []User is a
+// parameter fields instead. Any other Req is itself the body: []User is a
 // JSON array body, and File is an octet-stream payload.
 //
 // StructOf reuses identical types, so repeated requests share one component.

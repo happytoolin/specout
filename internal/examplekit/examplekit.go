@@ -7,16 +7,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/happytoolin/specout"
 )
 
-// DecodeJSON reads exactly one JSON value. The examples keep their existing
-// decoder semantics, but reject trailing values or junk before changing data.
+// DecodeJSON decodes exactly one JSON value from r into v. Trailing data is
+// an error.
 func DecodeJSON(r io.Reader, v any) error {
 	decoder := json.NewDecoder(r)
 	if err := decoder.Decode(v); err != nil {
@@ -29,8 +31,7 @@ func DecodeJSON(r io.Reader, v any) error {
 	return nil
 }
 
-// WriteJSON answers v as application/json with code: the one JSON writer both
-// examples share.
+// WriteJSON writes v as an application/json response with status code.
 func WriteJSON(w http.ResponseWriter, code int, v any) {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -47,13 +48,13 @@ func SwaggerPage(title, specPath string) string {
 	return `<!DOCTYPE html>
 <html>
 <head>
-  <title>` + title + `</title>
-  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+  <title>` + html.EscapeString(title) + `</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5.17.14/swagger-ui.css">
 </head>
 <body>
 <div id="swagger-ui"></div>
-<script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
-<script>window.ui = SwaggerUIBundle({ url: '` + specPath + `', dom_id: '#swagger-ui' })</script>
+<script src="https://unpkg.com/swagger-ui-dist@5.17.14/swagger-ui-bundle.js"></script>
+<script>window.ui = SwaggerUIBundle({ url: ` + strconv.Quote(specPath) + `, dom_id: '#swagger-ui' })</script>
 </body>
 </html>`
 }
@@ -70,13 +71,31 @@ func Page(body string, next http.Handler) http.HandlerFunc {
 	}
 }
 
+// Spec builds the document of d and returns a handler that serves it. Call it
+// after every route is registered: the build freezes d. A bad document
+// panics, so the example fails at startup.
+func Spec(d *specout.Generator) http.HandlerFunc {
+	spec, err := d.Build()
+	if err != nil {
+		panic(err)
+	}
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(spec)
+	}
+}
+
 // EmitSpec handles GO_SPEC_ONLY: print the spec to stdout so CI can diff the
 // golden, and report true so main returns without serving.
 func EmitSpec(d *specout.Generator) bool {
 	if os.Getenv("GO_SPEC_ONLY") == "" {
 		return false
 	}
-	if err := d.WriteJSON(os.Stdout); err != nil {
+	spec, err := d.Build()
+	if err == nil {
+		_, err = os.Stdout.Write(spec)
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

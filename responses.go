@@ -28,7 +28,7 @@ type respEntry struct {
 // codes the route did not declare. The emitted responses object (responsesFor)
 // and the two drift-check views (statusMap) both read this one walk, so the
 // document and the drift check cannot disagree about what a route returns.
-func (d *Generator) responsePlan(rec *routeRecord, withDefaults bool) []respEntry {
+func (g *Generator) responsePlan(rec *routeRecord, withDefaults bool) []respEntry {
 	where := rec.label()
 	if raw, ok := rec.raw["responses"]; ok {
 		return rawResponsePlan(where, raw)
@@ -48,11 +48,11 @@ func (d *Generator) responsePlan(rec *routeRecord, withDefaults bool) []respEntr
 			p.omitted[key] = true
 			continue
 		}
-		p.put(respEntry{key: key, code: resp.Status, typ: d.declaredType(where+": response "+key, rec, resp), resp: resp})
+		p.put(respEntry{key: key, code: resp.Status, typ: g.declaredType(where+": response "+key, rec, resp), resp: resp})
 	}
 	// global defaults, exactly as the drift maps count them
 	if withDefaults && !rec.outgoing {
-		d.putDefaultErrors(&p, rec)
+		g.putDefaultErrors(&p, rec)
 	}
 	return p.entries()
 }
@@ -119,7 +119,7 @@ func successResponse(r Response) bool {
 // API serves. A webhook or callback goes to another server, so ErrorType does
 // not describe it. Any other response has no body. 1xx, 204, 205 and 304 carry
 // no body, and checkResponse rejects a Type with a body there.
-func (d *Generator) declaredType(where string, rec *routeRecord, resp *Response) reflect.Type {
+func (g *Generator) declaredType(where string, rec *routeRecord, resp *Response) reflect.Type {
 	if resp.Type != nil {
 		return valueType(where, resp.Type)
 	}
@@ -130,8 +130,8 @@ func (d *Generator) declaredType(where string, rec *routeRecord, resp *Response)
 	case classSuccess:
 		return rec.res
 	case classError:
-		if d.cfg.ErrorType != nil && !rec.outgoing {
-			return reflect.TypeOf(d.cfg.ErrorType)
+		if g.cfg.ErrorType != nil && !rec.outgoing {
+			return reflect.TypeOf(g.cfg.ErrorType)
 		}
 	}
 	return nil
@@ -179,7 +179,6 @@ func rawResponsePlan(where string, raw any) []respEntry {
 	return entries
 }
 
-// rawResponses reads Raw.responses as one JSON object.
 func rawResponses(where string, raw any) map[string]jsontext.Value {
 	data, err := json.Marshal(raw)
 	if err != nil {
@@ -211,12 +210,10 @@ func rawEntry(where, key string, v jsontext.Value) respEntry {
 	return e
 }
 
-// isStatus reports whether code is an HTTP status code, 100-599.
 func isStatus(code int) bool {
 	return code >= 100 && code <= 599
 }
 
-// newRespEntry builds a response the route derived rather than declared.
 func newRespEntry(code int, t reflect.Type) respEntry {
 	return respEntry{key: responseKey("response", code, ""), code: code, typ: t}
 }
@@ -241,12 +238,12 @@ func bodylessResponse(resp *Response) bool {
 // putDefaultErrors adds the configured error responses for every code the route
 // neither declared nor omitted. A Public route needs no credentials, so it does
 // not get 401 or 403.
-func (d *Generator) putDefaultErrors(p *plannedResponses, rec *routeRecord) {
-	if d.cfg.ErrorType == nil {
+func (g *Generator) putDefaultErrors(p *plannedResponses, rec *routeRecord) {
+	if g.cfg.ErrorType == nil {
 		return
 	}
-	et := valueType("Config.ErrorType", d.cfg.ErrorType)
-	for _, code := range d.cfg.DefaultErrors {
+	et := valueType("Config.ErrorType", g.cfg.ErrorType)
+	for _, code := range g.cfg.DefaultErrors {
 		key := responseKey("Config.DefaultErrors", code, "")
 		_, declared := p.byKey[key]
 		authError := code == http.StatusUnauthorized || code == http.StatusForbidden
@@ -260,15 +257,15 @@ func (d *Generator) putDefaultErrors(p *plannedResponses, rec *routeRecord) {
 // checkDefaultErrors checks the error responses that Config adds to every
 // route: ErrorType is a value, and each DefaultErrors entry is a status code
 // that can carry it. DefaultErrors alone would add nothing, with no message.
-func (d *Generator) checkDefaultErrors() {
-	if d.cfg.ErrorType == nil {
-		if len(d.cfg.DefaultErrors) > 0 {
+func (g *Generator) checkDefaultErrors() {
+	if g.cfg.ErrorType == nil {
+		if len(g.cfg.DefaultErrors) > 0 {
 			panic("specout: Config.DefaultErrors: set Config.ErrorType, the body of these responses")
 		}
 		return
 	}
-	valueType("Config.ErrorType", d.cfg.ErrorType)
-	for _, code := range d.cfg.DefaultErrors {
+	valueType("Config.ErrorType", g.cfg.ErrorType)
+	for _, code := range g.cfg.DefaultErrors {
 		if code != 0 && !isStatus(code) {
 			panic("specout: Config.DefaultErrors: status " + strconv.Itoa(code) +
 				" is not valid; use 100-599, or 0 for the default response")
@@ -283,9 +280,9 @@ func (d *Generator) checkDefaultErrors() {
 // responsesFor renders a route's derived responses as the operation's
 // responses object, in plan order. checkResponses checked them when the route
 // was registered.
-func (d *Generator) responsesFor(rec *routeRecord, sr *schemaRegistry) *obj {
+func (g *Generator) responsesFor(rec *routeRecord, sr *schemaRegistry) *obj {
 	out := newObj()
-	for _, e := range d.responsePlan(rec, true) {
+	for _, e := range g.responsePlan(rec, true) {
 		if rec.method == http.MethodHead {
 			e = withoutBody(e)
 		}
@@ -301,7 +298,7 @@ func withoutBody(e respEntry) respEntry {
 	if e.resp != nil {
 		resp := *e.resp
 		resp.ContentTypes = nil
-		resp.Example, resp.Examples = nil, nil
+		resp.Examples = nil
 		e.resp = &resp
 	}
 	return e
@@ -310,8 +307,8 @@ func withoutBody(e respEntry) respEntry {
 // checkResponses panics on a route's responses when they would break the
 // document. The plan itself checks the status codes, keys, Type values and
 // Raw.responses.
-func (d *Generator) checkResponses(rec *routeRecord) {
-	plan := d.responsePlan(rec, true)
+func (g *Generator) checkResponses(rec *routeRecord) {
+	plan := g.responsePlan(rec, true)
 	// OpenAPI requires at least one response
 	if len(plan) == 0 {
 		panic("specout: " + rec.label() + ": every response is omitted; declare at least one")
@@ -350,8 +347,8 @@ func checkResponse(where string, e respEntry) {
 		{keyDescription, "Description", resp.Description != ""},
 		{"headers", "Headers", len(resp.Headers) > 0},
 		{
-			"content", "ContentTypes, Example or Examples",
-			len(resp.ContentTypes) > 0 || resp.Example != nil || len(resp.Examples) > 0,
+			"content", "ContentTypes or Examples",
+			len(resp.ContentTypes) > 0 || len(resp.Examples) > 0,
 		},
 	})
 }
@@ -360,13 +357,13 @@ func checkResponse(where string, e respEntry) {
 // response has a body for them to show.
 func checkResponseExamples(where string, e respEntry) {
 	resp := e.resp
-	if resp.Example == nil && len(resp.Examples) == 0 {
+	if len(resp.Examples) == 0 {
 		return
 	}
 	if !hasBody(e.typ) {
 		panic("specout: " + where + ": sets an example, but this response has no body; set Type, or remove the example")
 	}
-	checkExamples(where, resp.Example, resp.Examples, e.typ)
+	checkExamples(where, resp.Examples, e.typ)
 }
 
 // checkHeaders checks the headers of one Response or Encoding. HTTP header names ignore
@@ -392,7 +389,6 @@ func checkHeaders(where string, headers []Header) {
 	}
 }
 
-// responseBody builds one emitted response object.
 func responseBody(e respEntry, sr *schemaRegistry) *obj {
 	resp := e.resp
 	if resp == nil {
@@ -434,10 +430,10 @@ func setDeclaredContent(body *obj, e respEntry, sr *schemaRegistry) {
 // setResponseExamples writes the examples of resp on each of its media types.
 func setResponseExamples(body *obj, resp *Response) {
 	content, ok := body.get("content").(*obj)
-	if !ok || (resp.Example == nil && len(resp.Examples) == 0) {
+	if !ok || len(resp.Examples) == 0 {
 		return
 	}
-	examples := encodeExamples("response", resp.Example, resp.Examples)
+	examples := encodeExamples("response", resp.Examples)
 	for _, ct := range content.keys {
 		if media, isObj := content.get(ct).(*obj); isObj {
 			examples.set(media, nil)
@@ -464,7 +460,6 @@ func responseSchema(t reflect.Type, sr *schemaRegistry) any {
 	return schemaFor(t, sr)
 }
 
-// headerObjs is one headers object, in declared order.
 func headerObjs(headers []Header, sr *schemaRegistry) *obj {
 	out := newObj()
 	for _, hd := range headers {
@@ -531,11 +526,10 @@ var (
 	// typedFields names the typed form of the fields that Raw does not take, so
 	// the panic says what to write instead.
 	typedFields = map[string]string{
-		"jsonSchemaDialect": "Config.JSONSchemaDialect",
-		"webhooks":          "Generator.Webhook",
-		"callbacks":         "Handler.Callbacks and NewCallback",
-		"servers":           "Config.Servers or Handler.Servers",
-		"links":             "Response.Links",
+		"webhooks":  "Generator.Webhook",
+		"callbacks": "Handler.Callbacks and NewCallback",
+		"servers":   "Config.Servers or Handler.Servers",
+		"links":     "Response.Links",
 	}
 )
 

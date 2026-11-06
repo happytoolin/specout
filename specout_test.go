@@ -4,11 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/happytoolin/specout"
+	"github.com/happytoolin/specout/adapters/specoutstd"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -33,7 +32,6 @@ type UpsertRequest struct {
 
 type EmptyReq struct{}
 
-// TestQuickStartFlow covers registrations on the root router with full paths.
 func TestQuickStartFlow(t *testing.T) {
 	d, r := specout.New(specout.Config{
 		Title:         "Onboarding API",
@@ -41,23 +39,19 @@ func TestQuickStartFlow(t *testing.T) {
 		Description:   "Internal onboarding service.",
 		ErrorType:     Problem{},
 		DefaultErrors: []int{400, 404, 500},
-	}), chi.NewRouter()
+	}), http.NewServeMux()
 
-	rc := specout.Chi(d, r)
-	rc.Delete("/onboarding/{id}", specout.Handler[EmptyReq, struct{}]{HandlerFunc: okBody})
-	rc.Put("/onboarding/{id}", specout.Handler[UpsertRequest, Onboarding]{
+	rc := specout.Bind(d, specoutstd.New(r))
+	rc.Handle("DELETE", "/onboarding/{id}", specout.Handler[EmptyReq, struct{}]{HandlerFunc: okBody})
+	rc.Handle("PUT", "/onboarding/{id}", specout.Handler[UpsertRequest, Onboarding]{
 		HandlerFunc: noop,
 		Responses:   []specout.Response{{Status: http.StatusCreated}},
 	})
-	rc.Get("/onboarding", specout.Handler[EmptyReq, []Onboarding]{HandlerFunc: noop, Summary: "List onboarding"})
-	adopt(t, rc)
-	r.Mount("/openapi.json", d)
-
+	rc.Handle("GET", "/onboarding", specout.Handler[EmptyReq, []Onboarding]{HandlerFunc: noop, Summary: "List onboarding"})
 	fetch := func() []byte {
-		w := httptest.NewRecorder()
-		r.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/openapi.json", nil))
-		require.Equal(t, 200, w.Code, "openapi.json status")
-		return w.Body.Bytes()
+		spec, err := d.Build()
+		require.NoError(t, err)
+		return spec
 	}
 	body := fetch()
 	var doc map[string]any
@@ -69,7 +63,6 @@ func TestQuickStartFlow(t *testing.T) {
 		assert.Contains(t, paths, p, "missing path %q", p)
 	}
 
-	// 204 for NoContent, the declared 201 replaces the 200, global errors stamped
 	assert.Contains(t, opOf(t, doc, "/onboarding/{id}", "delete")["responses"].(map[string]any), "204", "delete missing 204")
 	putResps := opOf(t, doc, "/onboarding/{id}", "put")["responses"].(map[string]any)
 	assert.Contains(t, putResps, "201", "put missing 201")
@@ -78,7 +71,6 @@ func TestQuickStartFlow(t *testing.T) {
 		assert.Contains(t, putResps, code, "put missing global default")
 	}
 
-	// the 201 has the Res body, and the errors have ErrorType
 	assert.Contains(t, schemas(t, doc), "Onboarding", "missing Onboarding component")
 	ref := func(code string) any {
 		return putResps[code].(map[string]any)["content"].(map[string]any)["application/json"].(map[string]any)["schema"].(map[string]any)["$ref"]
@@ -86,73 +78,15 @@ func TestQuickStartFlow(t *testing.T) {
 	assert.Equal(t, "#/components/schemas/Onboarding", ref("201"), "the 201 body")
 	assert.Equal(t, "#/components/schemas/Problem", ref("404"), "the 404 body")
 
-	// determinism: second serve is byte-identical
-	assert.True(t, bytes.Equal(body, fetch()), "spec not deterministic across serves")
+	assert.True(t, bytes.Equal(body, fetch()), "spec not deterministic across builds")
 
-	// post-freeze registration panics
-	require.Panics(t, func() { rc.Get("/late", specout.Handler[EmptyReq, Onboarding]{HandlerFunc: noop}) })
-}
-
-// TestGroupsAndMountsResolve: Route groups and Mount'd subrouters resolve to
-// full paths when the generator adopts the serving root (d.Adopt).
-func TestGroupsAndMountsResolve(t *testing.T) {
-	d, r := newGen(), chi.NewRouter()
-	r.Route("/onboarding", func(r chi.Router) { specout.Chi(d, r).Get("/", okGet) })
-	adopt(t, specout.Chi(d, r))
-	assert.Contains(t, docPaths(t, d), "/onboarding/", "group route not resolved to full path")
-}
-
-// TestAdoptRejectsStrays: Adopt reports plain-handler routes the generator
-// never registered.
-func TestAdoptRejectsStrays(t *testing.T) {
-	d, r := newGen(), chi.NewRouter()
-	specout.Chi(d, r).Get("/known", okGet)
-	r.Get("/stray", func(http.ResponseWriter, *http.Request) {})
-	require.ErrorContains(t, specout.Chi(d, r).Adopt(), "/stray")
-}
-
-func TestServeOnlyGet(t *testing.T) {
-	d, r := newGen(), chi.NewRouter()
-	specout.Chi(d, r).Get("/x", okGet)
-	adopt(t, specout.Chi(d, r))
-
-	rec := httptest.NewRecorder()
-	d.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/openapi.json", nil))
-	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code, "POST")
-
-	rec = httptest.NewRecorder()
-	d.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/openapi.json", nil))
-	assert.Equal(t, http.StatusOK, rec.Code, "GET")
-	assert.Contains(t, rec.Header().Get("Content-Type"), "application/json")
-}
-
-// The fluent With* chain and the struct literal produce the same document.
-func TestHandlerFluent(t *testing.T) {
-	literal := specout.Handler[EmptyReq, Onboarding]{
-		HandlerFunc: noop, Summary: "s", Tags: []string{"t"},
-		Responses:  []specout.Response{{Status: 409, Type: Problem{}}},
-		Deprecated: true,
-	}
-	chained := specout.Handler[EmptyReq, Onboarding]{HandlerFunc: noop}.
-		WithSummary("s").WithTags("t").
-		WithResponse(specout.Response{Status: 409, Type: Problem{}}).
-		WithDeprecated()
-
-	for _, h := range []specout.Handler[EmptyReq, Onboarding]{literal, chained} {
-		g := newGen()
-		g.Document(http.MethodGet, "/x", h)
-		op := opOf(t, buildDoc(t, g), "/x", "get")
-		assert.Equal(t, "s", op["summary"])
-		assert.Equal(t, []any{"t"}, op["tags"])
-		assert.Contains(t, op["responses"], "409")
-		assert.Equal(t, true, op["deprecated"])
-	}
+	require.Panics(t, func() { rc.Handle("GET", "/late", specout.Handler[EmptyReq, Onboarding]{HandlerFunc: noop}) })
 }
 
 func TestStdMuxHandle(t *testing.T) {
 	d, mux := newGen(), http.NewServeMux()
-	specout.Std(d, mux).Handle("DELETE /onboarding/{id}", specout.Handler[EmptyReq, struct{}]{HandlerFunc: okBody})
-	specout.Std(d, mux).Handle("GET /onboarding", specout.Handler[EmptyReq, []Onboarding]{HandlerFunc: noop})
+	specout.Bind(d, specoutstd.New(mux)).Handle("DELETE", "/onboarding/{id}", specout.Handler[EmptyReq, struct{}]{HandlerFunc: okBody})
+	specout.Bind(d, specoutstd.New(mux)).Handle("GET", "/onboarding", specout.Handler[EmptyReq, []Onboarding]{HandlerFunc: noop})
 
 	doc := buildDoc(t, d)
 	for _, p := range []string{"/onboarding", "/onboarding/{id}"} {

@@ -10,43 +10,41 @@ import (
 
 // buildDoc assembles the OpenAPI document: resolve the routes, reflect schemas,
 // emit operations in path order.
-func (d *Generator) buildDoc() (*obj, error) {
-	resolveErr := d.resolveLocked()
-	chiErr := d.checkChiMount()
-	ids, idErr := checkOperationIDs(d.operations())
-	if err := errors.Join(resolveErr, chiErr, idErr, d.checkLinks(ids)); err != nil {
+func (g *Generator) buildDoc() (*obj, error) {
+	resolveErr := g.resolveLocked()
+	ids, idErr := checkOperationIDs(g.operations())
+	if err := errors.Join(resolveErr, idErr, g.checkLinks(ids)); err != nil {
 		return nil, err
 	}
 
-	spec := newObj().set("openapi", "3.1.0").set("info", d.infoObj())
-	spec.setIf("jsonSchemaDialect", d.cfg.JSONSchemaDialect)
-	if servers := serverObjs("Config.Servers", d.cfg.Servers); len(servers) > 0 {
+	spec := newObj().set("openapi", "3.1.0").set("info", g.infoObj())
+	if servers := serverObjs("Config.Servers", g.cfg.Servers); len(servers) > 0 {
 		spec.set("servers", servers)
 	}
 
-	objs := d.pathsAndSchemas()
+	objs := g.pathsAndSchemas()
 	spec.set("paths", objs.paths)
 	if len(objs.webhooks.keys) > 0 {
 		spec.set("webhooks", objs.webhooks)
 	}
-	if tags := d.tagObjs(); len(tags) > 0 {
+	if tags := g.tagObjs(); len(tags) > 0 {
 		spec.set("tags", tags)
 	}
-	d.setComponents(spec, objs.schemas)
-	if d.cfg.ExternalDocs != nil {
-		spec.set("externalDocs", externalDocsObj("Config", d.cfg.ExternalDocs))
+	g.setComponents(spec, objs.schemas)
+	if g.cfg.ExternalDocs != nil {
+		spec.set("externalDocs", externalDocsObj("Config", g.cfg.ExternalDocs))
 	}
-	return mergeRaw(spec, d.cfg.Raw), nil
+	return mergeRaw(spec, g.cfg.Raw), nil
 }
 
 // setComponents adds the components object and the document's security
 // requirement to spec.
-func (d *Generator) setComponents(spec, schemas *obj) {
+func (g *Generator) setComponents(spec, schemas *obj) {
 	components := newObj()
-	if len(d.cfg.Auth) > 0 {
+	if len(g.cfg.Auth) > 0 {
 		// security: one named scheme per Auth entry, plus a top-level
 		// requirement that any one of them satisfies (OR semantics).
-		schemes, alts := d.securityObjs()
+		schemes, alts := g.securityObjs()
 		components.set("securitySchemes", schemes)
 		spec.set("security", alts)
 	}
@@ -60,19 +58,19 @@ func (d *Generator) setComponents(spec, schemas *obj) {
 
 // checkConfig builds the parts of the document that come from Config alone
 // and drops them, so a Config that would break the document panics in New.
-func (d *Generator) checkConfig() {
-	if d.cfg.Title == "" || d.cfg.Version == "" {
+func (g *Generator) checkConfig() {
+	if g.cfg.Title == "" || g.cfg.Version == "" {
 		panic("specout: Config: set Title and Version; OpenAPI requires both")
 	}
-	d.infoObj()
-	serverObjs("Config.Servers", d.cfg.Servers)
-	d.tagObjs()
-	checkRawKeys("Config", d.cfg.Raw, nil)
-	d.securityObjs()
-	if d.cfg.ExternalDocs != nil {
-		externalDocsObj("Config", d.cfg.ExternalDocs)
+	g.infoObj()
+	serverObjs("Config.Servers", g.cfg.Servers)
+	g.tagObjs()
+	checkRawKeys("Config", g.cfg.Raw, nil)
+	g.securityObjs()
+	if g.cfg.ExternalDocs != nil {
+		externalDocsObj("Config", g.cfg.ExternalDocs)
 	}
-	d.checkDefaultErrors()
+	g.checkDefaultErrors()
 }
 
 // reflectedObjs are the parts of the document that fill the schema registry.
@@ -85,10 +83,10 @@ type reflectedObjs struct {
 // named type uses. When a named type claims a name that an anonymous struct
 // took first, the reflection runs again with that name reserved, so the names
 // do not depend on the route order.
-func (d *Generator) pathsAndSchemas() reflectedObjs {
+func (g *Generator) pathsAndSchemas() reflectedObjs {
 	reserved := make(map[string]bool)
 	for {
-		if objs, ok := d.reflectRoutes(reserved); ok {
+		if objs, ok := g.reflectRoutes(reserved); ok {
 			return objs
 		}
 	}
@@ -97,7 +95,7 @@ func (d *Generator) pathsAndSchemas() reflectedObjs {
 // reflectRoutes is one run of pathsAndSchemas. It reports false, and adds the
 // name to reserved, when a named type claims a name that an anonymous struct
 // holds: the recovered run returns its zero results.
-func (d *Generator) reflectRoutes(reserved map[string]bool) (reflectedObjs, bool) {
+func (g *Generator) reflectRoutes(reserved map[string]bool) (reflectedObjs, bool) {
 	defer func() {
 		r := recover()
 		clash, isClash := r.(nameClash)
@@ -108,27 +106,26 @@ func (d *Generator) reflectRoutes(reserved map[string]bool) (reflectedObjs, bool
 			panic(r)
 		}
 	}()
-	sr := d.newSchemaRegistry()
+	sr := g.newSchemaRegistry()
 	sr.reserved = reserved
 	// paths and webhooks first: they fill sr, and components reads sr back.
-	paths := d.pathObj(d.records, sr)
-	webhooks := d.webhookObjs(sr)
+	paths := g.pathObj(g.records, sr)
+	webhooks := g.webhookObjs(sr)
 	return reflectedObjs{paths: paths, webhooks: webhooks, schemas: sr.schemaObjs()}, true
 }
 
-// infoObj is the document's info object.
-func (d *Generator) infoObj() *obj {
-	info := newObj().set("title", d.cfg.Title).set("version", d.cfg.Version)
-	info.setIf("summary", d.cfg.Summary)
-	info.setIf("description", d.cfg.Description)
-	info.setIf("termsOfService", d.cfg.TermsOfService)
-	checkURL("Config", "TermsOfService", d.cfg.TermsOfService)
-	if c := d.cfg.Contact; c != nil {
+func (g *Generator) infoObj() *obj {
+	info := newObj().set("title", g.cfg.Title).set("version", g.cfg.Version)
+	info.setIf("summary", g.cfg.Summary)
+	info.setIf("description", g.cfg.Description)
+	info.setIf("termsOfService", g.cfg.TermsOfService)
+	checkURL("Config", "TermsOfService", g.cfg.TermsOfService)
+	if c := g.cfg.Contact; c != nil {
 		checkURL("Config.Contact", "URL", c.URL)
 		checkEmail("Config.Contact", c.Email)
 		info.set("contact", newObj().setIf("name", c.Name).setIf("url", c.URL).setIf("email", c.Email))
 	}
-	if l := d.cfg.License; l != nil {
+	if l := g.cfg.License; l != nil {
 		// OpenAPI requires the license name; a URL alone is invalid.
 		if l.Name == "" {
 			panic("specout: Config.License: set Name; OpenAPI requires it")
@@ -142,7 +139,6 @@ func (d *Generator) infoObj() *obj {
 	return info
 }
 
-// serverObjs is a server list. where names the list.
 func serverObjs(where string, servers []Server) []any {
 	out := make([]any, 0, len(servers))
 	for _, s := range servers {
@@ -151,7 +147,6 @@ func serverObjs(where string, servers []Server) []any {
 	return out
 }
 
-// serverObj is one server object.
 func serverObj(where string, s Server) *obj {
 	if s.URL == "" {
 		panic("specout: " + where + ": a server needs a URL")
@@ -202,10 +197,10 @@ func serverVariableObjs(where string, s Server) *obj {
 
 // tagObjs is the declared tag list. OpenAPI requires each tag name, and
 // requires the names to be unique.
-func (d *Generator) tagObjs() []any {
-	tags := make([]any, 0, len(d.cfg.Tags))
-	seen := make(map[string]bool, len(d.cfg.Tags))
-	for _, t := range d.cfg.Tags {
+func (g *Generator) tagObjs() []any {
+	tags := make([]any, 0, len(g.cfg.Tags))
+	seen := make(map[string]bool, len(g.cfg.Tags))
+	for _, t := range g.cfg.Tags {
 		if t.Name == "" || seen[t.Name] {
 			panic("specout: Config.Tags: tag name " + strconv.Quote(t.Name) + " is empty or repeated; give each tag one name")
 		}
@@ -221,10 +216,10 @@ func (d *Generator) tagObjs() []any {
 
 // securityObjs splits the auth config into the components.securitySchemes
 // object and the top-level security requirement list.
-func (d *Generator) securityObjs() (*obj, []any) {
+func (g *Generator) securityObjs() (*obj, []any) {
 	schemes := newObj()
-	alts := make([]any, 0, len(d.cfg.Auth))
-	for _, a := range d.cfg.Auth {
+	alts := make([]any, 0, len(g.cfg.Auth))
+	for _, a := range g.cfg.Auth {
 		// a second scheme with one name would replace the first
 		if schemes.get(a.Name) != nil {
 			panic("specout: Config.Auth " + strconv.Quote(a.Name) + ": the name is repeated; give each scheme one name")
@@ -237,13 +232,13 @@ func (d *Generator) securityObjs() (*obj, []any) {
 
 // pathObj reflects operations in registration order and groups them by
 // documented path. It is what fills sr.
-func (d *Generator) pathObj(records []*routeRecord, sr *schemaRegistry) *obj {
+func (g *Generator) pathObj(records []*routeRecord, sr *schemaRegistry) *obj {
 	paths := newObj()
 	for _, rec := range records {
 		if rec.isCatchAll() {
 			continue
 		}
-		op := d.operationFor(rec, sr)
+		op := g.operationFor(rec, sr)
 		paths.child(docPath(rec.full)).set(strings.ToLower(rec.method), op)
 	}
 	return paths

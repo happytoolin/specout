@@ -17,7 +17,7 @@ func ok(description string) []specout.Response {
 	return withErrs(specout.Response{Status: 200, Key: "2XX", Description: description})
 }
 
-// noContent is the published 204 — the concrete code Graph keeps, with no body.
+// noContent is the published 204: the concrete code Graph keeps, with no body.
 func noContent() []specout.Response {
 	return withErrs(specout.Response{Status: 204, Description: "Success"})
 }

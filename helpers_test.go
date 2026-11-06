@@ -1,56 +1,49 @@
 package specout_test
 
 import (
-	"bytes"
 	"encoding/json"
-	"log"
 	"maps"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"slices"
 	"strings"
 	"testing"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/happytoolin/specout"
+	"github.com/happytoolin/specout/adapters/specoutstd"
+	"github.com/happytoolin/specout/internal/bridge"
 	"github.com/stretchr/testify/require"
 )
 
-// newGen is the throwaway generator every test starts from.
 func newGen() *specout.Generator {
 	return specout.New(specout.Config{Title: "t", Version: "1"})
 }
 
-// buildDoc renders d and returns the parsed document.
 func buildDoc(t *testing.T, d *specout.Generator) map[string]any {
 	t.Helper()
-	var buf bytes.Buffer
-	require.NoError(t, d.WriteJSON(&buf), "build")
-	exportValidationDoc(t, buf.Bytes())
+	spec, err := d.Build()
+	require.NoError(t, err, "build")
+	exportValidationDoc(t, spec)
 	var doc map[string]any
-	require.NoError(t, json.Unmarshal(buf.Bytes(), &doc), "invalid json")
+	require.NoError(t, json.Unmarshal(spec, &doc), "invalid json")
 	return doc
 }
 
-// wantBuildErr fails unless building d returns an error mentioning want.
 func wantBuildErr(t *testing.T, d *specout.Generator, want string) {
 	t.Helper()
-	require.ErrorContains(t, d.WriteJSON(&bytes.Buffer{}), want)
+	_, err := d.Build()
+	require.ErrorContains(t, err, want)
 }
 
-// pathsObj is the paths object of an already-built document.
 func pathsObj(doc map[string]any) map[string]any {
 	return doc["paths"].(map[string]any)
 }
 
-// docPaths is the document's paths object.
 func docPaths(t *testing.T, d *specout.Generator) map[string]any {
 	t.Helper()
 	return pathsObj(buildDoc(t, d))
 }
 
-// opOf digs doc.paths[path][method] out of the parsed document.
 func opOf(t *testing.T, doc map[string]any, path, method string) map[string]any {
 	t.Helper()
 	item, ok := doc["paths"].(map[string]any)[path].(map[string]any)
@@ -60,31 +53,6 @@ func opOf(t *testing.T, doc map[string]any, path, method string) map[string]any 
 	return op
 }
 
-// adopt runs a router binder's Adopt; fatal on error. The chi and gorilla
-// binders share this method sign.
-func adopt(t *testing.T, b interface {
-	Adopt(skips ...specout.SkipRule) error
-},
-) {
-	t.Helper()
-	require.NoError(t, b.Adopt())
-}
-
-// serve mounts the spec on an already-adopted router and returns the document
-// the router actually serves.
-func serve(t *testing.T, d *specout.Generator, r chi.Router) map[string]any {
-	t.Helper()
-	r.Mount("/openapi.json", d)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/openapi.json", nil))
-	require.Equal(t, 200, w.Code, "openapi.json status")
-	exportValidationDoc(t, w.Body.Bytes())
-	var doc map[string]any
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &doc), "invalid json")
-	return doc
-}
-
-// CI validates every generated fixture, including cases outside the demo.
 func exportValidationDoc(t *testing.T, document []byte) {
 	t.Helper()
 	dir := os.Getenv("SPECOUT_VALIDATE_DIR")
@@ -98,15 +66,6 @@ func exportValidationDoc(t *testing.T, document []byte) {
 	require.NoError(t, f.Close())
 }
 
-// serveDoc adopts the chi root, mounts the spec and returns the served document.
-func serveDoc(t *testing.T, d *specout.Generator, r chi.Router) map[string]any {
-	t.Helper()
-	adopt(t, specout.Chi(d, r))
-	return serve(t, d, r)
-}
-
-// docOf renders routes declared with Document — no router, no walk — and
-// returns the parsed document. The adapter-free workhorse.
 func docOf[Req, Res any](t *testing.T, method, pattern string, h specout.Handler[Req, Res]) map[string]any {
 	t.Helper()
 	d := newGen()
@@ -114,44 +73,57 @@ func docOf[Req, Res any](t *testing.T, method, pattern string, h specout.Handler
 	return buildDoc(t, d)
 }
 
-// chiDoc builds one document from routes declared on a fresh chi root.
-func chiDoc(t *testing.T, routes func(d *specout.Generator, r chi.Router)) map[string]any {
+func stdDoc(t *testing.T, routes func(r *specout.Binder)) map[string]any {
 	t.Helper()
-	d, r := newGen(), chi.NewRouter()
-	routes(d, r)
-	return serveDoc(t, d, r)
+	d, mux := newGen(), http.NewServeMux()
+	routes(specout.Bind(d, specoutstd.New(mux)))
+	return buildDoc(t, d)
+}
+
+// fakeRouter is a specout.Router whose Add runs mount and whose Routes
+// returns routes.
+type fakeRouter struct {
+	mount  func(http.Handler) string
+	routes []specout.Route
+}
+
+func (f fakeRouter) Add(_, _ string, h http.Handler) string { return f.mount(h) }
+
+func (f fakeRouter) Routes() ([]specout.Route, error) { return f.routes, nil }
+
+// bind registers h for method on p through a router whose Add runs mount.
+func bind[Req, Res any](d *specout.Generator, method, p string, h specout.Handler[Req, Res], mount func(http.Handler) string) {
+	specout.Bind(d, fakeRouter{mount: mount}).Handle(method, p, h)
 }
 
 func noop(http.ResponseWriter, *http.Request) {}
 
 func okBody(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }
 
-// noBody is the metadata type of a documented route with no request fields and
-// no response body: by far the most common handler a test registers.
 type noBody = specout.Handler[struct{}, specout.NoContent]
 
-// okGet is one shared noBody value used by route tests.
 var okGet = noBody{HandlerFunc: okBody}
 
-// declaredStatuses and specStatuses are the two drift views, fatal on error.
-func declaredStatuses(t *testing.T, d *specout.Generator) map[specout.RouteKey]map[int]bool {
+func okWith(responses ...specout.Response) noBody {
+	return noBody{HandlerFunc: okBody, Responses: responses}
+}
+
+func declaredStatuses(t *testing.T, d *specout.Generator) map[bridge.Key]map[int]bool {
 	t.Helper()
-	st, err := d.DeclaredStatuses()
+	st, err := bridge.Statuses(d, false)
 	require.NoError(t, err)
 	return st
 }
 
-func specStatuses(t *testing.T, d *specout.Generator) map[specout.RouteKey]map[int]bool {
+func specStatuses(t *testing.T, d *specout.Generator) map[bridge.Key]map[int]bool {
 	t.Helper()
-	st, err := d.SpecStatuses()
+	st, err := bridge.Statuses(d, true)
 	require.NoError(t, err)
 	return st
 }
 
-// keys is the sorted key set of a JSON object, for stable messages.
 func keys(m map[string]any) []string { return slices.Sorted(maps.Keys(m)) }
 
-// schemas is the document's components.schemas object.
 func schemas(t *testing.T, doc map[string]any) map[string]any {
 	t.Helper()
 	s, ok := doc["components"].(map[string]any)["schemas"].(map[string]any)
@@ -159,7 +131,6 @@ func schemas(t *testing.T, doc map[string]any) map[string]any {
 	return s
 }
 
-// props is one component's properties object.
 func props(t *testing.T, doc map[string]any, name string) map[string]any {
 	t.Helper()
 	s, ok := schemas(t, doc)[name].(map[string]any)
@@ -167,8 +138,6 @@ func props(t *testing.T, doc map[string]any, name string) map[string]any {
 	return s["properties"].(map[string]any)
 }
 
-// isNullable recognizes explicit null types and arms in generated schemas.
-// Full payload validation lives in the Python validation checks.
 func isNullable(p map[string]any) bool {
 	if p["type"] == "null" {
 		return true
@@ -185,7 +154,6 @@ func isNullable(p map[string]any) bool {
 	return slices.Contains(typ, any("null"))
 }
 
-// paramsOf indexes an operation's parameters by name.
 func paramsOf(t *testing.T, op map[string]any) map[string]map[string]any {
 	t.Helper()
 	raw, _ := op["parameters"].([]any)
@@ -195,14 +163,4 @@ func paramsOf(t *testing.T, op map[string]any) map[string]map[string]any {
 		out[p["name"].(string)] = p
 	}
 	return out
-}
-
-// captureLog sends the standard logger to a buffer until the test ends.
-func captureLog(t *testing.T) *bytes.Buffer {
-	t.Helper()
-	var buf bytes.Buffer
-	prev := log.Writer()
-	log.SetOutput(&buf)
-	t.Cleanup(func() { log.SetOutput(prev) })
-	return &buf
 }

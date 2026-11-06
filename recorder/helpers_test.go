@@ -2,24 +2,17 @@ package recorder_test
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/happytoolin/specout"
+	"github.com/happytoolin/specout/adapters/specoutstd"
+	"github.com/happytoolin/specout/internal/adaptertest"
 	"github.com/happytoolin/specout/recorder"
 	"github.com/stretchr/testify/require"
 )
-
-// failT collects failures instead of stopping the test, so a test can inspect
-// them. It is the TestingT that recorder.Verify writes to.
-type failT struct{ errs []string }
-
-func (*failT) Helper()                      {}
-func (f *failT) Errorf(fm string, a ...any) { f.errs = append(f.errs, fmt.Sprintf(fm, a...)) }
 
 func hit204(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }
 
@@ -35,9 +28,8 @@ type responseBody struct {
 
 func statusRoute(t *testing.T) (*specout.Generator, *recorder.Recorder) {
 	t.Helper()
-	d, r := gen(), chi.NewRouter()
-	b := specout.Chi(d, r)
-	b.Post("/items", specout.Handler[struct{}, responseBody]{
+	d, mux := gen(), http.NewServeMux()
+	specout.Bind(d, specoutstd.New(mux)).Handle("POST", "/items", specout.Handler[struct{}, responseBody]{
 		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Query().Get("status") {
 			case "201":
@@ -50,38 +42,23 @@ func statusRoute(t *testing.T) (*specout.Generator, *recorder.Recorder) {
 		},
 		Responses: []specout.Response{{Status: http.StatusOK}, {Status: http.StatusCreated}, {Status: http.StatusConflict}},
 	})
-	require.NoError(t, b.Adopt())
-	return d, recorder.New(r)
+	return d, recorder.New(mux)
 }
 
 func serve(h http.Handler, method, target string) {
 	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), method, target, nil))
 }
 
-// chiRoute registers /x on a fresh chi router, adopts it into d, and returns
-// the recorder wrapping that router.
-func chiRoute(t *testing.T, d *specout.Generator, method string, h http.HandlerFunc) *recorder.Recorder {
-	t.Helper()
-	r := chi.NewRouter()
-	b := specout.Chi(d, r)
-	if method == http.MethodHead {
-		b.Head("/x", nc(h))
-	} else {
-		b.Get("/x", nc(h))
-	}
-	require.NoError(t, b.Adopt())
-	return recorder.New(r)
+func stdRoute(d *specout.Generator, method string, h http.HandlerFunc) *recorder.Recorder {
+	mux := http.NewServeMux()
+	specout.Bind(d, specoutstd.New(mux)).Handle(method, "/x", nc(h))
+	return recorder.New(mux)
 }
 
-// verify collects the drift failures a recorder produces against d.
 func verify(d *specout.Generator, rec *recorder.Recorder) []string {
-	ft := &failT{}
-	recorder.Verify(ft, d, rec)
-	return ft.errs
+	return adaptertest.Errs(recorder.Verify(d, rec))
 }
 
-// findErr returns the first failure containing want, or "" for none. An empty
-// want matches any failure.
 func findErr(errs []string, want string) string {
 	for _, e := range errs {
 		if strings.Contains(e, want) {
@@ -91,8 +68,6 @@ func findErr(errs []string, want string) string {
 	return ""
 }
 
-// wantNoErr fails t on a Verify failure containing reject. An empty reject
-// means any failure is a bug.
 func wantNoErr(t *testing.T, d *specout.Generator, rec *recorder.Recorder, reject, label string) {
 	t.Helper()
 	require.Empty(t, findErr(verify(d, rec), reject), label)

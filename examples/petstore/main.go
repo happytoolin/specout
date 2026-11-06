@@ -11,10 +11,10 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/happytoolin/specout"
+	"github.com/happytoolin/specout/adapters/specoutchi"
 	"github.com/happytoolin/specout/internal/examplekit"
 )
 
-// petstoreDescription is info.description of the published document.
 const petstoreDescription = `This is a sample Pet Store Server based on the OpenAPI 3.0 specification. You can find out more about Swagger at [https://swagger.io](https://swagger.io). In the third iteration of the pet store, we've switched to the design first approach!
 You can now help us improve the API whether it's by making changes to the definition itself or to the code.
 
@@ -23,7 +23,8 @@ Some useful links:
 - [The source API definition for the Pet Store](https://github.com/swagger-api/swagger-petstore/blob/master/src/main/resources/openapi.yaml)`
 
 // New builds the service: the generator, and the chi router that serves it.
-func New() (*specout.Generator, http.Handler) {
+// The router runs mw first, so a test can add the recorder middleware.
+func New(mw ...func(http.Handler) http.Handler) (*specout.Generator, http.Handler) {
 	d := specout.New(specout.Config{
 		Title:       "Swagger Petstore - OpenAPI 3.0",
 		Version:     "1.0.27",
@@ -32,7 +33,7 @@ func New() (*specout.Generator, http.Handler) {
 		// the published pair: an api key in the header, and the petstore's
 		// own oauth2 scheme with its two pet scopes.
 		Auth: []specout.AuthScheme{
-			specout.APIKey("api_key", "api_key", specout.InHeader),
+			specout.APIKey("api_key", "api_key", "header"),
 			specout.OAuth2("petstore_auth", map[string]specout.OAuth2Flow{
 				"implicit": {
 					AuthorizationURL: "https://petstore3.swagger.io/oauth/authorize",
@@ -65,18 +66,19 @@ func New() (*specout.Generator, http.Handler) {
 
 	s := newStore()
 	r := chi.NewRouter()
+	r.Use(mw...)
 	r.Use(middleware.Logger, middleware.Recoverer)
 
 	// One binder on the root router with the published absolute patterns: a
 	// group root would document "/pet/" where the published document has "/pet".
-	b := specout.Chi(d, r)
+	b := specout.Bind(d, specoutchi.New(r))
 	petRoutes(b, s)
 	storeRoutes(b, s)
 	userRoutes(b, s)
 
-	r.Mount("/openapi.json", d)
-	// Adopt registers the build-time walk and fails on undocumented routes.
-	if err := b.Adopt(); err != nil {
+	r.Get("/openapi.json", examplekit.Spec(d))
+	// Check fails on routes that no binder registered.
+	if err := specout.Check(d, specoutchi.New(r), "/openapi.json"); err != nil {
 		panic(err)
 	}
 	return d, r
@@ -88,7 +90,7 @@ func New() (*specout.Generator, http.Handler) {
 func Handler(r http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/api/v3/", http.StripPrefix("/api/v3", r))
-	page := examplekit.SwaggerPage("specout example — Swagger Petstore", "/api/v3/openapi.json")
+	page := examplekit.SwaggerPage("specout example: Swagger Petstore", "/api/v3/openapi.json")
 	mux.HandleFunc("/", examplekit.Page(page, http.NotFoundHandler()))
 	return mux
 }

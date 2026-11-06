@@ -4,7 +4,6 @@
 package exampletest
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -23,12 +22,12 @@ func (c *CaptureT) Fatalf(f string, a ...any) { c.Errs = append(c.Errs, fmt.Spri
 // Spec renders d and returns the parsed document.
 func Spec(tb testing.TB, d *specout.Generator) map[string]any {
 	tb.Helper()
-	var buf bytes.Buffer
-	if err := d.WriteJSON(&buf); err != nil {
+	spec, err := d.Build()
+	if err != nil {
 		tb.Fatal(err)
 	}
 	var doc map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &doc); err != nil {
+	if err = json.Unmarshal(spec, &doc); err != nil {
 		tb.Fatal(err)
 	}
 	return doc

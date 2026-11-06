@@ -24,7 +24,6 @@ var schemaTagKeys = []string{
 	"style", "explode", "allowEmptyValue", "allowReserved", keyDeprecated,
 }
 
-// schemaTagFlags are the jsonschema tag keywords that take no value.
 var schemaTagFlags = []string{"required", "nullable", keyDeprecated, "readonly", "writeonly", "-"}
 
 // checkSchemaTag panics on a jsonschema tag keyword that nothing reads. The
@@ -64,7 +63,6 @@ func checkTagFlag(where, part string) {
 	}
 }
 
-// fieldTagOwner names a struct field in a message.
 func fieldTagOwner(owner reflect.Type, f reflect.StructField) string {
 	return owner.String() + " field " + f.Name
 }

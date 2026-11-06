@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate test output and all served examples, including union payloads."""
+"""Validate the test documents, the served examples, and their payload cases."""
 import json
 import os
 from pathlib import Path
@@ -22,9 +22,10 @@ def main():
         if not files:
             raise AssertionError("no test documents were exported")
         documents = [(path.name, json.loads(path.read_text())) for path in files]
-        for package in ("./examples/onboarding", "./examples/petstore", "./examples/msgraph"):
+        # the examples are their own module, so go runs them from examples/
+        for package in ("./onboarding", "./petstore", "./msgraph"):
             output = subprocess.check_output(
-                ["go", "run", package], cwd=ROOT,
+                ["go", "run", package], cwd=ROOT / "examples",
                 env={**os.environ, "GO_SPEC_ONLY": "1"},
             )
             documents.append((package, json.loads(output)))
@@ -37,7 +38,22 @@ def main():
                 raise AssertionError(f"{name}: {error}") from error
         print(f"PASS {len(files)} test documents and 3 served examples: OpenAPI 3.1 and JSON Schema")
 
-        demo = next(document for name, document in documents if name == "./examples/onboarding")
+        payload_count = 0
+        for name, document in documents:
+            for case in document.get("x-specout-test-cases", []):
+                payload_count += 1
+                validator = Draft202012Validator({
+                    "allOf": [case["schema"]], "components": document.get("components", {}),
+                })
+                errors = list(validator.iter_errors(case["value"]))
+                if (not errors) != case["valid"]:
+                    detail = errors[0].message if errors else "accepted a forbidden payload"
+                    raise AssertionError(f"{name}: {case['name']}: {detail}")
+        if payload_count == 0:
+            raise AssertionError("no serialized payload cases were exported")
+        print(f"PASS {payload_count} serialized payload cases")
+
+        demo = next(document for name, document in documents if name == "./onboarding")
         validator = Draft202012Validator({
             "$ref": "#/components/schemas/webhook", "components": demo["components"],
         })

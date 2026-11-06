@@ -6,10 +6,10 @@ Use this reference to model the HTTP wire contract with Go types and tags.
 
 | HTTP shape | Handler type |
 |---|---|
-| No request data, JSON response | `specout.Handler[struct{}, response]` or `specout.Get[response]` |
+| No request data, JSON response | `specout.Handler[struct{}, response]` |
 | Parameters and JSON response | `specout.Handler[request, response]` |
 | JSON body and no response body | `specout.Handler[request, specout.NoContent]` |
-| No request data and no response body | `specout.Delete` |
+| No request data and no response body | `specout.Handler[struct{}, specout.NoContent]` |
 | JSON array body | `specout.Handler[[]item, response]` |
 | Raw file body | `specout.Handler[specout.File, response]` |
 
@@ -203,8 +203,9 @@ h := specout.Handler[uploadRequest, uploadResult]{
 - `specout.NoContent` or another empty struct declares `204`.
 - A declared success response replaces the inferred `200` or `204`. A success
   response is a `2xx`, a redirect (a `3xx` other than `304`), or a `101`. Any
-  other declared response keeps it, so a `404` on a `specout.Delete` keeps the
-  `204`, and a `304` keeps the `200`.
+  other declared response keeps it, so a `404` on a
+  `specout.Handler[struct{}, specout.NoContent]` keeps the `204`, and a `304`
+  keeps the `200`.
 - Explicit responses add or replace entries with the same status or key.
 - A response with no `Type` gets the body of its status. A `2xx` has the
   handler response type. A `4xx`, `5xx`, or `default` response has
@@ -252,14 +253,17 @@ specout.Header{Name: "X-RateLimit-Remaining", Type: int64(0)}
 
 ## Examples
 
-Add one example with `Example`, or several named examples with `Examples`. Set
-one of them. specout encodes the values with `encoding/json`. A response needs a
-body to show an example, and a HEAD response drops its examples:
+Add named examples with `Examples`. The document then has an `examples` member
+with each name. specout encodes the values with `encoding/json`. A response
+needs a body to show an example, and a HEAD response drops its examples:
 
 ```go
 h := specout.Handler[createRequest, item]{
 	HandlerFunc: createItem,
-	Request:     specout.Request{Description: "The item to create.", Example: createRequest{Name: "Lamp"}},
+	Request: specout.Request{
+		Description: "The item to create.",
+		Examples:    map[string]specout.Example{"lamp": {Value: createRequest{Name: "Lamp"}}},
+	},
 	Responses: []specout.Response{{
 		Status:      http.StatusOK,
 		Description: "The new item.",
@@ -321,8 +325,8 @@ specout.Response{
 
 Use `Response.Raw` for `x-` extensions, or to replace a whole field that specout
 writes. `Raw` panics when the response also sets the typed form of that field:
-`Description`, `Headers`, or for `content` the `ContentTypes`, `Example` and
-`Examples` fields.
+`Description`, `Headers`, or for `content` the `ContentTypes` and `Examples`
+fields.
 
 ```go
 specout.Response{
@@ -355,8 +359,8 @@ type webhook struct {
 	Data any    `json:"data" jsonschema:"oneof_type=email|slack"`
 }
 
-doc.Register[emailWebhook]("email")
-doc.Register[slackWebhook]("slack")
+doc.Variant[emailWebhook]("email")
+doc.Variant[slackWebhook]("slack")
 ```
 
 The resulting schema constrains each discriminator value and payload type

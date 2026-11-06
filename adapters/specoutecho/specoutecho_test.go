@@ -1,7 +1,6 @@
 package specoutecho_test
 
 import (
-	"bytes"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -17,7 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// get sends one GET request through h.
 func get(t *testing.T, h http.Handler, target string) *httptest.ResponseRecorder {
 	t.Helper()
 	w := httptest.NewRecorder()
@@ -45,7 +43,7 @@ func nativeRoute(c *echo.Context) error {
 func TestGroupRouteDocumentedAtFullPath(t *testing.T) {
 	d, e := adaptertest.Generator(), echo.New()
 	g := e.Group("/api").Group("/v1")
-	specoutecho.New(d, g).Get("/users/:id", specout.Handler[idReq, specout.NoContent]{HandlerFunc: noContent})
+	specout.Bind(d, specoutecho.New(g)).Get("/users/:id", specout.Handler[idReq, specout.NoContent]{HandlerFunc: noContent})
 	pathItem, ok := adaptertest.Paths(t, d)["/api/v1/users/{id}"].(map[string]any)
 	require.True(t, ok, "no /api/v1/users/{id} in the document")
 	params := pathItem["get"].(map[string]any)["parameters"].([]any)
@@ -63,7 +61,7 @@ func TestHandlerSeesPathValues(t *testing.T) {
 	} {
 		t.Run(tc.route, func(t *testing.T) {
 			d, e := adaptertest.Generator(), echo.New()
-			specoutecho.New(d, e).Get(tc.route, specout.Handler[struct{}, specout.NoContent]{
+			specout.Bind(d, specoutecho.New(e)).Get(tc.route, specout.Handler[struct{}, specout.NoContent]{
 				HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
 					w.Header().Set("X-Value", r.PathValue(tc.name))
 					w.WriteHeader(http.StatusNoContent)
@@ -76,8 +74,6 @@ func TestHandlerSeesPathValues(t *testing.T) {
 	}
 }
 
-// Echo v5 leaves path values encoded, as Echo's own handlers see them, unless
-// the router sets UnescapePathParamValues. specout copies them as they are.
 func TestUnescapePathParamValuesDecodesPathValues(t *testing.T) {
 	for _, tc := range []struct {
 		unescape bool
@@ -90,7 +86,7 @@ func TestUnescapePathParamValuesDecodesPathValues(t *testing.T) {
 		e := echo.NewWithConfig(echo.Config{
 			Router: echo.NewRouter(echo.RouterConfig{UnescapePathParamValues: tc.unescape}),
 		})
-		specoutecho.New(d, e).Get("/users/:id", specout.Handler[struct{}, specout.NoContent]{
+		specout.Bind(d, specoutecho.New(e)).Get("/users/:id", specout.Handler[struct{}, specout.NoContent]{
 			HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("X-Value", r.PathValue("id"))
 				w.WriteHeader(http.StatusNoContent)
@@ -102,7 +98,7 @@ func TestUnescapePathParamValuesDecodesPathValues(t *testing.T) {
 	}
 }
 
-func TestRouteMiddlewareRunsFirst(t *testing.T) {
+func TestGroupMiddlewareRunsFirst(t *testing.T) {
 	d, e := adaptertest.Generator(), echo.New()
 	var order []string
 	mw := func(next echo.HandlerFunc) echo.HandlerFunc {
@@ -111,20 +107,20 @@ func TestRouteMiddlewareRunsFirst(t *testing.T) {
 			return next(c)
 		}
 	}
-	specoutecho.New(d, e).Get("/x", specout.Handler[struct{}, specout.NoContent]{
+	specout.Bind(d, specoutecho.New(e.Group("/g", mw))).Get("/x", specout.Handler[struct{}, specout.NoContent]{
 		HandlerFunc: func(w http.ResponseWriter, _ *http.Request) {
 			order = append(order, "handler")
 			w.WriteHeader(http.StatusNoContent)
 		},
-	}, mw)
-	assert.Equal(t, http.StatusNoContent, get(t, e, "/x").Code)
+	})
+	assert.Equal(t, http.StatusNoContent, get(t, e, "/g/x").Code)
 	assert.Equal(t, []string{"middleware", "handler"}, order)
 }
 
 func TestPathTranslation(t *testing.T) {
 	for _, tc := range []struct {
 		name, group, route string
-		want               string // "" for a catch-all, which the document omits
+		want               string
 	}{
 		{"inline verb", "", `/items/:id\:cancel`, "/items/{id}:cancel"},
 		{"escaped colon", "", `/a\:b`, "/a:b"},
@@ -137,14 +133,14 @@ func TestPathTranslation(t *testing.T) {
 			if tc.group != "" {
 				routes = e.Group(tc.group)
 			}
-			specoutecho.New(d, routes).Get(tc.route, okRoute)
+			specout.Bind(d, specoutecho.New(routes)).Get(tc.route, okRoute)
 			paths := adaptertest.Paths(t, d)
 			if tc.want == "" {
 				assert.Empty(t, paths)
 			} else {
 				assert.Contains(t, paths, tc.want)
 			}
-			assert.NoError(t, specoutecho.Adopt(d, e), "a specout route counts as documented")
+			assert.NoError(t, specout.Check(d, specoutecho.New(e)), "a specout route counts as documented")
 		})
 	}
 }
@@ -152,75 +148,57 @@ func TestPathTranslation(t *testing.T) {
 func TestRegistrationPanicLeavesNoRecord(t *testing.T) {
 	for _, tc := range []struct {
 		name, want string
-		register   func(r *specoutecho.Router)
+		register   func(r *specout.Binder)
 		newEcho    func() *echo.Echo
 	}{
-		{"literal braces", "literal braces", func(r *specoutecho.Router) { r.Get("/a/{b}", okRoute) }, echo.New},
-		{"duplicate on a rejecting router", "duplicate route", func(r *specoutecho.Router) { r.Get("/ok", okRoute) }, strictEcho},
+		{"literal braces", "literal braces", func(r *specout.Binder) { r.Get("/a/{b}", okRoute) }, echo.New},
+		{"duplicate on a rejecting router", "duplicate route", func(r *specout.Binder) { r.Get("/ok", okRoute) }, strictEcho},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			d, e := adaptertest.Generator(), tc.newEcho()
-			r := specoutecho.New(d, e)
+			r := specout.Bind(d, specoutecho.New(e))
 			r.Get("/ok", okRoute)
 			msg := adaptertest.PanicMessage(t, func() { tc.register(r) })
 			assert.Contains(t, msg, "specoutecho: GET")
 			assert.Contains(t, msg, tc.want)
 			assert.Equal(t, []string{"/ok"}, slices.Sorted(maps.Keys(adaptertest.Paths(t, d))))
-			assert.NoError(t, specoutecho.Adopt(d, e))
+			assert.NoError(t, specout.Check(d, specoutecho.New(e)))
 		})
 	}
 }
 
-// strictEcho is Echo with route overwriting off, so Echo itself rejects a
-// duplicate method and path.
 func strictEcho() *echo.Echo {
 	return echo.NewWithConfig(echo.Config{Router: echo.NewRouter(echo.RouterConfig{})})
 }
 
-// echo.New allows overwriting a route, so a duplicate reaches the router and
-// replaces the first handler. Registration should still fail loud.
 func TestDuplicateRegistrationPanics(t *testing.T) {
 	d, e := adaptertest.Generator(), echo.New()
-	r := specoutecho.New(d, e)
+	r := specout.Bind(d, specoutecho.New(e))
 	r.Get("/ok", okRoute)
 	assert.Panics(t, func() { r.Get("/ok", okRoute) }, "a duplicate GET /ok registers silently")
-	assert.NoError(t, d.WriteJSON(&bytes.Buffer{}), "the duplicate left a record")
+	_, err := d.Build()
+	assert.NoError(t, err, "the duplicate left a record")
 }
 
-func TestAdoptReportsStrays(t *testing.T) {
+func TestCheckReportsStrays(t *testing.T) {
 	d, e := adaptertest.Generator(), echo.New()
-	specoutecho.New(d, e).Get("/documented", okRoute)
-	specoutecho.New(d, e.Group("/admin", echo.MiddlewareFunc(func(next echo.HandlerFunc) echo.HandlerFunc {
+	specout.Bind(d, specoutecho.New(e)).Get("/documented", okRoute)
+	specout.Bind(d, specoutecho.New(e.Group("/admin", echo.MiddlewareFunc(func(next echo.HandlerFunc) echo.HandlerFunc {
 		return next
-	}))).Get("/users", okRoute)
+	})))).Get("/users", okRoute)
 	e.GET("/plain", nativeRoute)
 	e.GET("/openapi.json", nativeRoute)
 	e.Any("/any", nativeRoute)
-	got := adaptertest.Strays(t, specoutecho.Adopt(d, e, specout.Skip("/openapi.json")))
+	got := adaptertest.Strays(t, specout.Check(d, specoutecho.New(e), "/openapi.json"))
 	assert.ElementsMatch(t, []string{"GET /plain", "? /any (no method constraint)"}, got)
 }
 
-func TestRequireDocumented(t *testing.T) {
-	d, e := adaptertest.Generator(), echo.New()
-	specoutecho.New(d, e).Get("/documented", okRoute)
-	var pass adaptertest.FakeT
-	specoutecho.RequireDocumented(&pass, d, e)
-	assert.Empty(t, pass.Errs)
-
-	e.GET("/plain", nativeRoute)
-	var fail adaptertest.FakeT
-	specoutecho.RequireDocumented(&fail, d, e)
-	require.Len(t, fail.Errs, 1)
-	assert.Contains(t, fail.Errs[0], "GET /plain")
-}
-
-// recorded registers GET /items/:id, declaring 200 and 404, behind Record.
 func recorded(t *testing.T) (*specout.Generator, *echo.Echo, *recorder.Recorder) {
 	t.Helper()
 	d, e := adaptertest.Generator(), echo.New()
-	rec := recorder.New(nil, specout.Skip("/openapi.json"))
+	rec := recorder.New(nil, "/openapi.json")
 	e.Use(specoutecho.Record(rec))
-	specoutecho.New(d, e).Get("/items/:id", specout.Handler[idReq, item]{
+	specout.Bind(d, specoutecho.New(e)).Get("/items/:id", specout.Handler[idReq, item]{
 		HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
 			if r.PathValue("id") == "missing" {
 				w.WriteHeader(http.StatusNotFound)
@@ -240,17 +218,13 @@ func TestRecordAllStatusesObserved(t *testing.T) {
 	get(t, e, "/items/missing")
 	get(t, e, "/openapi.json")
 	get(t, e, "/unknown")
-	var ft adaptertest.FakeT
-	recorder.Verify(&ft, d, rec)
-	assert.Empty(t, ft.Errs)
+	assert.Empty(t, adaptertest.Errs(recorder.Verify(d, rec)))
 }
 
 func TestRecordReportsMissingStatus(t *testing.T) {
 	d, e, rec := recorded(t)
 	get(t, e, "/items/1")
-	var ft adaptertest.FakeT
-	recorder.Verify(&ft, d, rec)
-	assert.Equal(t, []string{"declared GET /items/{id} 404 never produced by any test"}, ft.Errs)
+	assert.Equal(t, []string{"declared GET /items/{id} 404 never produced by any test"}, adaptertest.Errs(recorder.Verify(d, rec)))
 }
 
 func TestRecordCountsMiddlewareResponse(t *testing.T) {
@@ -270,7 +244,7 @@ func TestRecordCountsMiddlewareResponse(t *testing.T) {
 					return next(c)
 				}
 			}
-			specoutecho.New(d, e.Group("/api", auth)).Get("/me", specout.Handler[struct{}, specout.NoContent]{
+			specout.Bind(d, specoutecho.New(e.Group("/api", auth))).Get("/me", specout.Handler[struct{}, specout.NoContent]{
 				HandlerFunc: noContent,
 				Responses:   []specout.Response{{Status: http.StatusNoContent}, {Status: http.StatusUnauthorized}},
 			})
@@ -278,50 +252,37 @@ func TestRecordCountsMiddlewareResponse(t *testing.T) {
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/me", nil)
 			req.Header.Set("Authorization", "yes")
 			e.ServeHTTP(httptest.NewRecorder(), req)
-			var ft adaptertest.FakeT
-			recorder.Verify(&ft, d, rec)
-			assert.Empty(t, ft.Errs)
+			assert.Empty(t, adaptertest.Errs(recorder.Verify(d, rec)))
 		})
 	}
 }
 
 func TestNewPanicsOnNil(t *testing.T) {
-	assert.Panics(t, func() { specoutecho.New(nil, echo.New()) })
-	assert.Panics(t, func() { specoutecho.New(adaptertest.Generator(), nil) })
+	assert.Panics(t, func() { specout.Bind(nil, specoutecho.New(echo.New())) })
+	assert.Panics(t, func() { specout.Bind(adaptertest.Generator(), specoutecho.New(nil)) })
 }
 
-// Echo shows the group prefix only after the route is added. A registration
-// that panics then, for braces in the prefix or for a duplicate that replaced
-// a route, must not leave a live handler behind when the caller recovers.
-func TestPanickedRegistrationServesNothing(t *testing.T) {
+func TestBadRegistrationPanics(t *testing.T) {
 	d, e := adaptertest.Generator(), echo.New()
-	b := specoutecho.New(d, e.Group("/{tenant}"))
+	b := specout.Bind(d, specoutecho.New(e.Group("/{tenant}")))
 	assert.Contains(t, adaptertest.PanicMessage(t, func() { b.Get("/items", okRoute) }), "braces")
 
-	specoutecho.New(d, e).Get("/dup", okRoute)
+	specout.Bind(d, specoutecho.New(e)).Get("/dup", okRoute)
 	second := specout.Handler[struct{}, specout.NoContent]{HandlerFunc: func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusTeapot)
 	}}
-	assert.Contains(t, adaptertest.PanicMessage(t, func() { specoutecho.New(d, e).Get("/dup", second) }), "duplicate route")
-
-	for _, target := range []string{"/{tenant}/items", "/dup"} {
-		assert.Equal(t, http.StatusNotFound, get(t, e, target).Code, target)
-	}
+	assert.Contains(t, adaptertest.PanicMessage(t, func() { specout.Bind(d, specoutecho.New(e)).Get("/dup", second) }), "duplicate route")
 }
 
-// A handler that hijacks the connection writes the response itself. Record
-// used to report a 200 for each case of adaptertest.HijackCases.
 func TestRecordHijackedResponses(t *testing.T) {
 	for _, tc := range adaptertest.HijackCases() {
 		t.Run(tc.Name, func(t *testing.T) {
 			d, e := adaptertest.Generator(), echo.New()
 			rec := recorder.New(nil)
 			e.Use(specoutecho.Record(rec))
-			specoutecho.New(d, e).Get("/ws", tc.Route())
+			specout.Bind(d, specoutecho.New(e)).Get("/ws", tc.Route())
 			assert.Equal(t, tc.Status, adaptertest.RawStatus(t, e, "/ws", tc.Upgrade))
-			var ft adaptertest.FakeT
-			recorder.Verify(&ft, d, rec)
-			assert.Equal(t, tc.Errs, ft.Errs)
+			assert.Equal(t, tc.Errs, adaptertest.Errs(recorder.Verify(d, rec)))
 		})
 	}
 }

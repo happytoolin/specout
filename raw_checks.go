@@ -14,7 +14,7 @@ import (
 
 // checkRawValues panics on a Raw value of an operation that would break the
 // document.
-func (d *Generator) checkRawValues(rec *routeRecord) {
+func (g *Generator) checkRawValues(rec *routeRecord) {
 	where := rec.label()
 	if id, ok := rec.raw["operationId"]; ok {
 		if text, isText := id.(string); !isText || text == "" {
@@ -22,7 +22,7 @@ func (d *Generator) checkRawValues(rec *routeRecord) {
 		}
 	}
 	if sec, ok := rec.raw["security"]; ok {
-		d.checkRawSecurity(where, sec)
+		g.checkRawSecurity(where, sec)
 	}
 	if raw, ok := rec.raw["responses"]; ok && rec.method == http.MethodHead {
 		for key, v := range rawResponses(where+": Raw.responses", raw) {
@@ -35,14 +35,14 @@ func (d *Generator) checkRawValues(rec *routeRecord) {
 
 // checkRawSecurity panics when a Raw security list names a scheme that
 // Config.Auth does not declare.
-func (d *Generator) checkRawSecurity(where string, raw any) {
+func (g *Generator) checkRawSecurity(where string, raw any) {
 	var requirements []map[string][]string
 	if data, err := json.Marshal(raw); err != nil || json.Unmarshal(data, &requirements) != nil {
 		panic("specout: " + where + `: Raw key "security" must be a list of Security Requirement objects, ` +
 			`such as [{"bearerAuth": []}]`)
 	}
-	names := make([]string, 0, len(d.cfg.Auth))
-	for _, a := range d.cfg.Auth {
+	names := make([]string, 0, len(g.cfg.Auth))
+	for _, a := range g.cfg.Auth {
 		names = append(names, a.Name)
 	}
 	for _, requirement := range requirements {
@@ -102,7 +102,6 @@ func checkRawResponse(where string, code int, v jsontext.Value) {
 	}
 }
 
-// rawHas reports whether the JSON object v has key.
 func rawHas(v jsontext.Value, key string) bool {
 	var fields map[string]jsontext.Value
 	if json.Unmarshal(v, &fields) != nil {
