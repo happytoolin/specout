@@ -55,6 +55,9 @@ linters:
           strict: true
     staticcheck:
       checks: ["all"]
+    gomoddirectives:
+      # each adapter module builds against the specout code in this repository
+      replace-local: true
     gocritic:
       enabled-tags: [diagnostic, style, performance, experimental, opinionated]
       disabled-checks:
@@ -101,13 +104,13 @@ linters:
         # one body
         - name: flag-parameter
           disabled: true
-        # v, _ := x.(T) is a checked assertion that wants the zero value
         # more than three levels of control flow hide the main path
         - name: max-control-nesting
           arguments: [3]
         # past five arguments, a call site has to name its values: use a struct
         - name: argument-limit
           arguments: [5]
+        # v, _ := x.(T) is a checked assertion that wants the zero value
         - name: unchecked-type-assertion
           arguments:
             - acceptIgnoredAssertionResult: true
@@ -173,9 +176,7 @@ linters:
           - revive
         text: "^(struct-tag|unchecked-type-assertion):"
       # the examples mirror published documents: their type names, struct tags,
-      # status codes and data literals are the published ones
-      # the example route files are long tables of published operations, and
-      # their op helpers take each operation's fields in published order
+      # status codes, data literals and operation tables are the published ones
       - path: ^examples/
         linters:
           - lll
@@ -195,31 +196,17 @@ linters:
         linters:
           - staticcheck
         text: "^ST1003:"
-      # the demo app is sample code: its long inline descriptions and its
-      # literal limits are the content
-      - path: ^internal/demo/
-        linters:
-          - lll
-          - mnd
       # examplekit.Run is each example's main body, so it may exit
       - path: ^internal/examplekit/
         linters:
           - revive
         text: "^deep-exit:"
-      # an example main prints its own URL: that is the demo's whole output
-      - path: ^cmd/
-        linters:
-          - forbidigo
       # internal packages are not importable API, so a comment that only
       # repeats the identifier adds nothing
       - path: ^internal/
         linters:
           - revive
         text: exported|package-comments
-      - path: ^cmd/
-        linters:
-          - revive
-        text: package-comments
 
 formatters:
   enable:

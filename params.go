@@ -32,7 +32,7 @@ func pathParams(pattern string) []string {
 // paramTag returns the parameter location and tag value of a Req field:
 // query, header, cookie or path.
 func paramTag(f reflect.StructField) (string, string) {
-	for _, l := range []string{InQuery, InHeader, InCookie, pathLocation} {
+	for _, l := range []string{inQuery, inHeader, inCookie, pathLocation} {
 		if t := f.Tag.Get(l); t != "" {
 			return l, t
 		}
@@ -69,7 +69,6 @@ func isParamField(f reflect.StructField) bool {
 	return f.PkgPath == "" && loc != "" && parts0(value) != "-"
 }
 
-// hasParamField reports whether t carries any parameter field.
 func hasParamField(t reflect.Type) bool { return slices.ContainsFunc(exportedFields(t), isParamField) }
 
 // taggedParams reflects Req fields carrying a query/header/cookie tag into
@@ -86,7 +85,7 @@ func (sr *schemaRegistry) taggedParams(req reflect.Type) []any {
 		}
 		name := parts0(qt)
 		key := loc + "\x00" + name
-		if loc == InHeader {
+		if loc == inHeader {
 			// HTTP header names are case-insensitive: X-Id and x-id are one header
 			key = strings.ToLower(key)
 		}
@@ -94,7 +93,7 @@ func (sr *schemaRegistry) taggedParams(req reflect.Type) []any {
 			panic("specout: field " + f.Name + ": " + loc + " parameter name " + strconv.Quote(name) + " is empty or repeated")
 		}
 		seen[key] = true
-		if loc == InHeader {
+		if loc == inHeader {
 			checkHeaderParam(f, name)
 		}
 		params = append(params, sr.parameter(name, loc, f))
@@ -125,9 +124,9 @@ func (sr *schemaRegistry) parameter(name, loc string, f reflect.StructField) *ob
 
 var parameterStyles = map[string][]string{
 	pathLocation: {"matrix", "label", "simple"},
-	InHeader:     {"simple"},
-	InCookie:     {"form"},
-	InQuery:      {"form", "spaceDelimited", "pipeDelimited", styleDeepObject},
+	inHeader:     {"simple"},
+	inCookie:     {"form"},
+	inQuery:      {"form", "spaceDelimited", "pipeDelimited", styleDeepObject},
 }
 
 // applyParamStyle copies style= and explode= onto the parameter object. They
@@ -171,7 +170,7 @@ func applyParamFlags(p *obj, f reflect.StructField, loc string) {
 		if err != nil {
 			panic("specout: field " + f.Name + ": " + key + "=" + value + " is not valid; use true or false")
 		}
-		if loc != InQuery {
+		if loc != inQuery {
 			panic("specout: field " + f.Name + ": " + key + " works only on a query parameter, and this is a " +
 				loc + " parameter")
 		}
@@ -247,7 +246,6 @@ func parts0(s string) string {
 	return name
 }
 
-// tagValue extracts key=value from a jsonschema tag string.
 func tagValue(tag, key string) string {
 	for _, part := range tagParts(tag) {
 		if after, ok := strings.CutPrefix(part, key+"="); ok {

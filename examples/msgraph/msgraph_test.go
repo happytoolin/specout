@@ -6,17 +6,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/happytoolin/specout"
+	"github.com/happytoolin/specout/adapters/specoutgorilla"
+	"github.com/happytoolin/specout/internal/adaptertest"
 	"github.com/happytoolin/specout/internal/examplekit/exampletest"
 	"github.com/happytoolin/specout/recorder"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// publishedGraph is the path -> method -> operationId map of the eight
-// operations this example takes from the live document
-// (graph.microsoft.com/v1.0, 11546 paths). Every deviation is listed in
-// examples/README.md.
 var publishedGraph = map[string]map[string]string{
 	"/me":                           {"get": "me.user.GetUser"},
 	"/users":                        {"get": "users.user.ListUser", "post": "users.user.CreateUser"},
@@ -25,15 +22,12 @@ var publishedGraph = map[string]map[string]string{
 	"/users/{user-id}/sendMail":     {"post": "users.user.sendMail"},
 }
 
-// spec builds the example and returns its document.
 func spec(t *testing.T) map[string]any {
 	t.Helper()
 	d, _ := New()
 	return exampletest.Spec(t, d)
 }
 
-// dig walks a decoded document by key path, ending on an object: the shared
-// example walker.
 var dig = exampletest.Obj
 
 func graphOp(t *testing.T, doc map[string]any, path, method string) map[string]any {
@@ -41,8 +35,6 @@ func graphOp(t *testing.T, doc map[string]any, path, method string) map[string]a
 	return dig(t, doc, "paths", path, method)
 }
 
-// paramNamed returns the operation parameter declared with this name and
-// location.
 func paramNamed(t *testing.T, op map[string]any, name, in string) map[string]any {
 	t.Helper()
 	raw, _ := op["parameters"].([]any)
@@ -55,7 +47,6 @@ func paramNamed(t *testing.T, op map[string]any, name, in string) map[string]any
 	return nil
 }
 
-// haveKeys fails when any published property is absent.
 func haveKeys(t *testing.T, m map[string]any, keys ...string) {
 	t.Helper()
 	for _, k := range keys {
@@ -78,20 +69,13 @@ func TestSpecMatchesPublishedDocument(t *testing.T) {
 	assert.Equal(t, 8, ids, "operation count")
 }
 
-// TestSpecKeepsPublishedShapes pins the Graph shapes the example exists to
-// prove: the shared OData error envelope keyed by code, a hyphenated path
-// parameter name, header parameters, OData dollar-prefixed query parameters,
-// a binary media response, and a request body split out of Req.
 func TestSpecKeepsPublishedShapes(t *testing.T) {
 	doc := spec(t)
 	comps := dig(t, doc, "components")
 	schemas := dig(t, comps, "schemas")
 
-	// the published document declares no securitySchemes
 	assert.NotContains(t, comps, "securitySchemes", "components")
 
-	// every operation carries the ODataError envelope under the document's own
-	// range keys: 4XX and 5XX, described "error", not a fan-out per code
 	for path, methods := range publishedGraph {
 		for m := range methods {
 			responses := dig(t, graphOp(t, doc, path, m), "responses")
@@ -101,8 +85,6 @@ func TestSpecKeepsPublishedShapes(t *testing.T) {
 				assert.Equal(t, "#/components/schemas/ODataError",
 					dig(t, resp, "content", "application/json", "schema")["$ref"], "%s %s %s schema", m, path, code)
 			}
-			// the successes the document ranges are keyed 2XX; the operations
-			// that answer 204 keep the concrete code
 			if _, ok := responses["2XX"]; !ok {
 				assert.Contains(t, responses, "204", "%s %s: neither a 2XX nor a 204 response", m, path)
 			}
@@ -110,12 +92,8 @@ func TestSpecKeepsPublishedShapes(t *testing.T) {
 		}
 	}
 
-	// the envelope, including the hyphenated innerError property names
 	haveKeys(t, dig(t, schemas, "InnerError", "properties"), "request-id", "client-request-id", "date")
 
-	// InnerError is reached only through MainError's pointer field, so it is
-	// nested-only: the pointer must still widen to [InnerError, null].
-	// Regression — the pointer field kept invopop's bare $ref.
 	arms, _ := dig(t, schemas, "MainError", "properties", "innerError")["anyOf"].([]any)
 	require.Len(t, arms, 2, "MainError.innerError = %v, want a $ref and a null arm", arms)
 	assert.Equal(t, "null", arms[1].(map[string]any)["type"])
@@ -129,7 +107,6 @@ func TestSpecKeepsPublishedShapes(t *testing.T) {
 	mailSchema := dig(t, mail, "requestBody", "content", "application/json", "schema")
 	bodyProps := dig(t, schemas, strings.TrimPrefix(mailSchema["$ref"].(string), "#/components/schemas/"), "properties")
 
-	// the published facts, one line each
 	for _, c := range []struct {
 		label     string
 		got, want any
@@ -149,8 +126,6 @@ func TestSpecKeepsPublishedShapes(t *testing.T) {
 		assert.Equal(t, c.want, c.got, c.label)
 	}
 
-	// DELETE keeps a description-only 204; sendMail's body is its own component
-	// under the published property names, without the path parameter
 	assert.NotContains(t, dig(t, del, "responses", "204"), "content", "DELETE 204")
 	paramNamed(t, mail, "user-id", "path")
 	haveKeys(t, bodyProps, "Message", "SaveToSentItems")
@@ -158,15 +133,10 @@ func TestSpecKeepsPublishedShapes(t *testing.T) {
 	haveKeys(t, dig(t, schemas, "UserCollectionResponse", "properties"), "@odata.count", "@odata.nextLink", "value")
 }
 
-// TestGraphDemoServesEveryRouteAndNoUndocumentedCode drives the gorilla demo
-// over real HTTP and checks the drift direction that must hold: every code a
-// handler wrote is declared for that route. This example mirrors a published
-// document whose error codes an in-memory demo cannot reach (401, 403, 429,
-// 500), so the reverse direction may stay unproduced.
 func TestGraphDemoServesEveryRouteAndNoUndocumentedCode(t *testing.T) {
-	d, r := New()
-	rec := recorder.New(r, specout.Skip("/openapi.json"))
-	srv := httptest.NewServer(Handler(rec))
+	rec := recorder.New(nil, "/openapi.json")
+	d, r := New(specoutgorilla.Record(rec))
+	srv := httptest.NewServer(Handler(r))
 	defer srv.Close()
 
 	do := func(method, path, body string, want int) {
@@ -197,30 +167,29 @@ func TestGraphDemoServesEveryRouteAndNoUndocumentedCode(t *testing.T) {
 		{"GET", "/users/" + alice + "/photo/$value", "", 200},
 		{"POST", "/users/" + alice + "/sendMail", "{\"Message\":{\"subject\":\"hi\"},\"SaveToSentItems\":true}", 204},
 		{"DELETE", "/users/" + alice, "", 204},
-		// the declared 404 and 400 a handler can reach
 		{"GET", "/users/nope", "", 404},
 		{"POST", "/users/nope/sendMail", "{}", 404},
 		{"GET", "/users/nope/photo/$value", "", 404},
 		{"POST", "/users", "{bad", 400},
-		// an undeclared method on a declared route: gorilla answers 405, which is
-		// no operation, so the recorder must key nothing for it
 		{"HEAD", "/users/" + alice, "", 405},
-		// an unmatched path is not drift: the recorder keys nothing for it
 		{"GET", "/nope", "", 404},
 	} {
 		do(c.m, c.p, c.body, c.want)
 	}
 
-	// the spec is served, and its own request is a skip
 	do("GET", "/openapi.json", "", 200)
 
-	ft := &captureT{}
-	recorder.Verify(ft, d, rec)
-	for _, e := range ft.Errs {
+	for _, e := range adaptertest.Errs(recorder.Verify(d, rec)) {
 		assert.NotContains(t, e, "but spec does not declare it", "drift")
 	}
 }
 
-// captureT collects failures so a test can assert on one drift category
-// without the other failing it.
-type captureT = exampletest.CaptureT
+func TestMalformedBodyIsRejected(t *testing.T) {
+	for _, body := range []string{`{"displayName":"changed"}{}`, `{"displayName":"changed"}null`, `{"displayName":"changed"} garbage`, ""} {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/users", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		_, ok := decode[User](w, r)
+		assert.False(t, ok)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	}
+}

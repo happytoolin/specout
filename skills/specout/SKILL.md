@@ -19,11 +19,14 @@ Use the installed module version as the API source of truth:
 ```sh
 go doc github.com/happytoolin/specout
 go doc github.com/happytoolin/specout/recorder
+go doc github.com/happytoolin/specout/adapters/specoutchi
 ```
 
 If the module is absent and the user asked to adopt specout, add it with
-`go get github.com/happytoolin/specout@latest`. Confirm that the selected
-release supports the Go version in `go.mod`.
+`go get github.com/happytoolin/specout@latest`. Each router adapter is a
+separate module. Add the adapter for the router, for example
+`go get github.com/happytoolin/specout/adapters/specoutchi@latest`. Confirm
+that the selected release supports the Go version in `go.mod`.
 
 ## Read the relevant references
 
@@ -50,24 +53,34 @@ doc := specout.New(specout.Config{
 	Version: "1.0.0",
 })
 
-routes := specout.Chi(doc, router)
+routes := specout.Bind(doc, specoutchi.New(router))
 routes.Get("/items", specout.Handler[listRequest, page]{
 	HandlerFunc: listItems,
 	Summary:     "List items",
 })
 ```
 
-Serve `doc` as an `http.Handler` at the application's chosen OpenAPI endpoint.
-Register every route, union variant, and schema name before the first
-`ServeHTTP` or `WriteJSON` call. The first build freezes the document.
+`specout.Bind` takes the adapter of the router, and the `Binder` that it
+returns has the same methods on every router. Paths use the syntax of the
+router. Put route middleware on a router group, and make the adapter from that
+group.
 
-For chi and gorilla/mux, call `Adopt` on the outermost router after route setup.
-For Echo, Gin, and Fiber, use the adapter packages under `adapters/` and call
-their package-level `Adopt` on the engine or app: `specoutecho` (Echo v5),
-`specoutechov4` (Echo v4), `specoutgin`, and `specoutfiber` (Fiber v3). Use
-`RequireDocumented` in tests when route coverage matters. http.ServeMux cannot enumerate routes, so
-register documented endpoints through `specout.Std`. Use `doc.Bind` or
-`doc.Document` for other routers.
+Register every route, union variant, and schema name before the first
+`Build` call. The first successful build freezes the document. Serve the bytes
+from `Build` at the application's chosen OpenAPI endpoint.
+
+The adapters are in `adapters/`: `specoutstd` (http.ServeMux, in the root
+module), `specoutchi`, `specoutgorilla`, `specoutecho` (Echo v5),
+`specoutechov4` (Echo v4), `specoutgin`, and `specoutfiber` (Fiber v3). After
+route setup, call `specout.Check` with the adapter of the root router, engine,
+or app. Give it the paths to skip, as in
+`specout.Check(doc, specoutchi.New(router), "/openapi.json")`. In tests, write
+`require.NoError(t, specout.Check(doc, specoutgin.New(engine), "/openapi.json"))`
+when route coverage matters. A chi router does not know its prefix, so inside a
+chi `Route` or `Mount`, pass the prefix: `specoutchi.New(r, "/v1")`.
+http.ServeMux cannot list its routes, so `Check` returns an error for it. Use
+the recorder for http.ServeMux. For other routers, implement `specout.Router`,
+or use `doc.Document`.
 
 ## Finish
 

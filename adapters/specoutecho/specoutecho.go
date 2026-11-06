@@ -1,7 +1,6 @@
-// Package specoutecho binds specout handlers to Echo v5. Handlers stay plain
+// Package specoutecho is the specout adapter for Echo v5. Handlers stay plain
 // net/http handlers: echo.WrapHandler copies Echo's path parameters into
-// r.PathValue. Adopt checks Echo's route table for routes that carry no
-// specout metadata, and Record feeds the recorder status check.
+// r.PathValue. Record feeds the recorder status check.
 //
 // Echo v5 leaves a path value encoded when the request path is encoded:
 // /users/a%40b gives a%40b. To get a@b, as on http.ServeMux, set
@@ -10,12 +9,13 @@
 package specoutecho
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
-	"sync/atomic"
 
 	"github.com/happytoolin/specout"
+	"github.com/happytoolin/specout/internal/bridge"
 	"github.com/happytoolin/specout/internal/echopath"
 	"github.com/happytoolin/specout/internal/hijack"
 	"github.com/happytoolin/specout/recorder"
@@ -27,110 +27,54 @@ type Routes interface {
 	AddRoute(route echo.Route) (echo.RouteInfo, error)
 }
 
-// Router registers specout handlers on an Echo instance or group. Each route
-// is documented at the full path Echo reports for it, group prefix included.
-type Router struct {
-	d *specout.Generator
-	r Routes
-}
+// Router is the adapter of an Echo instance or group, for specout.Bind. Each
+// route is documented at the full path Echo reports for it, group prefix
+// included. Put route middleware on a group: e.Group("/admin", auth).
+type Router struct{ r Routes }
 
-// New returns the Echo binder for d on r.
-func New(d *specout.Generator, r Routes) *Router {
-	if d == nil || r == nil {
-		panic("specoutecho: New needs a generator and an *echo.Echo or *echo.Group")
+// New returns the adapter of r.
+func New(r Routes) *Router {
+	if r == nil {
+		panic("specoutecho: New needs an *echo.Echo or *echo.Group")
 	}
-	return &Router{d: d, r: r}
+	return &Router{r: r}
 }
 
-// Handle registers h for method on path. Route middleware m runs before h.
-func (b *Router) Handle[Req, Res any](method, path string, h specout.Handler[Req, Res], m ...echo.MiddlewareFunc) {
+// Add registers h for method on path, in Echo syntax, and returns its full
+// path in OpenAPI syntax.
+func (b *Router) Add(method, path string, h http.Handler) string {
 	// Reject the route's own syntax before Echo serves it. The full-path check
 	// below can only panic after the route is live.
 	if _, _, err := echopath.OpenAPI(path); err != nil {
 		panic(fmt.Sprintf("specoutecho: %s %s: %v", method, path, err))
 	}
-	// Echo shows the group prefix only in the RouteInfo of an added route, and
-	// a route replaces an earlier one on its path. So the route answers 404
-	// until Bind returns: a registration that panics serves nothing, even when
-	// the caller recovers.
-	var bound atomic.Bool
-	b.d.Bind(method, path, h, func(next http.Handler) string {
-		serve := echo.WrapHandler(next)
-		ri, err := b.r.AddRoute(echo.Route{
-			Method: method,
-			Path:   path,
-			Handler: func(c *echo.Context) error {
-				if !bound.Load() {
-					return echo.ErrNotFound
-				}
-				return serve(c)
-			},
-			Middlewares: m,
-		})
-		if err != nil {
-			panic(fmt.Sprintf("specoutecho: %s %s: %v", method, path, err))
-		}
-		full, names, err := echopath.OpenAPI(ri.Path)
-		// The router's own parameter list is the check on the translation: a
-		// path Echo reads differently would document parameters it never sets.
-		if err == nil && !slices.Equal(names, ri.Parameters) {
-			err = fmt.Errorf("echo reads parameters %q, specout read %q", ri.Parameters, names)
-		}
-		if err != nil {
-			panic(fmt.Sprintf("specoutecho: %s %s: %v", method, ri.Path, err))
-		}
-		return full
-	})
-	bound.Store(true)
+	ri, err := b.r.AddRoute(echo.Route{Method: method, Path: path, Handler: echo.WrapHandler(h)})
+	if err != nil {
+		panic(fmt.Sprintf("specoutecho: %s %s: %v", method, path, err))
+	}
+	full, names, err := echopath.OpenAPI(ri.Path)
+	// The router's own parameter list is the check on the translation: a
+	// path Echo reads differently would document parameters it never sets.
+	if err == nil && !slices.Equal(names, ri.Parameters) {
+		err = fmt.Errorf("echo reads parameters %q, specout read %q", ri.Parameters, names)
+	}
+	if err != nil {
+		panic(fmt.Sprintf("specoutecho: %s %s: %v", method, ri.Path, err))
+	}
+	return full
 }
 
-// Get registers a GET route on p.
-func (b *Router) Get[Req, Res any](p string, h specout.Handler[Req, Res], m ...echo.MiddlewareFunc) {
-	b.Handle(http.MethodGet, p, h, m...)
-}
-
-// Head registers a HEAD route on p.
-func (b *Router) Head[Req, Res any](p string, h specout.Handler[Req, Res], m ...echo.MiddlewareFunc) {
-	b.Handle(http.MethodHead, p, h, m...)
-}
-
-// Post registers a POST route on p.
-func (b *Router) Post[Req, Res any](p string, h specout.Handler[Req, Res], m ...echo.MiddlewareFunc) {
-	b.Handle(http.MethodPost, p, h, m...)
-}
-
-// Put registers a PUT route on p.
-func (b *Router) Put[Req, Res any](p string, h specout.Handler[Req, Res], m ...echo.MiddlewareFunc) {
-	b.Handle(http.MethodPut, p, h, m...)
-}
-
-// Patch registers a PATCH route on p.
-func (b *Router) Patch[Req, Res any](p string, h specout.Handler[Req, Res], m ...echo.MiddlewareFunc) {
-	b.Handle(http.MethodPatch, p, h, m...)
-}
-
-// Delete registers a DELETE route on p.
-func (b *Router) Delete[Req, Res any](p string, h specout.Handler[Req, Res], m ...echo.MiddlewareFunc) {
-	b.Handle(http.MethodDelete, p, h, m...)
-}
-
-// Options registers an OPTIONS route on p.
-func (b *Router) Options[Req, Res any](p string, h specout.Handler[Req, Res], m ...echo.MiddlewareFunc) {
-	b.Handle(http.MethodOptions, p, h, m...)
-}
-
-// Trace registers a TRACE route on p.
-func (b *Router) Trace[Req, Res any](p string, h specout.Handler[Req, Res], m ...echo.MiddlewareFunc) {
-	b.Handle(http.MethodTrace, p, h, m...)
-}
-
-// Adopt reports the routes of e that specout cannot document: routes no
-// Router registered, and Any routes, which serve every method. The 404 routes
-// that Echo adds for group middleware are not endpoints and are skipped. Skip
-// the spec endpoint itself, as in specout.Skip("/openapi.json").
-func Adopt(d *specout.Generator, e *echo.Echo, skips ...specout.SkipRule) error {
+// Routes returns the route table of the Echo instance. An Any route serves
+// every method. The 404 routes that Echo adds for group middleware are not
+// endpoints and are left out. A group lists no routes, so pass Check the
+// adapter of the instance.
+func (b *Router) Routes() ([]specout.Route, error) {
+	e, ok := b.r.(*echo.Echo)
+	if !ok {
+		return nil, errors.New("specoutecho: a group lists no routes; pass Check specoutecho.New(e)")
+	}
 	table := e.Router().Routes()
-	routes := make([]specout.RouteKey, 0, len(table))
+	routes := make([]specout.Route, 0, len(table))
 	for _, ri := range table {
 		method := ri.Method
 		switch method {
@@ -139,18 +83,9 @@ func Adopt(d *specout.Generator, e *echo.Echo, skips ...specout.SkipRule) error 
 		case echo.RouteAny:
 			method = ""
 		}
-		routes = append(routes, specout.RouteKey{Method: method, Path: echopath.Table(ri.Path)})
+		routes = append(routes, specout.Route{Method: method, Path: echopath.Table(ri.Path)})
 	}
-	return d.CheckRoutes(routes, skips...)
-}
-
-// RequireDocumented fails the test when e holds routes specout cannot
-// document.
-func RequireDocumented(t specout.TestingT, d *specout.Generator, e *echo.Echo, skips ...specout.SkipRule) {
-	t.Helper()
-	if err := Adopt(d, e, skips...); err != nil {
-		t.Errorf("%v", err)
-	}
+	return routes, nil
 }
 
 // Record returns Echo middleware that reports the status of every matched
@@ -166,10 +101,10 @@ func Record(rec *recorder.Recorder) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c *echo.Context) error {
 			watch, undo := watchHijack(c)
+			defer undo()
 			if err := next(c); err != nil {
 				c.Echo().HTTPErrorHandler(c, err)
 			}
-			undo()
 			ri := c.RouteInfo()
 			method := ri.Method
 			switch method {
@@ -180,7 +115,7 @@ func Record(rec *recorder.Recorder) echo.MiddlewareFunc {
 			}
 			resp, code := echo.ResolveResponseStatus(c.Response(), nil)
 			if status, ok := hijack.Status(c.Request().Header, code, resp != nil && resp.Committed, watch.Hijacked()); ok {
-				rec.Observe(method, echopath.Table(ri.Path), status)
+				bridge.Observe(rec, method, echopath.Table(ri.Path), status)
 			}
 			return nil
 		}

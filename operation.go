@@ -13,7 +13,7 @@ import (
 // operationFor builds one operation object: the metadata fields, the path and
 // query parameters, the request body and the responses. build places the
 // result at paths[docPath][method] unless the record is a catch-all.
-func (d *Generator) operationFor(rec *routeRecord, sr *schemaRegistry) *obj {
+func (g *Generator) operationFor(rec *routeRecord, sr *schemaRegistry) *obj {
 	op := newObj()
 	// a schema panic deep in the reflection does not know the route
 	defer func() { rec.namePanic(recover()) }()
@@ -28,7 +28,7 @@ func (d *Generator) operationFor(rec *routeRecord, sr *schemaRegistry) *obj {
 	if rec.externalDocs != nil {
 		op.set("externalDocs", externalDocsObj(rec.label(), rec.externalDocs))
 	}
-	if security := d.routeSecurity(rec); security != nil {
+	if security := g.routeSecurity(rec); security != nil {
 		op.set("security", security)
 	}
 	if len(rec.servers) > 0 {
@@ -49,9 +49,9 @@ func (d *Generator) operationFor(rec *routeRecord, sr *schemaRegistry) *obj {
 		}
 		op.set("requestBody", requestBodyObj(rec, bt, sr))
 	}
-	op.set("responses", d.responsesFor(rec, sr))
+	op.set("responses", g.responsesFor(rec, sr))
 	if len(rec.callbacks) > 0 {
-		op.set("callbacks", d.callbackObjs(rec.callbacks, sr))
+		op.set("callbacks", g.callbackObjs(rec.callbacks, sr))
 	}
 	return mergeRaw(op, rec.raw)
 }
@@ -61,7 +61,7 @@ func (d *Generator) operationFor(rec *routeRecord, sr *schemaRegistry) *obj {
 // before the route reaches the router, so the stack names the route and a bad
 // route leaves no record. Checks that need the resolved path or the other
 // routes run at build.
-func (d *Generator) checkRoute(rec *routeRecord) {
+func (g *Generator) checkRoute(rec *routeRecord) {
 	checkRawKeys(rec.label(), rec.raw, operationFields)
 	checkRawReplaces(rec.label(), rec.raw, []replacedField{
 		{"summary", "Summary", rec.summary != ""},
@@ -75,7 +75,7 @@ func (d *Generator) checkRoute(rec *routeRecord) {
 		{"requestBody", "Request", rec.describesRequestBody()},
 		{"responses", "Responses", len(rec.responses) > 0},
 	})
-	d.checkRawValues(rec)
+	g.checkRawValues(rec)
 	operationTags(rec.label(), rec.tags)
 	serverObjs(rec.label()+": Servers", rec.servers)
 	if rec.externalDocs != nil {
@@ -84,12 +84,11 @@ func (d *Generator) checkRoute(rec *routeRecord) {
 	checkRequestBody(rec)
 	checkBodyFiles(rec)
 	checkTraceBody(rec)
-	d.checkSecurity(rec)
-	d.checkResponses(rec)
-	d.checkCallbacks(rec)
+	g.checkSecurity(rec)
+	g.checkResponses(rec)
+	g.checkCallbacks(rec)
 }
 
-// braces removes the parameter braces from a path segment.
 var braces = strings.NewReplacer("{", "", "}", "")
 
 // operationID derives a deterministic id from method+path:

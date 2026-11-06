@@ -283,7 +283,6 @@ func decodeJSON(v any) any {
 // sameJSON reports whether a and b encode to the same JSON value.
 func sameJSON(a, b any) bool { return jsonText(decodeJSON(a)) == jsonText(decodeJSON(b)) }
 
-// jsonText is v as JSON text, for a message.
 func jsonText(v any) string {
 	data, err := jsonv1.Marshal(v)
 	if err != nil {
@@ -336,7 +335,6 @@ func walkJSON(v any, fn func(ref string)) {
 	}
 }
 
-// resolves reports whether the JSON pointer resolves in doc.
 func resolves(doc any, pointer string) bool {
 	if pointer == "" {
 		return true
@@ -354,7 +352,6 @@ func resolves(doc any, pointer string) bool {
 	return true
 }
 
-// pointerStep returns the member or the item token of node.
 func pointerStep(node any, token string) (any, bool) {
 	switch n := node.(type) {
 	case map[string]any:

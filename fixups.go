@@ -13,7 +13,6 @@ import (
 	"github.com/invopop/jsonschema"
 )
 
-// JSON Schema type and format names that specout writes.
 const (
 	nullType     = "null"
 	typeString   = "string"

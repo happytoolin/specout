@@ -7,7 +7,6 @@ import (
 	"strings"
 )
 
-// webhook is one operation of the document's webhooks object.
 type webhook struct {
 	name string
 	rec  routeRecord
@@ -22,19 +21,19 @@ type webhook struct {
 // A webhook stays out of the route checks and the recorder. It does not take
 // DefaultErrors, which describe the responses of your API. It needs no auth from
 // Config.Auth unless h.Security names a scheme. Call before building the spec.
-func (d *Generator) Webhook[Req, Res any](method, name string, h Handler[Req, Res]) {
+func (g *Generator) Webhook[Req, Res any](method, name string, h Handler[Req, Res]) {
 	if name == "" {
 		panic("specout: Webhook needs a name")
 	}
 	rec := outgoingRecord("webhook "+name, method, h)
-	d.checkRoute(&rec)
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.mustBeOpen()
-	if slices.ContainsFunc(d.webhooks, func(w webhook) bool { return w.name == name && w.rec.method == method }) {
+	g.checkRoute(&rec)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.beginChange()
+	if slices.ContainsFunc(g.webhooks, func(w webhook) bool { return w.name == name && w.rec.method == method }) {
 		panic("specout: " + rec.label() + ": duplicate webhook; each name takes each method once")
 	}
-	d.webhooks = append(d.webhooks, webhook{name: name, rec: rec})
+	g.webhooks = append(g.webhooks, webhook{name: name, rec: rec})
 }
 
 // Callback is a request that your API sends back to the client because of one
@@ -80,7 +79,7 @@ func outgoingRecord[Req, Res any](where, method string, h Handler[Req, Res]) rou
 // checkCallbacks panics on a route's callbacks when they would break the
 // document. Each one is checked as a route is, and its messages name rec. The
 // list is copied first, because one Callback value can go on several routes.
-func (d *Generator) checkCallbacks(rec *routeRecord) {
+func (g *Generator) checkCallbacks(rec *routeRecord) {
 	rec.callbacks = slices.Clone(rec.callbacks)
 	seen := make(map[string]bool, len(rec.callbacks))
 	for i := range rec.callbacks {
@@ -94,49 +93,47 @@ func (d *Generator) checkCallbacks(rec *routeRecord) {
 		}
 		seen[key] = true
 		cb.rec.parent = rec
-		d.checkRoute(&cb.rec)
+		g.checkRoute(&cb.rec)
 	}
 }
 
 // callbackObjs is the callbacks object of one operation. Callbacks with one name
 // and one url share a path item.
-func (d *Generator) callbackObjs(callbacks []Callback, sr *schemaRegistry) *obj {
+func (g *Generator) callbackObjs(callbacks []Callback, sr *schemaRegistry) *obj {
 	out := newObj()
 	for i := range callbacks {
 		cb := &callbacks[i]
-		out.child(cb.name).child(cb.url).set(strings.ToLower(cb.rec.method), d.operationFor(&cb.rec, sr))
+		out.child(cb.name).child(cb.url).set(strings.ToLower(cb.rec.method), g.operationFor(&cb.rec, sr))
 	}
 	return out
 }
 
-// webhookObjs is the document's webhooks object.
-func (d *Generator) webhookObjs(sr *schemaRegistry) *obj {
+func (g *Generator) webhookObjs(sr *schemaRegistry) *obj {
 	out := newObj()
-	for i := range d.webhooks {
-		w := &d.webhooks[i]
-		out.child(w.name).set(strings.ToLower(w.rec.method), d.operationFor(&w.rec, sr))
+	for i := range g.webhooks {
+		w := &g.webhooks[i]
+		out.child(w.name).set(strings.ToLower(w.rec.method), g.operationFor(&w.rec, sr))
 	}
 	return out
 }
 
 // operations yields each operation of the document: the routes, the webhooks,
 // and the callbacks under them.
-func (d *Generator) operations() iter.Seq[*routeRecord] {
+func (g *Generator) operations() iter.Seq[*routeRecord] {
 	return func(yield func(*routeRecord) bool) {
-		for _, rec := range d.records {
+		for _, rec := range g.records {
 			if !rec.isCatchAll() && !yieldOperation(rec, yield) {
 				return
 			}
 		}
-		for i := range d.webhooks {
-			if !yieldOperation(&d.webhooks[i].rec, yield) {
+		for i := range g.webhooks {
+			if !yieldOperation(&g.webhooks[i].rec, yield) {
 				return
 			}
 		}
 	}
 }
 
-// yieldOperation yields rec and the callbacks under it.
 func yieldOperation(rec *routeRecord, yield func(*routeRecord) bool) bool {
 	if !yield(rec) {
 		return false

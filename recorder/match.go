@@ -7,16 +7,16 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/happytoolin/specout"
+	"github.com/happytoolin/specout/internal/bridge"
 )
 
 // matchRoute returns the documented route that serves a request for method and
 // the escaped path. When several templates match, the one with a literal
 // segment first, from the left, wins, as in http.ServeMux and chi. A HEAD
 // request with no HEAD route goes to the GET route.
-func matchRoute(routes statuses, method, path string) (specout.RouteKey, bool) {
+func matchRoute(routes statuses, method, path string) (bridge.Key, bool) {
 	segments := strings.Split(path, "/")
-	var best specout.RouteKey
+	var best bridge.Key
 	var bestRank []int
 	for key := range routes {
 		if key.Method != method {
@@ -67,7 +67,6 @@ func matchTemplate(template, path []string) ([]int, bool) {
 // templateParam matches one {name} parameter in a template segment.
 var templateParam = regexp.MustCompile(`\{[^{}]*\}`)
 
-// matchSegment matches one template segment against one escaped path segment.
 func matchSegment(template, segment string) (int, bool) {
 	value, err := url.PathUnescape(segment)
 	if err != nil {

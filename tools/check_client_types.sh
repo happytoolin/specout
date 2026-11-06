@@ -7,9 +7,10 @@ trap 'rm -r "$tmp"' EXIT
 
 cd "$root"
 
-GO_SPEC_ONLY=1 go run ./examples/onboarding >"$tmp/onboarding.openapi.json"
-GO_SPEC_ONLY=1 go run ./examples/petstore >"$tmp/petstore.openapi.json"
-GO_SPEC_ONLY=1 go run ./examples/msgraph >"$tmp/msgraph.openapi.json"
+# the examples are their own module
+GO_SPEC_ONLY=1 go -C examples run ./onboarding >"$tmp/onboarding.openapi.json"
+GO_SPEC_ONLY=1 go -C examples run ./petstore >"$tmp/petstore.openapi.json"
+GO_SPEC_ONLY=1 go -C examples run ./msgraph >"$tmp/msgraph.openapi.json"
 
 for name in onboarding petstore msgraph; do
 	npx --yes -p openapi-typescript@7.13.0 openapi-typescript \

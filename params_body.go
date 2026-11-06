@@ -20,7 +20,7 @@ func requestBodyObj(rec *routeRecord, body reflect.Type, sr *schemaRegistry) *ob
 	if len(types) == 0 {
 		types = []string{ct}
 	}
-	examples := encodeExamples(rec.label()+": Request", rec.body.Example, rec.body.Examples)
+	examples := encodeExamples(rec.label()+": Request", rec.body.Examples)
 	for _, c := range types {
 		form := formMedia(c)
 		schema := *base
@@ -55,7 +55,7 @@ func checkRequestBody(rec *routeRecord) {
 			"add a field with no path, query, header or cookie tag, or remove Handler.Request")
 	}
 	checkEncoding(rec, body)
-	checkExamples(rec.label()+": Request", rec.body.Example, rec.body.Examples, rec.req, body)
+	checkExamples(rec.label()+": Request", rec.body.Examples, rec.req, body)
 	checkMediaTypes(rec.label()+": Request", rec.body.ContentTypes)
 }
 
@@ -127,7 +127,6 @@ func requestBodyFor(body reflect.Type, sr *schemaRegistry) (string, *jsonschema.
 	return ct, &jsonschema.Schema{Ref: sr.refFor(body)}
 }
 
-// requestContentType is the media type that a body type implies.
 func requestContentType(body reflect.Type) string {
 	switch {
 	case body == reflect.TypeFor[File]():
@@ -139,7 +138,6 @@ func requestContentType(body reflect.Type) string {
 	}
 }
 
-// binarySchema is the schema of a raw byte payload.
 func binarySchema() *jsonschema.Schema {
 	return &jsonschema.Schema{Type: typeString, Format: formatBinary}
 }

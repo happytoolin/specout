@@ -21,9 +21,6 @@ type Config struct {
 	ErrorType     any
 	DefaultErrors []int
 	ClosedSchemas bool
-	// JSONSchemaDialect is the default $schema of the document's schemas. Leave
-	// it empty for the OpenAPI 3.1 dialect, which is what specout writes.
-	JSONSchemaDialect string
 	// Raw splices x- extensions into the document root. Any other key panics
 	// in New.
 	Raw map[string]any
@@ -99,7 +96,6 @@ type OAuth2Flow struct {
 	Scopes           map[string]string
 }
 
-// The values of AuthScheme.Type.
 const (
 	authHTTP          = "http"
 	authAPIKey        = "apiKey"
@@ -140,9 +136,9 @@ func (a AuthScheme) Require(scopes ...string) Security {
 	return Security{Scheme: a.Name, Scopes: scopes}
 }
 
-// APIKey.In values: where the key travels.
+// The locations of a parameter or an API key.
 const (
-	InHeader = "header"
-	InQuery  = "query"
-	InCookie = "cookie"
+	inHeader = "header"
+	inQuery  = "query"
+	inCookie = "cookie"
 )

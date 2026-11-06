@@ -10,9 +10,11 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/happytoolin/specout"
+	"github.com/happytoolin/specout/internal/bridge"
 	"github.com/happytoolin/specout/internal/examplekit/exampletest"
 )
 
@@ -45,15 +47,24 @@ func PanicMessage(tb testing.TB, f func()) string {
 	return fmt.Sprint(got)
 }
 
-// Strays returns the routes that the *specout.StrayError in err names. The
-// test fails when err holds none.
+// Strays returns the routes that the stray error in err names. The test
+// fails when err holds none.
 func Strays(tb testing.TB, err error) []string {
 	tb.Helper()
-	if stray, ok := errors.AsType[*specout.StrayError](err); ok {
+	if stray, ok := errors.AsType[*bridge.StrayError](err); ok {
 		return stray.Routes
 	}
-	tb.Fatalf("%v is not a *specout.StrayError", err)
+	tb.Fatalf("%v is not a stray error", err)
 	return nil
+}
+
+// Errs splits the joined error of recorder.Verify into its messages, or
+// returns nil for no error.
+func Errs(err error) []string {
+	if err == nil {
+		return nil
+	}
+	return strings.Split(err.Error(), "\n")
 }
 
 // HijackCase is one hijacked response for the recorder tests: what the

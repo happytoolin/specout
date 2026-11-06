@@ -20,9 +20,7 @@ type Response struct {
 	// Description replaces the status text, such as "Not Found".
 	Description string
 	Headers     []Header
-	// Example is one example of the body. Use Examples for several named
-	// examples. Set one of them. Both need a body.
-	Example  any
+	// Examples are examples of the body, by name. They need a body.
 	Examples map[string]Example
 	// Links tells a client how to use this response in a next request, by link
 	// name.

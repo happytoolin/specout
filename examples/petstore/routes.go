@@ -20,14 +20,12 @@ func op[Req, Res any](id, summary, description string, tags []string, public boo
 	}
 }
 
-// petRoutes registers the eight pet operations.
-func petRoutes(b *specout.ChiRouter, s *store) {
+func petRoutes(b *specout.Binder, s *store) {
 	petCollectionRoutes(b, s)
 	petByIDRoutes(b, s)
 }
 
-// petCollectionRoutes registers the four collection-level pet operations.
-func petCollectionRoutes(b *specout.ChiRouter, s *store) {
+func petCollectionRoutes(b *specout.Binder, s *store) {
 	b.Put("/pet", op[Pet, Pet]("updatePet", "Update an existing pet.", "Update an existing pet by Id.", tagPet, false, jsonXMLForm,
 		func(w http.ResponseWriter, r *http.Request) {
 			storeBody(w, r, s, "Invalid ID supplied", s.pets, func(p *Pet) int64 {
@@ -75,7 +73,7 @@ func petCollectionRoutes(b *specout.ChiRouter, s *store) {
 }
 
 // petByIDRoutes registers the four /pet/{petId} operations.
-func petByIDRoutes(b *specout.ChiRouter, s *store) {
+func petByIDRoutes(b *specout.Binder, s *store) {
 	b.Get("/pet/{petId}", op[getPetReq, Pet]("getPetById", "Find pet by ID.", "Returns a single pet.", tagPet, false, nil,
 		func(w http.ResponseWriter, r *http.Request) { show(w, s, s.pets, pathID(r, "petId"), "Pet not found") },
 		ok("successful operation"), invalidID, petNotFound))
@@ -126,8 +124,7 @@ func petByIDRoutes(b *specout.ChiRouter, s *store) {
 		okJSON("successful operation"), desc(400, "No file uploaded"), petNotFound))
 }
 
-// storeRoutes registers the four store operations.
-func storeRoutes(b *specout.ChiRouter, s *store) {
+func storeRoutes(b *specout.Binder, s *store) {
 	b.Get("/store/inventory", op[struct{}, map[string]int32]("getInventory", "Returns pet inventories by status.",
 		"Returns a map of status codes to quantities.", tagStore, false, nil,
 		func(w http.ResponseWriter, _ *http.Request) {
@@ -159,8 +156,7 @@ func storeRoutes(b *specout.ChiRouter, s *store) {
 		desc(200, "order deleted"), invalidID, orderNotFound))
 }
 
-// userRoutes registers the seven user operations.
-func userRoutes(b *specout.ChiRouter, s *store) {
+func userRoutes(b *specout.Binder, s *store) {
 	b.Post("/user", op[User, User]("createUser", "Create user.", "This can only be done by the logged in user.", tagUser, true, jsonXMLForm,
 		func(w http.ResponseWriter, r *http.Request) {
 			storeBody(w, r, s, "Invalid input", s.users, func(u *User) string { return u.Username })

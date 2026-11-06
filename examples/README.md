@@ -15,12 +15,14 @@ Use your own helpers for these in your service.
 | `petstore` | Swagger Petstore, 13 paths and 19 operations | chi | 8081 |
 | `msgraph` | Microsoft Graph subset, 5 paths and 8 operations | gorilla/mux | 8082 |
 
-Run one:
+The examples are one Go module in `examples/`, so the root module does not
+depend on chi or gorilla/mux. Run one from the `examples` directory:
 
 ```sh
-go run ./examples/onboarding
-go run ./examples/petstore
-go run ./examples/msgraph
+cd examples
+go run ./onboarding
+go run ./petstore
+go run ./msgraph
 ```
 
 Each example serves Swagger UI at `/` and its generated document at
@@ -29,7 +31,7 @@ Each example serves Swagger UI at `/` and its generated document at
 Export a document without starting a server:
 
 ```sh
-GO_SPEC_ONLY=1 go run ./examples/onboarding
+GO_SPEC_ONLY=1 go run ./onboarding
 ```
 
 The example tests check published paths and shapes, drive real HTTP handlers
@@ -37,6 +39,7 @@ through `recorder.Verify`, and validate all generated documents in `just
 validate`.
 
 `Req` contains path, query, header, cookie, and body fields. Specout removes
-parameter fields from the request body. `Adopt` scans the outermost chi or
-gorilla router for undocumented routes. Document order follows registration
-order.
+parameter fields from the request body. `specoutchi.Check` and
+`specoutgorilla.Check` scan the outermost router for undocumented routes. The
+chi and gorilla/mux tests record statuses through the `Record` middleware of
+the adapter. Document order follows registration order.

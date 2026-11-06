@@ -12,7 +12,7 @@ import (
 // ("int", "string") is junk in components.schemas, and real specs inline
 // scalars (response headers, simple bodies) instead of ref-ing them.
 func isBuiltin(t reflect.Type) bool {
-	// time.Time reflects to {type: string, format: date-time} — a scalar in
+	// time.Time reflects to {type: string, format: date-time}, a scalar in
 	// every published spec. Without this it becomes a $ref to a component
 	// named "Time" when it is a bare body or a header type, while the same
 	// type used as a struct field inlines. One type, one shape. The math/big

@@ -3,149 +3,177 @@
 Use this reference to select an adapter, serve the document, and add optional
 route or status verification.
 
+## One API on every router
+
+`specout.Bind` takes the generator and the adapter of a router. It returns a
+`*specout.Binder`, which has the same methods on every router: `Handle`, and
+`Get`, `Head`, `Post`, `Put`, `Patch`, `Delete`, `Options`, and `Trace`. Only
+the line that makes the adapter changes:
+
+```go
+api := specout.Bind(doc, specoutstd.New(mux))                  // http.ServeMux
+api := specout.Bind(doc, specoutchi.New(r))                     // chi
+api := specout.Bind(doc, specoutgorilla.New(r))                 // gorilla/mux
+api := specout.Bind(doc, specoutecho.New(e.Group("/v1")))       // Echo v5
+api := specout.Bind(doc, specoutechov4.New(e.Group("/v1")))     // Echo v4
+api := specout.Bind(doc, specoutgin.New(engine.Group("/v1")))   // Gin
+api := specout.Bind(doc, specoutfiber.New(app.Group("/v1")))    // Fiber v3
+
+api.Get("/items/{id}", getItem) // the path uses the router's own syntax
+```
+
+Put route middleware on a router group, in the router's own way, and make the
+adapter from that group: `engine.Group("/admin", requireAdmin)` on Gin, Echo,
+and Fiber, `r.With(requireAdmin)` on chi, and `sub.Use(requireAdmin)` on a
+gorilla subrouter.
+
+`specout.Check(doc, adapter, skips...)` compares the route table of a router
+with the document. Pass it the adapter of the root router.
+
 ## Supported routers
 
 | Router | Adapter | Route discovery |
 |---|---|---|
-| `github.com/go-chi/chi/v5` | `specout.Chi` | `Adopt` walks the outermost router and resolves groups and mounts. |
-| `github.com/gorilla/mux` | `specout.Gorilla` | `Adopt` walks route templates and subrouters. |
-| `net/http.ServeMux` | `specout.Std` | It cannot enumerate routes. Register documented endpoints through the adapter. |
-| `github.com/labstack/echo/v5` | `specoutecho.New` | `specoutecho.Adopt` reads the Echo route table. |
-| `github.com/labstack/echo/v4` | `specoutechov4.New` | `specoutechov4.Adopt` reads the Echo route tables. |
-| `github.com/gin-gonic/gin` | `specoutgin.New` | `specoutgin.Adopt` reads the Gin route table. |
-| `github.com/gofiber/fiber/v3` | `specoutfiber.New` | `specoutfiber.Adopt` reads the Fiber route table. |
-| Other routers | `doc.Bind` or `doc.Document` | `Bind` registers and records. `Document` records metadata only. |
+| `github.com/go-chi/chi/v5` | `specoutchi.New` | `Check` walks the chi router. |
+| `github.com/gorilla/mux` | `specoutgorilla.New` | `Check` walks route templates and subrouters. |
+| `net/http.ServeMux` | `specoutstd.New` | None. ServeMux cannot list its routes. Use the recorder. |
+| `github.com/labstack/echo/v5` | `specoutecho.New` | `Check` reads the Echo route table. |
+| `github.com/labstack/echo/v4` | `specoutechov4.New` | `Check` reads the Echo route tables. |
+| `github.com/gin-gonic/gin` | `specoutgin.New` | `Check` reads the Gin route table. |
+| `github.com/gofiber/fiber/v3` | `specoutfiber.New` | `Check` reads the Fiber route table. |
+| Other routers | Your own `specout.Router`, or `doc.Document` | See [other routers](#other-routers). |
 
-The Echo, Gin, and Fiber adapters are in separate packages, so the root package
-does not import those frameworks:
+`specoutstd` is part of the root module. Each other adapter is a separate
+module, so the root package does not import a router. Add the module of the
+adapter, for example
+`go get github.com/happytoolin/specout/adapters/specoutchi@latest`:
 
 ```go
 import (
+	"github.com/happytoolin/specout/adapters/specoutstd"     // http.ServeMux
+	"github.com/happytoolin/specout/adapters/specoutchi"
 	"github.com/happytoolin/specout/adapters/specoutecho"    // Echo v5
 	"github.com/happytoolin/specout/adapters/specoutechov4"  // Echo v4
 	"github.com/happytoolin/specout/adapters/specoutfiber"   // Fiber v3
 	"github.com/happytoolin/specout/adapters/specoutgin"
+	"github.com/happytoolin/specout/adapters/specoutgorilla"
 )
 ```
 
 In this reference, "Echo" means both Echo adapters, except in the sections for
 one version.
 
-Verb helpers support `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`,
-and `TRACE`. `Handle`, `doc.Bind`, and `doc.Document` accept the same
-OpenAPI method set.
+`Handle` and `doc.Document` accept the OpenAPI methods: `GET`, `HEAD`,
+`POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`, and `TRACE`.
+
+`Check` takes the paths to skip as strings. A skip is an exact path or a
+trailing wildcard such as `/debug/*`.
 
 ## chi/v5
 
 ```go
 doc := specout.New(specout.Config{Title: "Inventory API", Version: "1.0.0"})
 router := chi.NewRouter()
-routes := specout.Chi(doc, router)
+api := specout.Bind(doc, specoutchi.New(router))
 
-routes.Get("/items", listItems)
-routes.Post("/items", createItem)
-router.Mount("/openapi.json", doc)
+api.Get("/items", listItems)
+api.Post("/items", createItem)
 
-if err := routes.Adopt(); err != nil {
+if err := specout.Check(doc, specoutchi.New(router), "/openapi.json"); err != nil {
 	return err
 }
 ```
 
-For grouped routes, use the `Route`, `Group`, and `With` methods of the binder.
-They work as they do in chi, and give the binder of the group. Adopt only the
-outermost router:
+A chi router does not know the prefix where it is routed or mounted. Inside a
+chi `Route` or `Mount`, pass the full prefix to `specoutchi.New`:
 
 ```go
-routes.Route("/v1", func(r *specout.ChiRouter) {
-	r.Get("/items", listItems)
-	r.With(requireAdmin).Delete("/items/{id}", deleteItem)
-})
+router.Route("/v1", func(r chi.Router) {
+	specout.Bind(doc, specoutchi.New(r, "/v1")).Get("/items", listItems)
 
-if err := routes.Adopt(); err != nil {
-	return err
-}
+	r.Route("/items/{id}", func(r chi.Router) {
+		item := specout.Bind(doc, specoutchi.New(r.With(requireAdmin), "/v1/items/{id}"))
+		item.Delete("/", deleteItem)
+	})
+})
 ```
 
-`specout.Chi(doc, r)` inside a plain `router.Route` callback also works.
+A chi `Group` has no prefix, so `specoutchi.New(r)` inside it needs none. A
+wrong prefix documents the wrong path. `Check` on the root router then reports
+the real path as undocumented.
 
-`Adopt` reports plain chi endpoints that do not have a matching specout
-registration or `Document` declaration. It also gives the generator the full
-paths for relative group registrations. `Build` fails without `Adopt`, and the
-error names each chi route.
+`Check` reports chi endpoints that do not have a matching specout registration
+or `Document` declaration. Pass the path of the spec endpoint as a skip. A trailing `*`, as in
+`/files/*`, is the catch-all `{*...}`, and the paths object leaves it out.
 
-`Adopt` on an inner router documents the paths relative to its mount. For
-example, a router mounted at `/api` documents `/items`, and clients call
-`/api/items`. When a spec request goes through chi, the build walks the
-outermost router. A chi registration served under a mount prefix fails the
-build, unless a `Config.Servers` URL ends with that prefix. A templated server
-URL accepts every prefix.
+`specoutchi.Record(rec)` is chi middleware for the recorder. See
+[status verification](#status-verification-with-recorder).
 
 ## gorilla/mux
 
 ```go
 doc := specout.New(specout.Config{Title: "Inventory API", Version: "1.0.0"})
 router := mux.NewRouter()
-api := router.PathPrefix("/v1").Subrouter()
-routes := specout.Gorilla(doc, api)
+api := specout.Bind(doc, specoutgorilla.New(router.PathPrefix("/v1").Subrouter()))
 
-routes.Get("/items/{id:[0-9]+}", getItem)
-router.Handle("/openapi.json", doc).Methods(http.MethodGet, http.MethodHead)
+api.Get("/items/{id:[0-9]+}", getItem)
 
-if err := specout.Gorilla(doc, router).Adopt(); err != nil {
+if err := specout.Check(doc, specoutgorilla.New(router), "/openapi.json"); err != nil {
 	return err
 }
 ```
 
-Adopt the outermost router so subrouter prefixes are visible. Endpoint routes
-must have a method constraint. Path-only subrouter mounts are ignored. So is a
-route whose handler is another `*mux.Router`; `Adopt` walks that router next.
+Each route is documented at its full template, with the subrouter prefix.
+Call `Check` on the outermost router, so that it sees every subrouter. Endpoint
+routes must have a method constraint. Path-only subrouter mounts are ignored.
+So is a route whose handler is another `*mux.Router`; `Check` walks that router
+next. The handler reads gorilla route variables with `r.PathValue`.
 
 A route without a path matcher, such as `r.Methods("OPTIONS").Handler(cors)`,
-serves every path. `Adopt` reports it as `OPTIONS *`. Skip it with
-`specout.Skip("*")`.
+serves every path. `Check` reports it as `OPTIONS *`. Skip it with the skip
+`"*"`.
 
 A malformed template, such as `/items/{id`, panics at registration with the
-gorilla error.
+gorilla error. gorilla has the route at that time.
 
 Regex constraints in chi and gorilla templates are removed from the OpenAPI
-path. For example, `/items/{id:[0-9]+}` becomes `/items/{id}`. A gorilla
-parameter whose regex can match `/`, such as `{path:.*}`, spans several
-segments. specout treats that route as a catch-all.
+path. For example, `/items/{id:[0-9]+}` becomes `/items/{id}`. A parameter
+whose regex can match `/`, such as gorilla `{path:.*}` or chi
+`{name:.+}`, is a normal path parameter in the document.
 
 ## http.ServeMux
 
 ```go
 doc := specout.New(specout.Config{Title: "Inventory API", Version: "1.0.0"})
 mux := http.NewServeMux()
-routes := specout.Std(doc, mux)
+api := specout.Bind(doc, specoutstd.New(mux))
 
-routes.Get("/items/{id}", getItem)
-routes.Handle("POST /items", createItem)
-mux.Handle("/openapi.json", doc)
+api.Get("/items/{id}", getItem)
+api.Post("/items", createItem)
 ```
 
-A path that ends in `/` without `{$}` matches every path below it, as
-`/files/{path...}` does. specout treats it as a catch-all and omits it from the
-paths object. Write `/{$}` for the root path alone, and `/items/{$}` for an
-exact path with a trailing slash.
+The adapter registers `"GET /items/{id}"` on the mux. A path that ends in `/`
+without `{$}` matches every path below it, as `/files/{path...}` does. specout
+treats it as a catch-all and omits it from the paths object. Write `/{$}` for
+the root path alone, and `/items/{$}` for an exact path with a trailing slash.
+`/items/` and `/items/{$}` are two routes.
 
-There is no `Adopt` or `RequireDocumented` for http.ServeMux because it cannot
-enumerate its route table. Direct calls to `mux.Handle` or `mux.HandleFunc` are
-invisible to specout. Use `specout.Std` for each documented endpoint.
+http.ServeMux cannot list its routes, so `Check` returns an error for it.
+Direct calls to `mux.Handle` or `mux.HandleFunc` are invisible to specout. Wrap
+the mux with `recorder.New` to find them in tests.
 
 ## Echo v5
 
 ```go
 doc := specout.New(specout.Config{Title: "Inventory API", Version: "1.0.0"})
 e := echo.New()
-api := e.Group("/v1")
-routes := specoutecho.New(doc, api)
+api := specout.Bind(doc, specoutecho.New(e.Group("/v1")))
+admin := specout.Bind(doc, specoutecho.New(e.Group("/v1/admin", requireAuth)))
 
-routes.Get("/items/:id", getItem)
-routes.Post("/items", createItem, requireAuth) // route middleware runs first
-e.GET("/openapi.json", echo.WrapHandler(doc))
+api.Get("/items/:id", getItem)
+admin.Post("/items", createItem) // the group middleware runs first
 
-if err := specoutecho.Adopt(doc, e, specout.Skip("/openapi.json")); err != nil {
+if err := specout.Check(doc, specoutecho.New(e), "/openapi.json"); err != nil {
 	return err
 }
 ```
@@ -162,7 +190,8 @@ give `/v1items`.
 | `/files/*` | Catch-all. It is omitted from the paths object. |
 
 The handler reads parameters with `r.PathValue("id")`. `echo.WrapHandler` copies
-them from the Echo context. `Adopt` needs the `*echo.Echo`. It reports `Any`
+them from the Echo context. `Check` needs the adapter of the `*echo.Echo`. It
+reports `Any`
 routes as `(no method constraint)`. It ignores the 404 routes that Echo adds
 for group middleware.
 
@@ -172,11 +201,10 @@ The `specoutechov4` package has the same API as `specoutecho`:
 
 ```go
 e := echo.New()
-routes := specoutechov4.New(doc, e.Group("/v1"))
-routes.Get("/items/:id", getItem)
-e.GET("/openapi.json", echo.WrapHandler(doc))
+api := specout.Bind(doc, specoutechov4.New(e.Group("/v1")))
+api.Get("/items/:id", getItem)
 
-if err := specoutechov4.Adopt(doc, e, specout.Skip("/openapi.json")); err != nil {
+if err := specout.Check(doc, specoutechov4.New(e), "/openapi.json"); err != nil {
 	return err
 }
 ```
@@ -185,16 +213,14 @@ Echo v4 reads paths as Echo v5 does, so the path table above applies. These
 differences remain:
 
 - `echo.WrapHandler` in v4 does not set path values. The adapter copies them
-  into `r.PathValue` itself.
+  into `r.PathValue` itself, as Echo gives them. Echo v4 reads an encoded
+  request path as it is, so `/users/a%40b` gives `a%40b`.
 - Echo v4 has no parameter list in its route table, so no router check
   confirms the translation at registration.
 - A later route on the same path always replaces the earlier one. specout
-  panics on the second registration, and the path then answers `404`.
-- `Any` adds one route for each of 11 methods, and `Adopt` reports each one.
-  `Adopt` also reads the routers of `e.Host`.
-  A documented route documents its own router only. A host route that you
-  register on Echo itself, on the method and path of a documented route of
-  another router, is reported with its host, as `GET api.example.com/items`.
+  panics on the second registration.
+- `Any` adds one route for each of 11 methods, and `Check` reports each one.
+  `Check` also reads the routers of `e.Host`, without the host in the path.
 - `Record` records a request only when the route table has a route for its
   method. Echo v4 keeps the route path in the context for a `405` and for its
   automatic `OPTIONS` answer.
@@ -204,14 +230,13 @@ differences remain:
 ```go
 doc := specout.New(specout.Config{Title: "Inventory API", Version: "1.0.0"})
 engine := gin.New()
-api := engine.Group("/v1")
-routes := specoutgin.New(doc, api)
+api := specout.Bind(doc, specoutgin.New(engine.Group("/v1")))
+admin := specout.Bind(doc, specoutgin.New(engine.Group("/v1/admin", requireAuth)))
 
-routes.Get("/items/:id", getItem)
-routes.Post("/items", createItem, requireAuth) // route middleware runs first
-engine.GET("/openapi.json", gin.WrapH(doc))
+api.Get("/items/:id", getItem)
+admin.Post("/items", createItem) // the group middleware runs first
 
-if err := specoutgin.Adopt(doc, engine, specout.Skip("/openapi.json")); err != nil {
+if err := specout.Check(doc, specoutgin.New(engine), "/openapi.json"); err != nil {
 	return err
 }
 ```
@@ -223,15 +248,16 @@ the route stays.
 | Gin path | OpenAPI path |
 |---|---|
 | `/items/:id` | `/items/{id}` |
-| `/a\:b` | `/a:b` |
 | `/files/*filepath` | Catch-all. It is omitted from the paths object. |
 
-The adapter copies `c.Params` into `r.PathValue` before the handler runs. A
-catch-all value drops the leading slash that Gin gives it, so `/files/a/b`
-gives `a/b`, as `/files/{path...}` does on `http.ServeMux`. Gin decodes the
-values unless the engine sets `UseRawPath` or `UseEscapedPath` and clears
-`UnescapePathValues`. `Adopt` needs the
-`*gin.Engine`. Gin's `Any` registers one route for each method, so `Adopt` also
+Gin removes the `\:` escapes from its route table after the first request, so
+the adapter rejects an escaped path at registration.
+
+The adapter copies `c.Params` into `r.PathValue` before the handler runs, as
+Gin gives them. A catch-all value keeps its leading slash, so `/files/a/b`
+gives `/a/b`. Gin decodes the values unless the engine sets `UseRawPath` or
+`UseEscapedPath` and clears `UnescapePathValues`. `Check` needs the adapter of
+the `*gin.Engine`. Gin's `Any` registers one route for each method, so `Check` also
 reports its `CONNECT` route.
 
 ## Fiber v3
@@ -239,14 +265,13 @@ reports its `CONNECT` route.
 ```go
 doc := specout.New(specout.Config{Title: "Inventory API", Version: "1.0.0"})
 app := fiber.New()
-api := app.Group("/v1")
-routes := specoutfiber.New(doc, api)
+api := specout.Bind(doc, specoutfiber.New(app.Group("/v1")))
+admin := specout.Bind(doc, specoutfiber.New(app.Group("/v1/admin", requireAuth)))
 
-routes.Get("/items/:id<int>", getItem)
-routes.Post("/items", createItem, requireAuth) // route middleware runs first
-app.Get("/openapi.json", adaptor.HTTPHandler(doc))
+api.Get("/items/:id<int>", getItem)
+admin.Post("/items", createItem) // the group middleware runs first
 
-if err := specoutfiber.Adopt(doc, app, specout.Skip("/openapi.json")); err != nil {
+if err := specout.Check(doc, specoutfiber.New(app), "/openapi.json"); err != nil {
 	return err
 }
 ```
@@ -265,45 +290,60 @@ call.
 | `/files/*` and `/files/+` | Catch-all. It is omitted from the paths object. |
 | `/users/:id?` | Panics. OpenAPI has no optional path parameter. Register both paths. |
 
-The handler reads parameters with `r.PathValue`. Fiber names wildcards `*1`,
+The handler reads parameters with `r.PathValue`. The values stay encoded
+unless `fiber.Config.UnescapePath` is set. Fiber names wildcards `*1`,
 `*2`, and `+1`. Fiber answers `HEAD` for every `GET` route. The document lists
-the `GET` operation only, like http.ServeMux. `Adopt` needs the `*fiber.App`. It
+the `GET` operation only, like http.ServeMux. `Check` needs the adapter of the
+`*fiber.App`. It
 ignores middleware routes and the `HEAD` routes that Fiber adds for `GET`
 routes. It reports a `HEAD` route that is registered on its own. It also compares each translated path with the parameters that Fiber
-parsed, so a path that specout reads differently fails `Adopt`.
+parsed, so a path that specout reads differently fails `Check`.
 
 Register routes on the app that serves them. A sub-app mounted with `app.Use`
 changes the path after registration. Use a group instead.
 
-## Path rules for Echo, Gin, and Fiber
+## Path rules for the adapters
 
-Literal `{` and `}` in a route path panic at registration, because OpenAPI
-reads braces as parameters. A path that the adapter cannot translate also
-panics. Gin and Fiber keep no route for it. Echo shows the group prefix only
-after it adds the route, so a bad Echo group prefix leaves a route that answers
-`404`.
+Literal `{` and `}` in an Echo, Gin, or Fiber route path panic at
+registration, because OpenAPI reads braces as parameters. A path that the
+adapter cannot translate also panics. Gin and Fiber keep no route for it. Echo
+shows the group prefix only after it adds the route, so a bad Echo group prefix
+panics after Echo added the route.
+
+Every adapter checks the full path for empty segments (`//`) and dot segments
+(`/.`, `/..`) after the router adds the route. Thus with chi and gorilla/mux,
+the router has the route when the panic occurs.
 
 A second registration of the same method and path panics, also on routers that
 allow it: `echo.New()` lets a later route replace an earlier one, and Fiber
-never runs the second handler. After the panic, the Echo path answers `404`.
+never runs the second handler.
 
 ## Other routers
 
-`Bind` registers a handler on any router and records its metadata. The `mount`
-function adds the live route and returns the full path in OpenAPI syntax.
-Write a small binder with it when a router can report the full path at
-registration:
+An adapter is a small value that implements `specout.Router`. `Add` registers
+the handler on the router and returns the full path in OpenAPI syntax. `Routes`
+returns the route table for `Check`. Add copies the path parameters of the
+router into `r.PathValue`, if the router does not set them:
 
 ```go
-doc.Bind(http.MethodGet, "/items/:id", h, func(next http.Handler) string {
-	router.Handler(http.MethodGet, "/items/:id", next)
-	return "/items/{id}"
-})
-```
+type myRouter struct{ r *otherrouter.Router }
 
-`mount` runs while the generator is locked, so it must not call the generator.
-`doc.CheckRoutes` compares a route table, in OpenAPI syntax, with the
-registered routes. It returns a `*specout.StrayError`.
+func (m myRouter) Add(method, path string, h http.Handler) string {
+	m.r.Handle(method, path, h)
+	return strings.ReplaceAll(path, "<id>", "{id}") // the path in OpenAPI syntax
+}
+
+func (m myRouter) Routes() ([]specout.Route, error) {
+	var out []specout.Route
+	for _, rt := range m.r.Table() {
+		out = append(out, specout.Route{Method: rt.Method, Path: rt.Path})
+	}
+	return out, nil
+}
+
+api := specout.Bind(doc, myRouter{r})
+api.Get("/items/<id>", getItem)
+```
 
 `Document` adds metadata without changing runtime routing. Use an absolute
 OpenAPI path and register the real handler separately:
@@ -339,62 +379,62 @@ emitting an ambiguous document.
 
 ## Serving and exporting the document
 
-`Generator` is an `http.Handler`. It serves `GET` and `HEAD` and returns `405`
-for other methods.
-
-Export the deterministic JSON when a file or golden check is required:
+`Build` returns the deterministic JSON, indented. Call it at startup, after
+every route is registered, and serve the bytes on a route of your router:
 
 ```go
-var out bytes.Buffer
-if err := doc.WriteJSON(&out); err != nil {
+spec, err := doc.Build()
+if err != nil {
 	return err
 }
+
+// http.ServeMux, chi, gorilla/mux
+mux.HandleFunc("GET /openapi.json", func(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(spec)
+})
+
+// Gin
+engine.GET("/openapi.json", func(c *gin.Context) { c.Data(200, "application/json", spec) })
+
+// Echo
+e.GET("/openapi.json", func(c echo.Context) error { return c.Blob(200, "application/json", spec) })
+
+// Fiber
+app.Get("/openapi.json", func(c fiber.Ctx) error { return c.Type("json").Send(spec) })
 ```
 
-The first `ServeHTTP` or `WriteJSON` call builds and freezes the document.
-Registering a route, schema name, or union variant after that point panics.
-
-A failed build does not freeze the document. `WriteJSON` returns the error.
-`ServeHTTP` returns `500` with a message that names no route or type, and it
-writes the error to the standard `log` package once. The build runs again only
-after a registration, an `Adopt`, or a spec request through another chi
-router. A route added to an adopted router alone does not start a new build.
+The first successful `Build` freezes the document. Registering a route, schema
+name, or union variant after that point panics. A failed build does not freeze
+the document, and the next `Build` runs again.
 
 ## Route coverage
 
-For chi, gorilla/mux, Echo, Gin, and Fiber, `RequireDocumented` turns an `Adopt`
-error into a test failure:
+For chi, gorilla/mux, Echo, Gin, and Fiber, check the error of `Check` in a
+test:
 
 ```go
 func TestRoutesAreDocumented(t *testing.T) {
 	doc := specout.New(specout.Config{Title: "Inventory API", Version: "1.0.0"})
 	router := chi.NewRouter()
-	routes := specout.Chi(doc, router)
-	registerRoutes(routes)
-	routes.RequireDocumented(t, specout.Skip("/healthz"))
+	registerRoutes(specout.Bind(doc, specoutchi.New(router)))
+	require.NoError(t, specout.Check(doc, specoutchi.New(router), "/openapi.json", "/healthz"))
 }
 ```
 
-For Echo, Gin, and Fiber, `RequireDocumented` is a package function:
-
-```go
-specoutgin.RequireDocumented(t, doc, engine, specout.Skip("/openapi.json"))
-```
-
-`specout.Skip` accepts an exact path or a trailing wildcard such as
-`/debug/*`. Skip only endpoints that are intentionally outside the API. The
-Echo, Gin, and Fiber route tables do not show which handler serves the spec, so
-skip the spec endpoint.
+A skip is an exact path or a trailing wildcard such as `/debug/*`. Skip only
+endpoints that are intentionally outside the API, such as the spec endpoint.
 
 ## Status verification with recorder
 
 Recorder is optional. Use it when existing HTTP tests can send requests through
-a wrapped chi, gorilla/mux, or http.ServeMux router.
+a wrapped http.ServeMux, or through a router with the `Record` middleware of
+its adapter.
 
 ```go
 func TestObservedStatusesMatch(t *testing.T) {
-	doc, router := newAPI()
-	recorded := recorder.New(router)
+	doc, mux := newAPI()
+	recorded := recorder.New(mux, "/openapi.json")
 
 	recorded.ServeHTTP(
 		httptest.NewRecorder(),
@@ -402,11 +442,12 @@ func TestObservedStatusesMatch(t *testing.T) {
 	)
 	// Exercise every declared route and route-specific status through recorded.
 
-	recorder.Verify(t, doc, recorded)
+	require.NoError(t, recorder.Verify(doc, recorded))
 }
 ```
 
-`Verify` checks both directions:
+`recorder.New` takes the paths to skip as strings. `Verify` returns an error
+that lists each problem on one line, or nil. `Verify` checks both directions:
 
 - A route-specific status declared by the spec must be observed by a test.
 - A status observed from a matched route must be allowed by the spec.
@@ -420,32 +461,36 @@ Global `DefaultErrors` are allowed but are not required on every route. A bare
 `default` or response range allows matching statuses without creating a test
 coverage requirement. With http.ServeMux, a HEAD request handled by a GET route
 counts toward that GET route. An explicit HEAD route needs its own test.
-A request that the document serves is not drift.
+Pass the spec endpoint to `recorder.New` as a skip.
 
 Every relevant request must pass through the `Recorder`. Do not wrap only the
-final assertion. You can pass the production handler, with its middleware, to
-`recorder.New`. Middleware outside the router hides the route of a request, so
-`Verify` finds the route from the request path, and a literal segment wins over
-a parameter. A `401` from an outer auth middleware then counts for the route. A
+final assertion. The recorder reads the pattern of the http.ServeMux route that
+ran. For another handler that you pass to `recorder.New`, the recorder finds
+the route from the request path. You can pass the production handler, with its
+middleware, to `recorder.New`. Middleware outside the router hides the route of
+a request, so `Verify` finds the route from the request path, and a literal
+segment wins over a parameter. A `401` from an outer auth middleware then counts for the route. A
 `404` or `405` without a route is the router's answer, and counts for no route.
 When no request matches a documented path, for example behind
 `http.StripPrefix`, `Verify` reports that no route matched.
 
-For Echo, Gin, and Fiber, create the recorder without a router and install the
-adapter's `Record` middleware:
+For chi, gorilla/mux, Echo, Gin, and Fiber, create the recorder without a
+router and install the adapter's `Record` middleware:
 
 ```go
-rec := recorder.New(nil, specout.Skip("/openapi.json"))
+rec := recorder.New(nil, "/openapi.json")
 engine := gin.New()
 engine.Use(specoutgin.Record(rec)) // before any route
-registerRoutes(specoutgin.New(doc, engine))
+registerRoutes(specout.Bind(doc, specoutgin.New(engine)))
 
 engine.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/items", nil))
-recorder.Verify(t, doc, rec)
+require.NoError(t, recorder.Verify(doc, rec))
 ```
 
 | Router | Install | Middleware responses |
 |---|---|---|
+| chi | `r.Use(specoutchi.Record(rec))` first, before any route. | Recorded. `Record` finds the route that the request would reach. |
+| gorilla/mux | `r.Use(specoutgorilla.Record(rec))`. gorilla runs it after it matches a route. | Recorded for a matched route. |
 | Echo | `e.Use(specoutecho.Record(rec))` before other `e.Use` middleware. Route order does not matter. | Recorded. |
 | Gin | `engine.Use(specoutgin.Record(rec))` before any route. | Recorded. |
 | Fiber | `app.Use(specoutfiber.Record(rec))` before any route. | Recorded. `Record` finds the endpoint with `fiber.RoutePatternMatch`. |
@@ -454,9 +499,9 @@ Echo and Fiber pass a returned error to the framework's error handler, so the
 recorder sees the status that the client gets. Fiber records a `HEAD` request
 to a `GET` route under `GET`.
 
-`recorder.Observe` records one status for one route. Use it to feed the
-recorder from another router's middleware. Recorder cannot recover matched
-route templates from routers that use `Document` as their only integration.
+Recorder cannot recover matched route templates from routers that use
+`Document` as their only integration. It finds their routes from the request
+path.
 
 ## Minimum checks
 

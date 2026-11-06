@@ -1,132 +1,68 @@
-// Package specoutfiber binds specout handlers to Fiber v3. Fiber does not run
+// Package specoutfiber is the specout adapter for Fiber v3. Fiber does not run
 // net/http handlers natively, so each route runs its handler through Fiber's
 // adaptor, which builds an *http.Request for every call; Fiber's path
-// parameters arrive as r.PathValue. Adopt checks Fiber's route table for
-// routes that carry no specout metadata, and Record feeds the recorder status
-// check.
+// parameters arrive as r.PathValue. Record feeds the recorder status check.
 package specoutfiber
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
-	"sync/atomic"
+	"strings"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/adaptor"
 	"github.com/happytoolin/specout"
-	"github.com/happytoolin/specout/internal/fiberpath"
+	"github.com/happytoolin/specout/adapters/specoutfiber/internal/fiberpath"
+	"github.com/happytoolin/specout/internal/bridge"
 	"github.com/happytoolin/specout/internal/hijack"
 	"github.com/happytoolin/specout/recorder"
 )
 
-// Router registers specout handlers on a Fiber app or group. Each route is
-// documented at its full path, group prefix included.
+// Router is the adapter of a Fiber app or group, for specout.Bind. Each route
+// is documented at its full path, group prefix included. Put route middleware
+// on a group: app.Group("/admin", auth).
+//
+// Fiber also answers HEAD on a GET route unless
+// Config.DisableHeadAutoRegister is set; like http.ServeMux, the document
+// lists the GET operation only.
 type Router struct {
-	d      *specout.Generator
 	r      fiber.Router
 	prefix string
 }
 
-// New returns the Fiber binder for d on r, a *fiber.App or *fiber.Group. A
-// domain router hides its host from the path, so New rejects it.
+// New returns the adapter of r, a *fiber.App or *fiber.Group. A domain router
+// hides its host from the path, so New rejects it.
 //
 // Use the app that serves requests, or a group of it. Fiber adds the mount
 // prefix of a sub-app to its routes only when the app starts, so a Router on
 // a sub-app documents its paths without that prefix. Record then reports the
 // paths that ran, and recorder.Verify fails.
-func New(d *specout.Generator, r fiber.Router) *Router {
-	if d == nil {
-		panic("specoutfiber: New needs a generator")
-	}
+func New(r fiber.Router) *Router {
 	switch g := r.(type) {
 	case *fiber.App:
 		if g != nil {
-			return &Router{d: d, r: g}
+			return &Router{r: g}
 		}
 	case *fiber.Group:
 		if g != nil {
-			return &Router{d: d, r: g, prefix: g.Prefix}
+			return &Router{r: g, prefix: g.Prefix}
 		}
 	}
 	panic(fmt.Sprintf("specoutfiber: New needs a non-nil *fiber.App or *fiber.Group, got %T", r))
 }
 
-// Handle registers h for method on p. Route middleware m runs before h.
-func (b *Router) Handle[Req, Res any](method, p string, h specout.Handler[Req, Res], m ...fiber.Handler) {
+// Add registers h for method on p, in Fiber syntax, and returns its full path
+// in OpenAPI syntax.
+func (b *Router) Add(method, p string, h http.Handler) string {
 	full := fiberpath.Join(b.prefix, p)
 	documented, _, err := fiberpath.OpenAPI(full)
 	if err != nil {
 		panic(fmt.Sprintf("specoutfiber: %s %s: %v", method, full, err))
 	}
-	// Bind checks the route after Fiber adds it, and Fiber cannot remove one
-	// route of a path. So the route passes its requests on to the next route
-	// until Bind returns: a registration that panics serves nothing, even
-	// when the caller recovers.
-	var bound atomic.Bool
-	b.d.Bind(method, p, h, func(next http.Handler) string {
-		chain := make([]any, 0, len(m)+1)
-		for _, mw := range m {
-			chain = append(chain, mw)
-		}
-		chain = append(chain, gate(&bound, serve(next, observed{method: method, path: documented, pattern: full})))
-		b.r.Add([]string{method}, p, chain[0], chain[1:]...)
-		return documented
-	})
-	bound.Store(true)
-}
-
-// gate returns h, which passes each request on to the next route until bound
-// is set.
-func gate(bound *atomic.Bool, h fiber.Handler) fiber.Handler {
-	return func(c fiber.Ctx) error {
-		if !bound.Load() {
-			return c.Next()
-		}
-		return h(c)
-	}
-}
-
-// Get registers a GET route on p. Fiber also answers HEAD on it unless
-// Config.DisableHeadAutoRegister is set; like http.ServeMux, the document
-// lists the GET operation only.
-func (b *Router) Get[Req, Res any](p string, h specout.Handler[Req, Res], m ...fiber.Handler) {
-	b.Handle(http.MethodGet, p, h, m...)
-}
-
-// Head registers a HEAD route on p.
-func (b *Router) Head[Req, Res any](p string, h specout.Handler[Req, Res], m ...fiber.Handler) {
-	b.Handle(http.MethodHead, p, h, m...)
-}
-
-// Post registers a POST route on p.
-func (b *Router) Post[Req, Res any](p string, h specout.Handler[Req, Res], m ...fiber.Handler) {
-	b.Handle(http.MethodPost, p, h, m...)
-}
-
-// Put registers a PUT route on p.
-func (b *Router) Put[Req, Res any](p string, h specout.Handler[Req, Res], m ...fiber.Handler) {
-	b.Handle(http.MethodPut, p, h, m...)
-}
-
-// Patch registers a PATCH route on p.
-func (b *Router) Patch[Req, Res any](p string, h specout.Handler[Req, Res], m ...fiber.Handler) {
-	b.Handle(http.MethodPatch, p, h, m...)
-}
-
-// Delete registers a DELETE route on p.
-func (b *Router) Delete[Req, Res any](p string, h specout.Handler[Req, Res], m ...fiber.Handler) {
-	b.Handle(http.MethodDelete, p, h, m...)
-}
-
-// Options registers an OPTIONS route on p.
-func (b *Router) Options[Req, Res any](p string, h specout.Handler[Req, Res], m ...fiber.Handler) {
-	b.Handle(http.MethodOptions, p, h, m...)
-}
-
-// Trace registers a TRACE route on p.
-func (b *Router) Trace[Req, Res any](p string, h specout.Handler[Req, Res], m ...fiber.Handler) {
-	b.Handle(http.MethodTrace, p, h, m...)
+	b.r.Add([]string{method}, p, serve(h, observed{method: method, path: documented, pattern: full}))
+	return documented
 }
 
 // observed is the route a request ran, as the document spells it. serve
@@ -145,10 +81,8 @@ func (o observed) ran(p string) observed {
 	return o
 }
 
-// pathValue is one path parameter on its way to r.SetPathValue.
 type pathValue struct{ name, value string }
 
-// localKey types the request locals this package stores.
 type localKey int
 
 const (
@@ -158,9 +92,9 @@ const (
 
 // serve runs next as the route's last handler. The adaptor builds the
 // *http.Request on Fiber's request context, so path parameters cross over as
-// a request local. They arrive decoded, as on http.ServeMux, and copied:
-// Fiber may reuse the bytes of its strings after the request, and a net/http
-// handler may keep r.PathValue results.
+// a request local. They arrive as Fiber gives them, but copied: Fiber may
+// reuse the bytes of its strings after the request, and a net/http handler
+// may keep r.PathValue results.
 func serve(next http.Handler, route observed) fiber.Handler {
 	h := adaptor.HTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if values, ok := r.Context().Value(pathValuesKey).([]pathValue); ok {
@@ -171,11 +105,10 @@ func serve(next http.Handler, route observed) fiber.Handler {
 		next.ServeHTTP(w, r)
 	}))
 	return func(c fiber.Ctx) error {
-		decode := !c.App().Config().UnescapePath
 		params := c.Route().Params
 		values := make([]pathValue, 0, len(params))
 		for _, name := range params {
-			values = append(values, pathValue{name: name, value: fiberpath.Value(c.Params(name), decode)})
+			values = append(values, pathValue{name: name, value: strings.Clone(c.Params(name))})
 		}
 		c.Locals(pathValuesKey, values)
 		c.Locals(observedKey, route.ran(c.Route().Path))
@@ -183,17 +116,21 @@ func serve(next http.Handler, route observed) fiber.Handler {
 	}
 }
 
-// Adopt reports the routes of app that specout cannot document: routes no
-// Router registered. Middleware routes are not endpoints and are skipped. So
-// are the HEAD routes Fiber adds for every GET route when it starts: the GET
-// route answers for them. A HEAD route registered on its own is reported.
-// Skip the spec endpoint itself, as in specout.Skip("/openapi.json").
+// Routes returns the route table of the app. Middleware routes are not
+// endpoints and are left out. So are the HEAD routes Fiber adds for every GET
+// route when it starts: the GET route answers for them. A HEAD route
+// registered on its own is listed. A group lists no routes, so pass Check the
+// adapter of the app.
 //
-// Adopt also checks the translation of every path against the parameters
+// Routes also checks the translation of every path against the parameters
 // Fiber parsed from it, so syntax specout reads differently fails here.
-func Adopt(d *specout.Generator, app *fiber.App, skips ...specout.SkipRule) error {
+func (b *Router) Routes() ([]specout.Route, error) {
+	app, ok := b.r.(*fiber.App)
+	if !ok {
+		return nil, errors.New("specoutfiber: a group lists no routes; pass Check specoutfiber.New(app)")
+	}
 	table := endpoints(app)
-	routes := make([]specout.RouteKey, 0, len(table))
+	routes := make([]specout.Route, 0, len(table))
 	for i := range table {
 		r := &table[i]
 		documented, names, err := fiberpath.OpenAPI(r.Path)
@@ -201,12 +138,12 @@ func Adopt(d *specout.Generator, app *fiber.App, skips ...specout.SkipRule) erro
 		case err != nil:
 			documented = r.Path
 		case !slices.Equal(names, r.Params):
-			return fmt.Errorf("specoutfiber: %s %s: fiber reads parameters %q, specout read %q",
+			return nil, fmt.Errorf("specoutfiber: %s %s: fiber reads parameters %q, specout read %q",
 				r.Method, r.Path, r.Params, names)
 		}
-		routes = append(routes, specout.RouteKey{Method: r.Method, Path: documented})
+		routes = append(routes, specout.Route{Method: r.Method, Path: documented})
 	}
-	return d.CheckRoutes(routes, skips...)
+	return routes, nil
 }
 
 // endpoints lists the routes of app that run endpoint handlers, without the
@@ -224,15 +161,6 @@ func endpoints(app *fiber.App) []fiber.Route {
 	return slices.DeleteFunc(table, func(r fiber.Route) bool {
 		return r.Method == http.MethodHead && len(r.Handlers) > 0 && slices.Contains(gets[r.Path], &r.Handlers[0])
 	})
-}
-
-// RequireDocumented fails the test when app holds routes specout cannot
-// document.
-func RequireDocumented(t specout.TestingT, d *specout.Generator, app *fiber.App, skips ...specout.SkipRule) {
-	t.Helper()
-	if err := Adopt(d, app, skips...); err != nil {
-		t.Errorf("%v", err)
-	}
 }
 
 // Record returns Fiber middleware that reports the status of every matched
@@ -261,7 +189,7 @@ func Record(rec *recorder.Recorder) fiber.Handler {
 			return nil
 		}
 		if status, recorded := recordedStatus(c); recorded {
-			rec.Observe(route.method, route.path, status)
+			bridge.Observe(rec, route.method, route.path, status)
 		}
 		return nil
 	}

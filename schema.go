@@ -17,7 +17,6 @@ import (
 	"github.com/invopop/jsonschema"
 )
 
-// componentRef is the $ref prefix of a schema in components.schemas.
 const componentRef = "#/components/schemas/"
 
 // schemaRegistry reflects Go types into JSON Schema, dedupes by Go type, and
@@ -31,7 +30,7 @@ type schemaRegistry struct {
 	names     map[reflect.Type]string
 	overrides map[reflect.Type]string             // SchemaName[T] component-name overrides
 	owners    map[string]reflect.Type             // component name -> type that claimed it
-	variants  map[string]reflect.Type             // Register[T] union variants, by name
+	variants  map[string]reflect.Type             // Variant[T] union variants, by name
 	anon      int                                 // anonymous struct component counter
 	reserved  map[string]bool                     // AnonymousN names that a named type uses
 	fixed     map[*jsonschema.Schema]bool         // schema nodes whose field fixes are complete
@@ -44,20 +43,20 @@ type schemaEntry struct {
 	s    *jsonschema.Schema
 }
 
-// Build holds d.mu. Variants are read-only; body views add local name overrides.
-func (d *Generator) newSchemaRegistry() *schemaRegistry {
+// Build holds g.mu. Variants are read-only; body views add local name overrides.
+func (g *Generator) newSchemaRegistry() *schemaRegistry {
 	sr := &schemaRegistry{
 		byType:    make(map[reflect.Type]*schemaEntry),
 		byName:    make(map[string]*jsonschema.Schema),
 		names:     make(map[reflect.Type]string),
 		overrides: make(map[reflect.Type]string),
 		owners:    make(map[string]reflect.Type),
-		variants:  d.variants,
+		variants:  g.variants,
 		fixed:     make(map[*jsonschema.Schema]bool),
 		payloads:  make(map[*jsonschema.Schema]reflect.Type),
-		closed:    d.cfg.ClosedSchemas,
+		closed:    g.cfg.ClosedSchemas,
 	}
-	maps.Copy(sr.overrides, d.nameOverrides)
+	maps.Copy(sr.overrides, g.nameOverrides)
 	return sr
 }
 

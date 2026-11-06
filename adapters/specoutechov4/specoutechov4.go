@@ -1,22 +1,17 @@
-// Package specoutechov4 binds specout handlers to Echo v4. Handlers stay plain
-// net/http handlers: each route copies Echo's path parameters into
+// Package specoutechov4 is the specout adapter for Echo v4. Handlers stay
+// plain net/http handlers: each route copies Echo's path parameters into
 // r.PathValue before the handler runs, which echo.WrapHandler does not do in
-// v4. The values are decoded, as on http.ServeMux. Adopt checks Echo's route
-// table for routes that carry no specout metadata, and Record feeds the
-// recorder status check.
+// v4. Record feeds the recorder status check.
 package specoutechov4
 
 import (
-	"cmp"
+	"errors"
 	"fmt"
-	"maps"
 	"net/http"
-	"net/url"
 	"slices"
-	"sync"
-	"sync/atomic"
 
 	"github.com/happytoolin/specout"
+	"github.com/happytoolin/specout/internal/bridge"
 	"github.com/happytoolin/specout/internal/echopath"
 	"github.com/happytoolin/specout/internal/hijack"
 	"github.com/happytoolin/specout/recorder"
@@ -28,208 +23,75 @@ type Routes interface {
 	Add(method, path string, handler echo.HandlerFunc, middleware ...echo.MiddlewareFunc) *echo.Route
 }
 
-// Router registers specout handlers on an Echo instance or group. Each route
-// is documented at the full path Echo reports for it, group prefix included.
-type Router struct {
-	d *specout.Generator
-	r Routes
-}
+// Router is the adapter of an Echo instance or group, for specout.Bind. Each
+// route is documented at the full path Echo reports for it, group prefix
+// included. Put route middleware on a group: e.Group("/admin", auth).
+type Router struct{ r Routes }
 
-// New returns the Echo binder for d on r.
-func New(d *specout.Generator, r Routes) *Router {
-	if d == nil || r == nil {
-		panic("specoutechov4: New needs a generator and an *echo.Echo or *echo.Group")
+// New returns the adapter of r.
+func New(r Routes) *Router {
+	if r == nil {
+		panic("specoutechov4: New needs an *echo.Echo or *echo.Group")
 	}
-	return &Router{d: d, r: r}
+	return &Router{r: r}
 }
 
-// Handle registers h for method on path. Route middleware m runs before h.
-func (b *Router) Handle[Req, Res any](method, path string, h specout.Handler[Req, Res], m ...echo.MiddlewareFunc) {
+// Add registers h for method on path, in Echo syntax, and returns its full
+// path in OpenAPI syntax.
+func (b *Router) Add(method, path string, h http.Handler) string {
 	// Reject the route's own syntax before Echo serves it. The full-path check
 	// below can only panic after the route is live.
 	if _, _, err := echopath.OpenAPI(path); err != nil {
 		panic(fmt.Sprintf("specoutechov4: %s %s: %v", method, path, err))
 	}
-	// Echo shows the group prefix only in the Route it returns, and a route
-	// replaces an earlier one on its path. So the route answers 404 until Bind
-	// returns: a registration that panics serves nothing, even when the caller
-	// recovers.
-	var (
-		bound atomic.Bool
-		route *echo.Route
-	)
-	b.d.Bind(method, path, h, func(next http.Handler) string {
-		route = b.r.Add(method, path, func(c echo.Context) error {
-			if !bound.Load() {
-				return echo.ErrNotFound
-			}
-			return serve(c, next)
-		}, m...)
-		// Echo v4 lists no parameters in its route table, so the translation
-		// has no router-side check here. Its scanner is the one echopath
-		// follows.
-		full, _, err := echopath.OpenAPI(route.Path)
-		if err != nil {
-			panic(fmt.Sprintf("specoutechov4: %s %s: %v", method, route.Path, err))
-		}
-		return full
-	})
-	registered.Store(route, struct{}{})
-	bound.Store(true)
+	route := b.r.Add(method, path, func(c echo.Context) error { return serve(c, h) })
+	// Echo v4 lists no parameters in its route table, so the translation has
+	// no router-side check here. Its scanner is the one echopath follows.
+	full, _, err := echopath.OpenAPI(route.Path)
+	if err != nil {
+		panic(fmt.Sprintf("specoutechov4: %s %s: %v", method, route.Path, err))
+	}
+	return full
 }
 
-// registered holds each Echo route that a Router registered, for Adopt. Echo
-// lists the same *echo.Route in its route table until a later route on the
-// path replaces it.
-var registered sync.Map
-
 // serve runs next for one request. Echo v4 keeps path parameters on its own
-// context, so they are copied onto the request first, as Echo v5's
-// WrapHandler does. Echo v4 routes on r.URL.RawPath when the request has one,
-// and then its values are still encoded: they are decoded here, as
-// http.ServeMux reports them.
+// context, so they are copied onto the request first, as Echo gives them.
 func serve(c echo.Context, next http.Handler) error {
 	r := c.Request()
-	r.Pattern = c.Path()
 	values := c.ParamValues()
-	encoded := r.URL.RawPath != ""
 	for i, name := range c.ParamNames() {
 		if i < len(values) {
-			r.SetPathValue(name, pathValue(values[i], encoded))
+			r.SetPathValue(name, values[i])
 		}
 	}
 	next.ServeHTTP(c.Response(), r)
 	return nil
 }
 
-// pathValue returns v decoded when Echo read it from the encoded path. A value
-// that does not decode stays as Echo gave it.
-func pathValue(v string, encoded bool) string {
-	if !encoded {
-		return v
+// Routes returns the route tables of the Echo instance and of its host
+// routers. Echo v4 lists an Any route once per method. The 404 routes that
+// Echo adds for group middleware are not endpoints and are left out. A group
+// lists no routes, so pass Check the adapter of the instance.
+func (b *Router) Routes() ([]specout.Route, error) {
+	e, ok := b.r.(*echo.Echo)
+	if !ok {
+		return nil, errors.New("specoutechov4: a group lists no routes; pass Check specoutechov4.New(e)")
 	}
-	if decoded, err := url.PathUnescape(v); err == nil {
-		return decoded
+	routes := tableRoutes(e.Router().Routes())
+	for _, host := range e.Routers() {
+		routes = append(routes, tableRoutes(host.Routes())...)
 	}
-	return v
+	return routes, nil
 }
 
-// Get registers a GET route on p.
-func (b *Router) Get[Req, Res any](p string, h specout.Handler[Req, Res], m ...echo.MiddlewareFunc) {
-	b.Handle(http.MethodGet, p, h, m...)
-}
-
-// Head registers a HEAD route on p.
-func (b *Router) Head[Req, Res any](p string, h specout.Handler[Req, Res], m ...echo.MiddlewareFunc) {
-	b.Handle(http.MethodHead, p, h, m...)
-}
-
-// Post registers a POST route on p.
-func (b *Router) Post[Req, Res any](p string, h specout.Handler[Req, Res], m ...echo.MiddlewareFunc) {
-	b.Handle(http.MethodPost, p, h, m...)
-}
-
-// Put registers a PUT route on p.
-func (b *Router) Put[Req, Res any](p string, h specout.Handler[Req, Res], m ...echo.MiddlewareFunc) {
-	b.Handle(http.MethodPut, p, h, m...)
-}
-
-// Patch registers a PATCH route on p.
-func (b *Router) Patch[Req, Res any](p string, h specout.Handler[Req, Res], m ...echo.MiddlewareFunc) {
-	b.Handle(http.MethodPatch, p, h, m...)
-}
-
-// Delete registers a DELETE route on p.
-func (b *Router) Delete[Req, Res any](p string, h specout.Handler[Req, Res], m ...echo.MiddlewareFunc) {
-	b.Handle(http.MethodDelete, p, h, m...)
-}
-
-// Options registers an OPTIONS route on p.
-func (b *Router) Options[Req, Res any](p string, h specout.Handler[Req, Res], m ...echo.MiddlewareFunc) {
-	b.Handle(http.MethodOptions, p, h, m...)
-}
-
-// Trace registers a TRACE route on p.
-func (b *Router) Trace[Req, Res any](p string, h specout.Handler[Req, Res], m ...echo.MiddlewareFunc) {
-	b.Handle(http.MethodTrace, p, h, m...)
-}
-
-// Adopt reports the routes of e and its host routers that specout cannot
-// document: routes no Router registered. Echo v4 lists an Any route once per
-// method, and so does the report. The 404 routes that Echo adds for group middleware are not endpoints and are
-// skipped. Skip the spec endpoint itself, as in specout.Skip("/openapi.json").
-//
-// A route documents its own router only. A host route that no Router
-// registered, on the method and path of a route that a Router registered on
-// another router, is reported with its host, as GET api.example.com/items.
-func Adopt(d *specout.Generator, e *echo.Echo, skips ...specout.SkipRule) error {
-	hosts := e.Routers()
-	own := ownKeys(e.Router().Routes())
-	for _, host := range hosts {
-		maps.Copy(own, ownKeys(host.Routes()))
-	}
-	routes := routeKeys(e.Router().Routes())
-	for name, host := range hosts {
-		routes = append(routes, routeKeys(host.Routes())...)
-		routes = append(routes, twins(name, host.Routes(), own, skips)...)
-	}
-	// Echo keeps its route tables in maps, so sort for a stable report.
-	slices.SortFunc(routes, func(a, b specout.RouteKey) int {
-		return cmp.Or(cmp.Compare(a.Path, b.Path), cmp.Compare(a.Method, b.Method))
-	})
-	return d.CheckRoutes(routes, skips...)
-}
-
-// routeKeys turns one router's table into route keys.
-func routeKeys(table []*echo.Route) []specout.RouteKey {
-	var keys []specout.RouteKey
+func tableRoutes(table []*echo.Route) []specout.Route {
+	var routes []specout.Route
 	for _, ri := range table {
 		if ri.Method != echo.RouteNotFound {
-			keys = append(keys, specout.RouteKey{Method: ri.Method, Path: echopath.Table(ri.Path)})
+			routes = append(routes, specout.Route{Method: ri.Method, Path: echopath.Table(ri.Path)})
 		}
 	}
-	return keys
-}
-
-// ownKeys returns the key of each route of table that a Router registered.
-func ownKeys(table []*echo.Route) map[specout.RouteKey]bool {
-	own := make(map[specout.RouteKey]bool)
-	for _, ri := range table {
-		if _, ok := registered.Load(ri); ok {
-			own[specout.RouteKey{Method: ri.Method, Path: echopath.Table(ri.Path)}] = true
-		}
-	}
-	return own
-}
-
-// twins returns a key, with host before the path, for each route of host's
-// table that no Router registered and that has the key of a route in own. A
-// route on host cannot share its key with another route of host, so that
-// route is on another router. No document path starts with a host, so
-// CheckRoutes reports the key. A route that skips cover stays out.
-func twins(
-	host string, table []*echo.Route, own map[specout.RouteKey]bool, skips []specout.SkipRule,
-) []specout.RouteKey {
-	var keys []specout.RouteKey
-	for _, ri := range table {
-		key := specout.RouteKey{Method: ri.Method, Path: echopath.Table(ri.Path)}
-		if _, ok := registered.Load(ri); ok || !own[key] {
-			continue
-		}
-		if !slices.ContainsFunc(skips, func(s specout.SkipRule) bool { return s.Matches(key.Path) }) {
-			keys = append(keys, specout.RouteKey{Method: key.Method, Path: host + key.Path})
-		}
-	}
-	return keys
-}
-
-// RequireDocumented fails the test when e holds routes specout cannot
-// document.
-func RequireDocumented(t specout.TestingT, d *specout.Generator, e *echo.Echo, skips ...specout.SkipRule) {
-	t.Helper()
-	if err := Adopt(d, e, skips...); err != nil {
-		t.Errorf("%v", err)
-	}
+	return routes
 }
 
 // Record returns Echo middleware that reports the status of every matched
@@ -248,13 +110,13 @@ func Record(rec *recorder.Recorder) echo.MiddlewareFunc {
 			writer := resp.Writer
 			w, watch := hijack.Wrap(writer)
 			resp.Writer = w
+			defer func() { resp.Writer = writer }()
 			if err := next(c); err != nil {
 				c.Error(err)
 			}
-			resp.Writer = writer
 			status, ok := hijack.Status(c.Request().Header, resp.Status, resp.Committed, watch.Hijacked())
 			if ok && routed(c) {
-				rec.Observe(c.Request().Method, echopath.Table(c.Path()), status)
+				bridge.Observe(rec, c.Request().Method, echopath.Table(c.Path()), status)
 			}
 			return nil
 		}

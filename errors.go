@@ -36,7 +36,6 @@ func didYouMean(got string, known []string) string {
 	return "; did you mean " + strconv.Quote(best) + "?"
 }
 
-// editDistance is the Levenshtein distance between a and b.
 func editDistance(a, b string) int {
 	row := make([]int, len(b)+1)
 	for j := range row {

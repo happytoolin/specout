@@ -21,7 +21,7 @@ The `schema` object is JSON Schema 2020-12. specout builds it from Go types and
 |---|---|---|
 | `openapi` | Yes | Always `3.1.0`. |
 | `info` | Yes | `Config`. |
-| `jsonSchemaDialect` | Yes | `Config.JSONSchemaDialect`. |
+| `jsonSchemaDialect` | No | specout writes no dialect; schemas use the OpenAPI 3.1 default. |
 | `servers` | Yes | `Config.Servers`. |
 | `paths` | Yes | Route registration. |
 | `webhooks` | Yes | `Generator.Webhook`. |
@@ -200,7 +200,7 @@ The `schema` object is JSON Schema 2020-12. specout builds it from Go types and
 
 | Field | Status | How |
 |---|---|---|
-| `example` | Yes | `Response.Example` or `Request.Example`, on media types only. Parameters and headers cannot set it. |
+| `example` | No | Use `Response.Examples` or `Request.Examples`. |
 | `examples` | Yes | `Response.Examples` or `Request.Examples`, on media types only. Parameters and headers cannot set it. |
 
 ## link

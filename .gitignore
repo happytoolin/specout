@@ -34,7 +34,7 @@ go.work.sum
 .venv
 __pycache__/
 
-# Keep launch drafts local. Track image assets only.
+# Track only the image files under release-assets.
 /release-assets/**
 !/release-assets/**/
 !/release-assets/**/*.png
@@ -46,6 +46,12 @@ __pycache__/
 !/release-assets/**/*.avif
 
 # Built example binaries (go build ./examples/...)
-/demo
 /msgraph
+/onboarding
 /petstore
+
+# Local agent tool files
+/.agents/
+/.pi/
+/.claude/
+skills-lock.json

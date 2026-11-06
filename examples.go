@@ -21,14 +21,7 @@ type Example struct {
 // checkExamples panics on examples that would break the document. where names
 // the field in the message. bodies lists the Go types that the body can take,
 // the first one for the message.
-func checkExamples(where string, example any, examples map[string]Example, bodies ...reflect.Type) {
-	if example != nil && len(examples) > 0 {
-		panic("specout: " + where + ": sets both Example and Examples; set one")
-	}
-	if example != nil {
-		checkExampleType(where+": Example", example, bodies)
-		exampleValue(where, example)
-	}
+func checkExamples(where string, examples map[string]Example, bodies ...reflect.Type) {
 	for _, name := range sortedKeys(examples) {
 		ex := examples[name]
 		switch {
@@ -75,17 +68,13 @@ func exampleValue(where string, v any) jsontext.Value {
 // bodyExamples are the examples of one body, encoded once for all of its media
 // types.
 type bodyExamples struct {
-	example jsontext.Value
-	named   map[string]Example
-	values  map[string]jsontext.Value
+	named  map[string]Example
+	values map[string]jsontext.Value
 }
 
 // encodeExamples encodes the examples of one body. where names the body.
-func encodeExamples(where string, example any, examples map[string]Example) bodyExamples {
+func encodeExamples(where string, examples map[string]Example) bodyExamples {
 	b := bodyExamples{named: examples, values: make(map[string]jsontext.Value, len(examples))}
-	if example != nil {
-		b.example = exampleValue(where, example)
-	}
 	for name, ex := range examples {
 		if ex.Value != nil {
 			b.values[name] = exampleValue(where, ex.Value)
@@ -98,9 +87,6 @@ func encodeExamples(where string, example any, examples map[string]Example) body
 // top-level member on that media type, or false to drop it. A nil key keeps
 // the values as they are.
 func (b bodyExamples) set(media *obj, key func(string) (string, bool)) {
-	if b.example != nil {
-		media.set("example", reshapeObject(b.example, key))
-	}
 	if len(b.named) == 0 {
 		return
 	}
@@ -195,7 +181,6 @@ func reshapeObject(v jsontext.Value, key func(string) (string, bool)) any {
 	return out
 }
 
-// member is one member of a JSON object.
 type member struct {
 	name  string
 	value jsontext.Value

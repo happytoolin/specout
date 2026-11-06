@@ -4,16 +4,19 @@
 # vet, so lint and format cannot drift apart. `go run` needs no install step.
 lintbin := "go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0"
 
+# the root module, each adapter module, and the examples module: each has its
+# own go.mod
+modules := ". adapters/specoutchi adapters/specoutgorilla adapters/specoutecho adapters/specoutechov4 adapters/specoutgin adapters/specoutfiber examples"
+
 # default: quick local checks; CI and releases run check
 default: lint test
 
 # run every CI and release check (Go, Python 3 and Node.js/npm required)
-check: mod-check build lint nilaway workflow-lint test race validate adversarial client-types vuln
+check: mod-check build lint nilaway workflow-lint test race validate client-types vuln
 
 # check module files and downloaded dependency integrity without changing files
 mod-check:
-    go mod tidy -diff
-    go mod verify
+    for m in {{ modules }}; do (cd $m && go mod tidy -diff && go mod verify) || exit 1; done
 
 # validate GitHub Actions workflows
 workflow-lint:
@@ -23,11 +26,11 @@ workflow-lint:
 # nilaway cannot see that a testify require stops the test, so on test files
 # it reports only false positives.
 nilaway:
-    go run go.uber.org/nilaway/cmd/nilaway@v0.0.0-20260918162853-acb8859b9031 -include-pkgs=github.com/happytoolin/specout -test=false ./...
+    for m in {{ modules }}; do (cd $m && go run go.uber.org/nilaway/cmd/nilaway@v0.0.0-20260918162853-acb8859b9031 -include-pkgs=github.com/happytoolin/specout -test=false ./...) || exit 1; done
 
 # check code and tests against the current Go vulnerability database
 vuln:
-    go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -test ./...
+    for m in {{ modules }}; do (cd $m && go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -test ./...) || exit 1; done
 
 # install the pinned validation tools in an isolated environment
 validation-deps:
@@ -35,17 +38,13 @@ validation-deps:
     if [ ! -x .venv/bin/python ]; then python3 -m venv .venv; fi
     .venv/bin/pip install -q -r tools/requirements.txt
 
-# validate generated test documents and served examples
+# validate generated test documents, served examples and payload cases
 validate: validation-deps
     .venv/bin/python tools/validate_suite.py
 
-# exercise launch blockers and validate actual Go-serialized payloads
-adversarial: validation-deps
-    .venv/bin/python tools/validate_adversarial.py
-
 # check all packages with the race detector, in random test order
 race:
-    go test -race -shuffle=on ./...
+    for m in {{ modules }}; do (cd $m && go test -race -shuffle=on ./...) || exit 1; done
 
 # generate and compile client types for all served examples (Node.js/npm required)
 client-types:
@@ -53,38 +52,36 @@ client-types:
 
 # build every package
 build:
-    go build ./...
+    for m in {{ modules }}; do (cd $m && go build ./...) || exit 1; done
 
 # run the full test suite
 test:
-    go test ./...
+    for m in {{ modules }}; do (cd $m && go test ./...) || exit 1; done
 
 # report every lint and format finding; changes nothing
 lint:
     {{ lintbin }} config verify
-    {{ lintbin }} run ./...
+    for m in {{ modules }}; do (cd $m && {{ lintbin }} run ./...) || exit 1; done
 
 # repair: sync go.mod, format, and apply every auto-fix
 tidy:
-    go mod tidy
-    {{ lintbin }} fmt ./...
-    {{ lintbin }} run --fix ./...
+    for m in {{ modules }}; do (cd $m && go mod tidy && {{ lintbin }} fmt ./... && {{ lintbin }} run --fix ./...) || exit 1; done
 
 # format only (gofumpt, through the same pinned linter)
 fmt:
-    {{ lintbin }} fmt ./...
+    for m in {{ modules }}; do (cd $m && {{ lintbin }} fmt ./...) || exit 1; done
 
 # serve the compact onboarding example
 demo:
-    go run ./examples/onboarding
+    go -C examples run ./onboarding
 
 # export the spec to stdout (CI golden uses this same path)
 spec:
-    GO_SPEC_ONLY=1 go run ./examples/onboarding
+    GO_SPEC_ONLY=1 go -C examples run ./onboarding
 
 # regenerate the onboarding golden after intentional spec changes
 golden:
-    UPDATE_GOLDEN=1 go test -run TestGoldenSpec ./examples/onboarding
+    UPDATE_GOLDEN=1 go -C examples test -run TestGoldenSpec ./onboarding
 
 # tidy, lint, test — the pre-commit sweep
 sweep: tidy lint test

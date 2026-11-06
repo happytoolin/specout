@@ -1,14 +1,40 @@
 package specout_test
 
 import (
-	"io"
 	"net/http"
 	"testing"
 
 	"github.com/happytoolin/specout"
+	"github.com/happytoolin/specout/adapters/specoutstd"
+	"github.com/happytoolin/specout/internal/bridge"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestCallbackMessagesNameTheRoute(t *testing.T) {
+	url := "{$request.body#/url}"
+	bad := specout.NewCallback(http.MethodPost, "done", url, specout.Handler[job, specout.NoContent]{Security: []specout.Security{{Scheme: "nope"}}})
+	assert.Contains(t, panicMessage(t, func() {
+		newGen().Document(http.MethodPost, "/a", specout.Handler[struct{}, job]{HandlerFunc: noop, Callbacks: []specout.Callback{bad}})
+	}), `specout: POST /a: POST callback done: Security names scheme "nope"`)
+
+	type unencodable struct {
+		Ch chan int `json:"ch"`
+	}
+	d := newGen()
+	d.Document(http.MethodPost, "/a", specout.Handler[struct{}, job]{HandlerFunc: noop, Callbacks: []specout.Callback{
+		specout.NewCallback(http.MethodPost, "done", url, specout.Handler[unencodable, specout.NoContent]{}),
+	}})
+	assert.Equal(t, `specout: POST /a: POST callback done: JSON cannot encode chan int; tag its field json:"-"`,
+		panicMessage(t, func() { _, _ = d.Build() }))
+
+	shared := specout.NewCallback(http.MethodPost, "done", url, specout.Handler[job, specout.NoContent]{OperationID: "onDone"})
+	d = newGen()
+	d.Document(http.MethodPost, "/a", specout.Handler[struct{}, job]{HandlerFunc: noop, Callbacks: []specout.Callback{shared}})
+	d.Document(http.MethodPost, "/b", specout.Handler[struct{}, job]{HandlerFunc: noop, Callbacks: []specout.Callback{shared}})
+	wantBuildErr(t, d, `specout: POST /b: POST callback done: duplicate operationId "onDone", also on POST /a: `+
+		`POST callback done; a Callback on several routes cannot set OperationID`)
+}
 
 type orderEvent struct {
 	Signature string `header:"X-Signature"`
@@ -44,7 +70,10 @@ func child(t *testing.T, node any, keys ...string) map[string]any {
 	return m
 }
 
-func buildErr(d *specout.Generator) error { return d.WriteJSON(io.Discard) }
+func buildErr(d *specout.Generator) error {
+	_, err := d.Build()
+	return err
+}
 
 func authGen() *specout.Generator {
 	return specout.New(specout.Config{
@@ -54,17 +83,14 @@ func authGen() *specout.Generator {
 	})
 }
 
-// A webhook is described as a route is, but it is not one of your routes: it
-// has no path, the auth and the errors of your API do not apply to it, and the
-// route checks do not see it.
 func TestWebhookDescribesARequestYourAPISends(t *testing.T) {
 	d := authGen()
-	d.Document(http.MethodGet, "/jobs", specout.Get[job]{HandlerFunc: noop})
-	d.Webhook(http.MethodPost, "orderCreated", specout.Event[orderEvent]{
-		Summary: "An order was created", Request: specout.Request{Example: orderEvent{OrderID: "a"}},
+	d.Document(http.MethodGet, "/jobs", specout.Handler[struct{}, job]{HandlerFunc: noop})
+	d.Webhook(http.MethodPost, "orderCreated", specout.Handler[orderEvent, specout.NoContent]{
+		Summary: "An order was created", Request: specout.Request{Examples: map[string]specout.Example{"a": {Value: orderEvent{OrderID: "a"}}}},
 	})
-	d.Webhook(http.MethodGet, "orderCreated", specout.Get[job]{Description: "The receiver proves that it owns the URL."})
-	require.NoError(t, d.CheckRoutes([]specout.RouteKey{specout.NewRouteKey(http.MethodGet, "/jobs")}))
+	d.Webhook(http.MethodGet, "orderCreated", specout.Handler[struct{}, job]{Description: "The receiver proves that it owns the URL."})
+	require.NoError(t, specout.Check(d, fakeRouter{routes: []specout.Route{{Method: http.MethodGet, Path: "/jobs"}}}))
 
 	doc := buildDoc(t, d)
 	assert.NotContains(t, doc["paths"], "orderCreated")
@@ -96,12 +122,12 @@ func TestOutgoingKeepsItsOwnSecurityAndResponses(t *testing.T) {
 
 func TestCallbacksGroupUnderNameAndURL(t *testing.T) {
 	const url = "{$request.body#/callbackUrl}"
-	done := specout.NewCallback(http.MethodPost, "jobDone", url, specout.Event[jobDone]{Summary: "The job finished"})
-	check := specout.NewCallback(http.MethodHead, "jobDone", url, specout.Event[struct{}]{})
-	failed := specout.NewCallback(http.MethodPost, "jobFailed", "https://example.com/{$request.query.tenant}", specout.Event[problem]{})
+	done := specout.NewCallback(http.MethodPost, "jobDone", url, specout.Handler[jobDone, specout.NoContent]{Summary: "The job finished"})
+	check := specout.NewCallback(http.MethodHead, "jobDone", url, specout.Handler[struct{}, specout.NoContent]{})
+	failed := specout.NewCallback(http.MethodPost, "jobFailed", "https://example.com/{$request.query.tenant}", specout.Handler[problem, specout.NoContent]{})
 
 	d := authGen()
-	d.Document(http.MethodPost, "/jobs", specout.Handler[startJob, job]{HandlerFunc: noop}.WithCallbacks(done, check, failed))
+	d.Document(http.MethodPost, "/jobs", specout.Handler[startJob, job]{HandlerFunc: noop, Callbacks: []specout.Callback{done, check, failed}})
 	d.Document(http.MethodPut, "/jobs", specout.Handler[startJob, job]{HandlerFunc: noop, Callbacks: []specout.Callback{done}})
 
 	doc := buildDoc(t, d)
@@ -119,28 +145,28 @@ func TestRouteChecksIgnoreOutgoingRequests(t *testing.T) {
 	d := newGen()
 	d.Document(http.MethodPost, "/jobs", specout.Handler[startJob, job]{
 		HandlerFunc: noop,
-		Callbacks:   []specout.Callback{specout.NewCallback(http.MethodPost, "done", "{$request.body#/callbackUrl}", specout.Event[jobDone]{})},
+		Callbacks:   []specout.Callback{specout.NewCallback(http.MethodPost, "done", "{$request.body#/callbackUrl}", specout.Handler[jobDone, specout.NoContent]{})},
 	})
-	d.Webhook(http.MethodPost, "done", specout.Event[jobDone]{})
-	statuses, err := d.SpecStatuses()
+	d.Webhook(http.MethodPost, "done", specout.Handler[jobDone, specout.NoContent]{})
+	statuses, err := bridge.Statuses(d, true)
 	require.NoError(t, err)
-	assert.Equal(t, map[specout.RouteKey]map[int]bool{
-		specout.NewRouteKey(http.MethodPost, "/jobs"): {http.StatusOK: true},
+	assert.Equal(t, map[bridge.Key]map[int]bool{
+		bridge.NewKey(http.MethodPost, "/jobs"): {http.StatusOK: true},
 	}, statuses)
 }
 
 func TestOperationIDsAreUniqueAcrossOutgoingRequests(t *testing.T) {
 	d := newGen()
-	d.Document(http.MethodGet, "/jobs", specout.Get[job]{HandlerFunc: noop, OperationID: "same"})
-	d.Webhook(http.MethodPost, "done", specout.Event[jobDone]{OperationID: "same"})
+	d.Document(http.MethodGet, "/jobs", specout.Handler[struct{}, job]{HandlerFunc: noop, OperationID: "same"})
+	d.Webhook(http.MethodPost, "done", specout.Handler[jobDone, specout.NoContent]{OperationID: "same"})
 	require.ErrorContains(t, buildErr(d), `POST webhook done: duplicate operationId "same", also on GET /jobs`)
 
 	d = newGen()
 	d.Document(http.MethodPost, "/jobs", specout.Handler[startJob, job]{
 		HandlerFunc: noop,
 		Callbacks: []specout.Callback{
-			specout.NewCallback(http.MethodPost, "a", "u", specout.Event[jobDone]{OperationID: "same"}),
-			specout.NewCallback(http.MethodPost, "b", "u", specout.Event[jobDone]{OperationID: "same"}),
+			specout.NewCallback(http.MethodPost, "a", "u", specout.Handler[jobDone, specout.NoContent]{OperationID: "same"}),
+			specout.NewCallback(http.MethodPost, "b", "u", specout.Handler[jobDone, specout.NoContent]{OperationID: "same"}),
 		},
 	})
 	assert.ErrorContains(t, buildErr(d), `duplicate operationId "same"`)
@@ -150,30 +176,34 @@ func TestBadOutgoingRequestsPanic(t *testing.T) {
 	type pathed struct {
 		ID string `path:"id"`
 	}
-	event := specout.Event[jobDone]{}
+	event := specout.Handler[jobDone, specout.NoContent]{}
 	route := func(callbacks ...specout.Callback) func() {
 		return func() {
-			newGen().Document(http.MethodPost, "/x", specout.Get[job]{HandlerFunc: noop, Callbacks: callbacks})
+			newGen().Document(http.MethodPost, "/x", specout.Handler[struct{}, job]{HandlerFunc: noop, Callbacks: callbacks})
 		}
 	}
 	webhook := func(fn func(d *specout.Generator)) func() { return func() { fn(newGen()) } }
 	for want, call := range map[string]func(){
 		"Webhook needs a name":       webhook(func(d *specout.Generator) { d.Webhook(http.MethodPost, "", event) }),
 		`method "post" is not valid`: webhook(func(d *specout.Generator) { d.Webhook("post", "a", event) }),
-		"remove HandlerFunc":         webhook(func(d *specout.Generator) { d.Webhook(http.MethodPost, "a", specout.Event[jobDone]{HandlerFunc: noop}) }),
-		`remove the tag path:"id"`:   webhook(func(d *specout.Generator) { d.Webhook(http.MethodPost, "a", specout.Event[pathed]{}) }),
+		"remove HandlerFunc": webhook(func(d *specout.Generator) {
+			d.Webhook(http.MethodPost, "a", specout.Handler[jobDone, specout.NoContent]{HandlerFunc: noop})
+		}),
+		`remove the tag path:"id"`: webhook(func(d *specout.Generator) {
+			d.Webhook(http.MethodPost, "a", specout.Handler[pathed, specout.NoContent]{})
+		}),
 		"POST webhook a: duplicate webhook": webhook(func(d *specout.Generator) {
 			d.Webhook(http.MethodPost, "a", event)
 			d.Webhook(http.MethodPost, "a", event)
 		}),
 		`Security names scheme "x"`: webhook(func(d *specout.Generator) {
-			d.Webhook(http.MethodPost, "a", specout.Event[jobDone]{Security: []specout.Security{{Scheme: "x"}}})
+			d.Webhook(http.MethodPost, "a", specout.Handler[jobDone, specout.NoContent]{Security: []specout.Security{{Scheme: "x"}}})
 		}),
 		"NewCallback needs a name":         func() { specout.NewCallback(http.MethodPost, "", "u", event) },
 		"needs a name and a url":           func() { specout.NewCallback(http.MethodPost, "a", "", event) },
 		"make it with NewCallback":         route(specout.Callback{}),
 		`repeats POST callback "a"`:        route(specout.NewCallback(http.MethodPost, "a", "u", event), specout.NewCallback(http.MethodPost, "a", "u", event)),
-		"Handler.Request describes a body": route(specout.NewCallback(http.MethodPost, "a", "u", specout.Event[struct{}]{Request: specout.Request{Description: "x"}})),
+		"Handler.Request describes a body": route(specout.NewCallback(http.MethodPost, "a", "u", specout.Handler[struct{}, specout.NoContent]{Request: specout.Request{Description: "x"}})),
 	} {
 		assert.Contains(t, panicMessage(t, call), want)
 	}
@@ -196,8 +226,7 @@ func TestResponseLinks(t *testing.T) {
 			"elsewhere": {OperationRef: "https://example.com/openapi.json#/paths/~1a/get"},
 		}}},
 	})
-	// the target can register after the link
-	d.Document(http.MethodGet, "/jobs/{id}", specout.Get[job]{HandlerFunc: noop})
+	d.Document(http.MethodGet, "/jobs/{id}", specout.Handler[struct{}, job]{HandlerFunc: noop})
 
 	links := child(t, opOf(t, buildDoc(t, d), "/jobs", "post"), "responses", "200", "links")
 	assert.Equal(t, map[string]any{
@@ -215,7 +244,7 @@ func TestLinkServer(t *testing.T) {
 
 func TestLinkTargetMustExist(t *testing.T) {
 	d := newGen()
-	d.Document(http.MethodPost, "/jobs", specout.Get[job]{
+	d.Document(http.MethodPost, "/jobs", specout.Handler[struct{}, job]{
 		HandlerFunc: noop,
 		Responses:   []specout.Response{{Status: http.StatusOK, Links: map[string]specout.Link{"status": {OperationID: "getJob"}}}},
 	})
@@ -225,7 +254,7 @@ func TestLinkTargetMustExist(t *testing.T) {
 func TestBadLinksPanic(t *testing.T) {
 	link := func(l specout.Link) func() {
 		return func() {
-			newGen().Document(http.MethodGet, "/x", specout.Get[job]{
+			newGen().Document(http.MethodGet, "/x", specout.Handler[struct{}, job]{
 				HandlerFunc: noop,
 				Responses:   []specout.Response{{Status: http.StatusOK, Links: map[string]specout.Link{"a": l}}},
 			})
@@ -250,20 +279,20 @@ type uploadForm struct {
 func TestRequestEncoding(t *testing.T) {
 	doc := docOf(t, http.MethodPost, "/upload", specout.Handler[uploadForm, job]{
 		HandlerFunc: noop,
-	}.WithRequest(specout.Request{Encoding: map[string]specout.Encoding{
-		"avatar": {
-			ContentType: "image/png",
-			Headers:     []specout.Header{{Name: "X-Width", Type: 0, Required: true}},
-		},
-		"labels": {Style: "pipeDelimited", Explode: new(false), AllowReserved: true},
-	}}))
+		Request: specout.Request{Encoding: map[string]specout.Encoding{
+			"avatar": {
+				ContentType: "image/png",
+				Headers:     []specout.Header{{Name: "X-Width", Type: 0, Required: true}},
+			},
+			"labels": {Style: "pipeDelimited", Explode: new(false), AllowReserved: true},
+		}},
+	})
 	encoding := child(t, opOf(t, doc, "/upload", "post"), "requestBody", "content", "multipart/form-data", "encoding")
 	assert.Equal(t, "image/png", child(t, encoding, "avatar")["contentType"])
 	assert.Equal(t, true, child(t, encoding, "avatar", "headers", "X-Width")["required"])
 	assert.Equal(t, map[string]any{"style": "pipeDelimited", "explode": false, "allowReserved": true}, encoding["labels"])
 }
 
-// A route with several media types gets the encoding on its form types only.
 func TestRequestEncodingSkipsOtherMediaTypes(t *testing.T) {
 	doc := docOf(t, http.MethodPost, "/x", specout.Handler[job, job]{
 		HandlerFunc: noop,
@@ -294,7 +323,7 @@ func TestBadRequestEncodingPanics(t *testing.T) {
 			})
 		},
 		"Req has no body": func() {
-			newGen().Document(http.MethodPost, "/x", specout.Get[job]{
+			newGen().Document(http.MethodPost, "/x", specout.Handler[struct{}, job]{
 				HandlerFunc: noop, Request: specout.Request{Encoding: map[string]specout.Encoding{"id": {}}},
 			})
 		},
@@ -304,39 +333,37 @@ func TestBadRequestEncodingPanics(t *testing.T) {
 }
 
 func TestOperationServers(t *testing.T) {
-	doc := docOf(t, http.MethodGet, "/x", specout.Get[job]{HandlerFunc: noop}.WithServers(
-		specout.Server{URL: "https://{region}.example.com", Variables: map[string]specout.ServerVariable{"region": {Default: "eu"}}},
-	))
+	doc := docOf(t, http.MethodGet, "/x", specout.Handler[struct{}, job]{HandlerFunc: noop, Servers: []specout.Server{
+		{URL: "https://{region}.example.com", Variables: map[string]specout.ServerVariable{"region": {Default: "eu"}}},
+	}})
 	assert.Equal(t, []any{map[string]any{
 		"url": "https://{region}.example.com", "variables": map[string]any{"region": map[string]any{"default": "eu"}},
 	}}, opOf(t, doc, "/x", "get")["servers"])
 
 	assert.Contains(t, panicMessage(t, func() {
-		newGen().Document(http.MethodGet, "/x", specout.Get[job]{
+		newGen().Document(http.MethodGet, "/x", specout.Handler[struct{}, job]{
 			HandlerFunc: noop, Servers: []specout.Server{{URL: "u", Variables: map[string]specout.ServerVariable{"a": {}}}},
 		})
 	}), `variable "a" has no {a} in the URL`)
 }
 
-// A field with a typed form has one way to write it, and the panic names it.
 func TestRawNamesTheTypedForm(t *testing.T) {
 	config := func(key string) func() {
 		return func() { specout.New(specout.Config{Title: "t", Version: "1", Raw: map[string]any{key: 1}}) }
 	}
 	operation := func(key string) func() {
 		return func() {
-			newGen().Document(http.MethodGet, "/x", specout.Get[job]{HandlerFunc: noop, Raw: map[string]any{key: 1}})
+			newGen().Document(http.MethodGet, "/x", specout.Handler[struct{}, job]{HandlerFunc: noop, Raw: map[string]any{key: 1}})
 		}
 	}
 	response := func(key string) func() {
 		return func() {
-			newGen().Document(http.MethodGet, "/x", specout.Get[job]{
+			newGen().Document(http.MethodGet, "/x", specout.Handler[struct{}, job]{
 				HandlerFunc: noop, Responses: []specout.Response{{Status: http.StatusOK, Raw: map[string]any{key: 1}}},
 			})
 		}
 	}
 	for want, call := range map[string]func(){
-		"use Config.JSONSchemaDialect":          config("jsonSchemaDialect"),
 		"use Generator.Webhook":                 config("webhooks"),
 		"use Handler.Callbacks":                 operation("callbacks"),
 		"use Config.Servers or Handler.Servers": operation("servers"),
@@ -346,27 +373,20 @@ func TestRawNamesTheTypedForm(t *testing.T) {
 	}
 }
 
-func TestJSONSchemaDialect(t *testing.T) {
-	const dialect = "https://spec.openapis.org/oas/3.1/dialect/base"
-	d := specout.New(specout.Config{Title: "t", Version: "1", JSONSchemaDialect: dialect})
-	assert.Equal(t, dialect, buildDoc(t, d)["jsonSchemaDialect"])
-}
-
-// The README examples, so that they keep compiling and keep their meaning.
 func TestReadmeOutgoingExamples(t *testing.T) {
 	doc := newGen()
-	doc.Webhook(http.MethodPost, "orderCreated", specout.Event[orderEvent]{
+	doc.Webhook(http.MethodPost, "orderCreated", specout.Handler[orderEvent, specout.NoContent]{
 		Summary: "An order was created",
 	})
-	doc.Webhook(http.MethodPost, "orderPaid", specout.Event[orderEvent]{
+	doc.Webhook(http.MethodPost, "orderPaid", specout.Handler[orderEvent, specout.NoContent]{
 		Responses: []specout.Response{{Key: "2XX", Description: "Any success status"}},
 	})
 	jobFinished := specout.NewCallback(
 		http.MethodPost, "jobDone", "{$request.body#/callbackUrl}",
-		specout.Event[jobDone]{Summary: "The job finished"},
+		specout.Handler[jobDone, specout.NoContent]{Summary: "The job finished"},
 	)
-	routes := specout.Std(doc, http.NewServeMux())
-	routes.Post("/jobs", specout.Handler[startJob, job]{
+	routes := specout.Bind(doc, specoutstd.New(http.NewServeMux()))
+	routes.Handle("POST", "/jobs", specout.Handler[startJob, job]{
 		HandlerFunc: noop,
 		Callbacks:   []specout.Callback{jobFinished},
 		Responses: []specout.Response{{
@@ -379,7 +399,7 @@ func TestReadmeOutgoingExamples(t *testing.T) {
 			},
 		}},
 	})
-	routes.Get("/jobs/{id}", specout.Get[job]{HandlerFunc: noop, OperationID: "getJob"})
+	routes.Handle("GET", "/jobs/{id}", specout.Handler[struct{}, job]{HandlerFunc: noop, OperationID: "getJob"})
 
 	built := buildDoc(t, doc)
 	assert.Equal(t, map[string]any{"2XX": map[string]any{"description": "Any success status"}},

@@ -1,52 +1,28 @@
 package specout
 
-import "net/http"
+import "github.com/happytoolin/specout/internal/bridge"
 
-// DeclaredStatuses exposes the method+path -> codes map a route declares for
-// itself, for the recorder's "declared but never produced" drift check. It
-// excludes the global DefaultErrors envelope: no test is expected to trigger
-// a 500 on every route.
-func (d *Generator) DeclaredStatuses() (map[RouteKey]map[int]bool, error) {
-	return d.statusMap(false)
-}
-
-// SpecStatuses is DeclaredStatuses plus the global DefaultErrors envelope:
-// exactly the codes the emitted spec lists for each route. The recorder uses
-// it for the other drift direction, so a handler that returns a declared
-// default (say a 404) is not reported as "spec does not declare it". It also
-// allows 200 on each method and path where d served the document, so a test
-// that fetches the document is not drift.
-func (d *Generator) SpecStatuses() (map[RouteKey]map[int]bool, error) {
-	return d.statusMap(true)
-}
-
-// statusMap folds responsePlan into method+path -> codes. withDefaults adds the
-// envelope and expands a range key to all 100 codes: the spec allows the whole
-// range, and no test can be expected to produce all of it.
-func (d *Generator) statusMap(withDefaults bool) (map[RouteKey]map[int]bool, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if err := d.resolveLocked(); err != nil {
+// statusMap folds responsePlan into method+path -> codes. Without
+// withDefaults, it holds the codes that each route declares for itself, which
+// a test must produce. withDefaults adds the codes of Config.DefaultErrors,
+// and expands a range key to all 100 codes: the codes that a response may
+// have.
+func (g *Generator) statusMap(withDefaults bool) (map[bridge.Key]map[int]bool, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if err := g.resolveLocked(); err != nil {
 		return nil, err
 	}
-	out := make(map[RouteKey]map[int]bool, len(d.records))
-	for _, rec := range d.records {
-		out[NewRouteKey(rec.method, rec.full)] = planStatuses(d.responsePlan(rec, withDefaults), withDefaults)
-	}
-	if withDefaults {
-		for key := range d.served {
-			if out[key] == nil {
-				out[key] = map[int]bool{}
-			}
-			out[key][http.StatusOK] = true
-		}
+	out := make(map[bridge.Key]map[int]bool, len(g.records))
+	for _, rec := range g.records {
+		out[newKey(rec.method, rec.full)] = planStatuses(g.responsePlan(rec, withDefaults), withDefaults)
 	}
 	return out, nil
 }
 
 // planStatuses folds one route's response plan into its codes. A default
 // permits any code, but only an explicit status creates a coverage
-// expectation. SpecStatuses uses 0 for "any code".
+// expectation. With withDefaults, code 0 means "any code".
 func planStatuses(plan []respEntry, withDefaults bool) map[int]bool {
 	codes := map[int]bool{}
 	for _, e := range plan {
@@ -76,4 +52,10 @@ func rangeOf(key string) (int, int, bool) {
 	}
 	lo := int(key[0]-'0') * statusRangeSpan
 	return lo, lo + statusRangeSpan - 1, true
+}
+
+// newKey returns the key of a route, with router syntax normalized. Trailing
+// slashes stay, so /a and /a/ are two routes.
+func newKey(method, pattern string) bridge.Key {
+	return bridge.Key{Method: method, Path: docPath(canonicalPath(pattern))}
 }

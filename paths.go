@@ -8,9 +8,9 @@ import (
 )
 
 // canonicalPath normalizes a router pattern into the path the document and the
-// drift check agree on: Route groups emit "//", and the std mux spells the
-// root as "/{$}". Trailing slashes stay significant, since chi walks /a and
-// /a/ as distinct routes.
+// drift check agree on: a joined prefix can leave "//", and http.ServeMux
+// ends a path that serves itself only with "{$}". Trailing slashes stay
+// significant: /a and /a/ are two routes.
 func canonicalPath(p string) string {
 	p = strings.TrimSuffix(p, "{$}")
 	for strings.Contains(p, "//") {
@@ -25,54 +25,22 @@ func docPath(p string) string {
 	return pathParamRe.ReplaceAllString(p, "{$1}")
 }
 
-// isCatchAll reports patterns OpenAPI cannot express: trailing wildcards,
-// the chi form (/files/*), the std multi-segment form (/files/{path...}), a
-// gorilla parameter whose regex matches a slash (/files/{path:.*}) and a
-// chi one that can match a slash before more text in its segment.
+// isCatchAll reports patterns OpenAPI cannot express: the multi-segment form
+// {path...}, and a * in a Document path.
 func (rec *routeRecord) isCatchAll() bool {
 	p := docPath(rec.full)
-	return rec.catchAll || (!rec.literalStars && strings.Contains(p, "*")) || strings.Contains(p, "...}") ||
-		(!rec.absolute && chiSpansSegments(rec.full))
+	return (!rec.literalStars && strings.Contains(p, "*")) || strings.Contains(p, "...}")
 }
 
-// chiSpansSegments reports a chi parameter that can match across segments.
-// chi ends a parameter at the next character of the pattern, a slash when
-// none follows, and lets the regex decide what comes before it. So
-// /a/{x:.+}.json matches /a/b/c.json, but /a/{x:.+} matches one segment.
-func chiSpansSegments(p string) bool {
-	for _, m := range pathParamRe.FindAllStringSubmatchIndex(p, -1) {
-		end := m[1]
-		if m[4] < 0 || end == len(p) || p[end] == '/' {
-			continue
-		}
-		if matchesSlash(p[m[4]+1 : m[5]]) {
-			return true
-		}
-	}
-	return false
-}
-
-// openAPIMethods is the path-item key set (finding 17): a token like CONNECT
-// or a lowercase typo would make the emitted document invalid.
+// openAPIMethods are the methods that an OpenAPI path item can hold.
 var openAPIMethods = []string{
 	http.MethodGet, http.MethodPut, http.MethodPost, http.MethodDelete,
 	http.MethodOptions, http.MethodHead, http.MethodPatch, http.MethodTrace,
 }
 
-// checkMethod panics on a method token OpenAPI cannot name.
 func checkMethod(method, where string) {
 	if !slices.Contains(openAPIMethods, method) {
 		panic("specout: " + where + ": method " + strconv.Quote(method) +
 			" is not valid; use GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS or TRACE" + didYouMean(method, openAPIMethods))
 	}
-}
-
-// endAnchor is net/http's end-of-path anchor, as in /a/{$}.
-const endAnchor = "{$}"
-
-// endAnchorMsg explains why router, chi or gorilla, cannot take endAnchor:
-// it reads {$} as a parameter named $, so /a/{$} serves /a/xyz and not /a/.
-func endAnchorMsg(router string) string {
-	return "{$} is net/http syntax; " + router + " reads it as a parameter named $, so the route " +
-		"serves /a/xyz and not /a/. Register the path without {$}"
 }

@@ -43,7 +43,6 @@ func checkSchemeFields(a AuthScheme) {
 	}
 }
 
-// schemeOfType builds the fields that a scheme's Type selects.
 func schemeOfType(a AuthScheme) *obj {
 	switch a.Type {
 	case authHTTP:
@@ -70,10 +69,8 @@ func schemeOfType(a AuthScheme) *obj {
 	}
 }
 
-// authWhere names a scheme in a message.
 func authWhere(a AuthScheme) string { return "Config.Auth " + strconv.Quote(a.Name) }
 
-// httpScheme builds an http scheme.
 func httpScheme(a AuthScheme) *obj {
 	if a.Scheme == "" {
 		panic("specout: " + authWhere(a) + `: http needs a Scheme, such as "bearer" or "basic"`)
@@ -88,12 +85,12 @@ func httpScheme(a AuthScheme) *obj {
 // checkSecurity panics when a route's Security names a scheme that Config.Auth
 // does not declare, or a scope that its oauth2 flows do not declare, or when a
 // Public route also sets it. Other types take any scopes: they are roles.
-func (d *Generator) checkSecurity(rec *routeRecord) {
+func (g *Generator) checkSecurity(rec *routeRecord) {
 	if rec.public && len(rec.security) > 0 {
 		panic("specout: " + rec.label() + ": sets both Public and Security; set one")
 	}
-	names := make([]string, 0, len(d.cfg.Auth))
-	for _, a := range d.cfg.Auth {
+	names := make([]string, 0, len(g.cfg.Auth))
+	for _, a := range g.cfg.Auth {
 		names = append(names, a.Name)
 	}
 	for _, sec := range rec.security {
@@ -102,7 +99,7 @@ func (d *Generator) checkSecurity(rec *routeRecord) {
 			panic("specout: " + rec.label() + ": Security names scheme " + strconv.Quote(sec.Scheme) +
 				", but Config.Auth does not declare it" + didYouMean(sec.Scheme, names))
 		}
-		if a := d.cfg.Auth[i]; a.Type == authOAuth2 {
+		if a := g.cfg.Auth[i]; a.Type == authOAuth2 {
 			checkScopes(rec.label(), a, sec.Scopes)
 		}
 	}
@@ -128,8 +125,8 @@ func checkScopes(where string, a AuthScheme, scopes []string) {
 
 // routeSecurity is the operation's security field, or nil when the operation
 // follows the document's. Each entry is one alternative.
-func (d *Generator) routeSecurity(rec *routeRecord) []any {
-	if rec.public && len(d.cfg.Auth) > 0 {
+func (g *Generator) routeSecurity(rec *routeRecord) []any {
+	if rec.public && len(g.cfg.Auth) > 0 {
 		return []any{}
 	}
 	if len(rec.security) == 0 {
@@ -149,7 +146,7 @@ func apiKeyScheme(a AuthScheme) *obj {
 		panic("specout: " + authWhere(a) + ": apiKey needs a Key, the parameter name")
 	}
 	switch a.In {
-	case InHeader, InQuery, InCookie:
+	case inHeader, inQuery, inCookie:
 	default:
 		panic("specout: " + authWhere(a) + ": In " + strconv.Quote(a.In) + " is not valid; use header, query or cookie")
 	}

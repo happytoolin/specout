@@ -72,7 +72,7 @@ func checkEncoding(rec *routeRecord, body reflect.Type) {
 		field := where + " " + strconv.Quote(name)
 		enc := rec.body.Encoding[name]
 		checkHeaders(field, enc.Headers)
-		if styles := parameterStyles[InQuery]; enc.Style != "" && !slices.Contains(styles, enc.Style) {
+		if styles := parameterStyles[inQuery]; enc.Style != "" && !slices.Contains(styles, enc.Style) {
 			panic("specout: " + field + ": Style " + strconv.Quote(enc.Style) + " is not valid; use " +
 				strings.Join(styles, ", "))
 		}
@@ -110,7 +110,6 @@ func bodyFieldNames(body reflect.Type, form bool) []string {
 	return names
 }
 
-// encodingObjs is the encoding object of one media type.
 func encodingObjs(encodings map[string]Encoding, sr *schemaRegistry) *obj {
 	out := newObj()
 	for _, name := range sortedKeys(encodings) {

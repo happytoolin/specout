@@ -53,7 +53,6 @@ func writeError(w http.ResponseWriter, code int, message string) {
 	}})
 }
 
-// notFound is the published 404; segment names the missing resource.
 func notFound(w http.ResponseWriter, segment string) {
 	writeError(w, 404, "Resource not found for the segment '"+segment+"'.")
 }

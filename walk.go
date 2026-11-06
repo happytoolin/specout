@@ -70,7 +70,6 @@ func remapDefs(s *jsonschema.Schema) {
 	})
 }
 
-// jsonSchemaTypes are the type names that JSON Schema defines.
 var jsonSchemaTypes = map[string]bool{
 	nullType: true, typeBoolean: true, typeObject: true, typeArray: true,
 	typeNumber: true, typeString: true, typeInteger: true,
@@ -103,7 +102,6 @@ func closeSchema(s *jsonschema.Schema) {
 	})
 }
 
-// splitEnums expands pipe-separated values, including repeated enum tags.
 func splitEnums(s *jsonschema.Schema) {
 	walkSchema(s, func(x *jsonschema.Schema) {
 		if !slices.ContainsFunc(x.Enum, func(value any) bool {

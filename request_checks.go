@@ -81,7 +81,6 @@ var ignoredHeaders = map[string]string{
 	"authorization": "Config.Auth and Handler.Security",
 }
 
-// checkHeaderParam panics on a header parameter that OpenAPI ignores.
 func checkHeaderParam(f reflect.StructField, name string) {
 	if instead, ok := ignoredHeaders[strings.ToLower(name)]; ok {
 		panic("specout: field " + f.Name + ": OpenAPI ignores a header parameter named " + strconv.Quote(name) +
